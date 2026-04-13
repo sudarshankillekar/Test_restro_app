@@ -52,6 +52,17 @@ sio = socketio.AsyncServer(
 
 # Create the main app
 app = FastAPI()
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://test-restro-app-kr1j.vercel.app"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 api_router = APIRouter(prefix="/api")
 
 # ============ Socket.IO Events ============
