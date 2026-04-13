@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
-import axios from 'axios';
+import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { BACKEND_URL } from '../lib/config';
 import { CheckCircle, Clock, ChefHat, Package, Loader2 } from 'lucide-react';
