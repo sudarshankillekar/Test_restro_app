@@ -25,9 +25,7 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/auth/me`, {
-        withCredentials: true,
-      });
+      const response = await api.get(`/api/auth/me`);
       setUser(response.data);
     } catch (error) {
       setUser(null);
@@ -40,30 +38,43 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [checkAuth]);
 
-  const login = async (email, password) => {
-    const response = await axios.post(
-      `${BACKEND_URL}/api/auth/login`,
-      { email, password },
-      { withCredentials: true }
-    );
-    setUser(response.data);
-    return response.data;
-  };
+ const login = async (email, password) => {
+  const response = await api.post(`/api/auth/login`, {
+    email,
+    password,
+  });
+  localStorage.setItem("token", response.data.access_token);
+  return response.data;
+};
 
-  const register = async (email, password, name, role) => {
-    const response = await axios.post(
-      `${BACKEND_URL}/api/auth/register`,
-      { email, password, name, role },
-      { withCredentials: true }
-    );
-    setUser(response.data);
-    return response.data;
-  };
+const register = async (email, password, name, role) => {
+  const response = await api.post(`/api/auth/register`, {
+    email,
+    password,
+    name,
+    role,
+  });
 
-  const logout = async () => {
-    await axios.post(`${BACKEND_URL}/api/auth/logout`, {}, { withCredentials: true });
-    setUser(null);
-  };
+  // 🔥 If backend returns token (recommended)
+  if (response.data.access_token) {
+    localStorage.setItem("token", response.data.access_token);
+  }
+
+  setUser(response.data);
+  return response.data;
+};
+
+ const logout = async () => {
+  try {
+    await api.post(`/api/auth/logout`);
+  } catch (err) {
+    // optional: ignore error (backend logout may not be required)
+  }
+
+  // 🔥 IMPORTANT
+  localStorage.removeItem("token");
+  setUser(null);
+};
 
   const value = {
     user,
