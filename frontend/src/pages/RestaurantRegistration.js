@@ -6,7 +6,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { toast } from 'sonner';
-import axios from 'axios';
+import api from '../lib/api';
 import { BACKEND_URL } from '../lib/config';
 import { Building2, CheckCircle, Loader2 } from 'lucide-react';
 
