@@ -5,7 +5,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { toast } from 'sonner';
-import axios from 'axios';
+import api from '../lib/api';
 import { BACKEND_URL } from '../lib/config';
 import { ChefHat, Loader2 } from 'lucide-react';
 
