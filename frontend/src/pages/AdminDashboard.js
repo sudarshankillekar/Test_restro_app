@@ -16,6 +16,16 @@ import { normalizeImageUrl } from '../lib/utils';
 import { ChefHat, LogOut, Plus, TrendingUp, DollarSign, ShoppingBag, QrCode, Trash2, Download, Settings } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 
+const getAuthHeaders = () => {
+  const token = localStorage.getItem("token");
+  return {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  };
+};
+
+
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
 
 const getErrorMessage = (error, fallback) => error.response?.data?.detail || fallback;
@@ -198,7 +208,7 @@ const AdminDashboard = () => {
       await axios.post(
         `${BACKEND_URL}/api/tables`,
         { table_number: parseInt(newTableNumber) },
-        { withCredentials: true }
+        getAuthHeaders()
       );
       toast.success('Table created');
       setNewTableNumber('');
