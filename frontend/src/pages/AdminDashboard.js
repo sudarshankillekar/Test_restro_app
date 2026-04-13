@@ -59,7 +59,7 @@ const AdminDashboard = () => {
     name: '',
     gst_number: '',
   });
-
+// eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (activeTab === 'analytics') fetchAnalytics();
     if (activeTab === 'menu') fetchMenu();
