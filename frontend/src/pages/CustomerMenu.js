@@ -5,7 +5,7 @@ import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { toast } from 'sonner';
-import axios from 'axios';
+import api from '../lib/api';
 import { BACKEND_URL } from '../lib/config';
 import { normalizeImageUrl } from '../lib/utils';
 import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles } from 'lucide-react';
