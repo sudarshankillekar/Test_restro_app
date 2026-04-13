@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from typing import Optional
+from fastapi.middleware.cors import CORSMiddleware
 import socketio
 import uvicorn
 
@@ -52,14 +53,10 @@ sio = socketio.AsyncServer(
 
 # Create the main app
 app = FastAPI()
-from fastapi.middleware.cors import CORSMiddleware
-
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://test-restro-app-kr1j.vercel.app"
-    ],
-    allow_credentials=True,
+     CORSMiddleware,
+    allow_origins=["*"],   
+    allow_credentials=False, 
     allow_methods=["*"],
     allow_headers=["*"],
 )
