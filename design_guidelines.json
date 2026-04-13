@@ -1,0 +1,141 @@
+{
+  "theme": "Light Mode for Customer/Admin, Optional Dark for KDS",
+  "archetype": "Archetype 1 (Organic & Earthy) for Customer App / Archetype 4 for Dashboards",
+  "typography": {
+    "headings": {
+      "family": "Outfit, sans-serif",
+      "weights": ["400", "600", "800"],
+      "classes": "font-sans tracking-tight"
+    },
+    "body": {
+      "family": "Manrope, sans-serif",
+      "weights": ["400", "500", "600"],
+      "classes": "font-sans"
+    },
+    "mono": {
+      "family": "JetBrains Mono, monospace",
+      "weights": ["400", "600"],
+      "classes": "font-mono tracking-wider"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tight leading-none",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight leading-tight",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm text-muted-foreground",
+      "label": "text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground"
+    }
+  },
+  "colors": {
+    "background": {
+      "customer": "#F9F8F6",
+      "dashboard": "#F3F4F6",
+      "kds_dark": "#18181B"
+    },
+    "surface": {
+      "default": "#FFFFFF",
+      "glass": "bg-white/70 backdrop-blur-xl",
+      "kds_card": "#27272A"
+    },
+    "primary": {
+      "DEFAULT": "#E05D36",
+      "hover": "#C54E2C",
+      "foreground": "#FFFFFF"
+    },
+    "success": {
+      "DEFAULT": "#4A7C59",
+      "foreground": "#FFFFFF"
+    },
+    "warning": {
+      "DEFAULT": "#F5A623",
+      "foreground": "#FFFFFF"
+    },
+    "destructive": {
+      "DEFAULT": "#D32F2F",
+      "foreground": "#FFFFFF"
+    },
+    "text": {
+      "primary": "#1E232A",
+      "secondary": "#64748B",
+      "muted": "#94A3B8"
+    },
+    "border": "#E2E8F0"
+  },
+  "layout": {
+    "spacing": {
+      "container_padding": "p-6 sm:p-8 lg:p-12",
+      "section_gap": "gap-12 lg:gap-24",
+      "component_gap": "gap-4 sm:gap-6"
+    },
+    "borderRadius": {
+      "card": "rounded-2xl",
+      "button": "rounded-full",
+      "badge": "rounded-md"
+    },
+    "shadows": {
+      "subtle": "shadow-[0_2px_10px_rgba(0,0,0,0.05)]",
+      "hover": "shadow-[0_8px_30px_rgba(0,0,0,0.08)]",
+      "kds_glow": "drop-shadow-[0_0_8px_rgba(245,166,35,0.5)]"
+    }
+  },
+  "component_strategy": {
+    "customer_menu": {
+      "style": "Bento Grid (Mode A) for featured items, List view for standard items",
+      "cards": "Flat background, 1px border, large appetizing images, generous padding",
+      "cart": "Sticky bottom bar, glassmorphism, high contrast checkout button"
+    },
+    "kitchen_dashboard": {
+      "style": "Control Room Grid (Mode B), Kanban style columns (Pending, Prep, Ready)",
+      "cards": "Dense, tech-focused, large text, high contrast status indicators",
+      "interaction": "Touch-friendly drag/drop or large tap targets for 'Bump' actions"
+    },
+    "admin_dashboard": {
+      "style": "Sidebar navigation, card-based KPIs, data tables for menu management",
+      "cards": "Grid Borders look, 1px borders, white background, no shadows"
+    },
+    "forms": {
+      "style": "Shadcn UI customized, no generic focus rings, use subtle background shifts"
+    }
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "page": "animate-in fade-in slide-in-from-bottom-4 duration-500",
+    "list": "staggered entrance, framer-motion recommended"
+  },
+  "assets": {
+    "icons": {
+      "library": "lucide-react",
+      "style": "stroke-2"
+    },
+    "images": [
+      {
+        "category": "menu_burger",
+        "url": "https://images.unsplash.com/photo-1611309454921-16cef3438ee0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwzfHxnb3VybWV0JTIwYnVyZ2VyJTIwZGFyayUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzc1Njc3NTUzfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Gourmet burger"
+      },
+      {
+        "category": "menu_pizza",
+        "url": "https://images.unsplash.com/photo-1622880833523-7cf1c0bd4296?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzl8MHwxfHNlYXJjaHwyfHx3b29kJTIwZmlyZWQlMjBwaXp6YXxlbnwwfHx8fDE3NzU2Nzc1NTN8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Wood fired pizza"
+      },
+      {
+        "category": "menu_drink",
+        "url": "https://images.unsplash.com/photo-1668431456502-a96f8619fd66?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwxfHxyZWZyZXNoaW5nJTIwY29ja3RhaWwlMjBkcmlua3xlbnwwfHx8fDE3NzU2Nzc1NTN8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Refreshing cocktail"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette, using Terracotta (#E05D36) for primary actions and Moss Green (#4A7C59) for success states.",
+    "Implement the customer QR menu using a mobile-first design with a sticky bottom cart using crystal glassmorphism (backdrop-blur-xl bg-white/70).",
+    "The Kitchen Dashboard should use a Kanban-style layout (Pending, Preparing, Ready) with large, touch-friendly cards and clear typography.",
+    "Use Outfit for all headings and Manrope for body text. Ensure all headings have tracking-tight applied.",
+    "Avoid using generic shadows. Use subtle 1px borders (border-border) to define containers and cards.",
+    "Ensure all interactive elements have data-testid attributes (e.g., data-testid='add-to-cart-button').",
+    "For the admin dashboard, utilize Shadcn UI components but strip away heavy shadows in favor of a clean, 'Grid Borders' look.",
+    "The KDS should optionally support a dark mode or high-contrast theme for better visibility in a kitchen environment.",
+    "Use lucide-react for icons.",
+    "Add 'data-testid' to all buttons, links, form inputs, menus, and order cards."
+  ]
+}
