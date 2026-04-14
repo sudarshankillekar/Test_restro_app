@@ -4,7 +4,6 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
-import { BACKEND_URL } from '../lib/config';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -28,10 +27,9 @@ const AuthCallback = () => {
           return;
         }
 
-        const response = await axios.post(
-          `${BACKEND_URL}/api/auth/google/session`,
-          { session_id: sessionId },
-          { withCredentials: true }
+        const response = await api.post(
+          `/api/auth/google/session`,
+          { session_id: sessionId }
         );
 
         setUser(response.data);
