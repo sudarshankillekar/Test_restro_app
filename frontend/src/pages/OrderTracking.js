@@ -5,7 +5,6 @@ import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
-import { BACKEND_URL } from '../lib/config';
 import { CheckCircle, Clock, ChefHat, Package, Loader2 } from 'lucide-react';
 
 const statusConfig = {
@@ -25,7 +24,7 @@ const OrderTracking = () => {
   useEffect(() => {
     const fetchOrder = async () => {
       try {
-        const response = await axios.get(`${BACKEND_URL}/api/orders/${orderId}`, {
+        const response = await api.get(`/api/orders/${orderId}`, {
           params: {
             customer_session_token: localStorage.getItem('customer_session') || '',
           },
