@@ -297,6 +297,8 @@ async def google_session(request: Request, response: Response):
     user = await db.users.find_one({"_id": result.inserted_id if not user else user["_id"]})
     response_user = await attach_restaurant_context(dict(user), db)
     return {
+       "access_token": access_token,   # ✅ ADD THIS
+        "token_type": "bearer", 
         "email": response_user["email"],
         "name": response_user["name"],
         "role": response_user["role"],
