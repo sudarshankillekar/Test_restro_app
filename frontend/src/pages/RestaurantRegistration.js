@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { toast } from 'sonner';
 import api from '../lib/api';
-import { BACKEND_URL } from '../lib/config';
 import { Building2, CheckCircle, Loader2 } from 'lucide-react';
 
 const RestaurantRegistration = () => {
@@ -27,7 +26,7 @@ const RestaurantRegistration = () => {
     setLoading(true);
 
     try {
-      await axios.post(`${BACKEND_URL}/api/restaurants/register`, formData);
+      await api.post(`/api/restaurants/register`, formData);
       setSuccess(true);
       toast.success('Registration submitted! Awaiting approval.');
     } catch (error) {
