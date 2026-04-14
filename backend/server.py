@@ -295,19 +295,20 @@ async def google_session(request: Request, response: Response):
         path="/"
     )
     
-    user = await db.users.find_one({"_id": result.inserted_id if not user else user["_id"]})
-    response_user = await attach_restaurant_context(dict(user), db)
-    return {
-       "access_token": access_token,   # ✅ ADD THIS
-        "token_type": "bearer", 
-        "email": response_user["email"],
-        "name": response_user["name"],
-        "role": response_user["role"],
-        "_id": response_user["_id"],
-        "restaurant_id": response_user.get("restaurant_id"),
-        "restaurant_name": response_user.get("restaurant_name"),
-        "restaurant_gst_number": response_user.get("restaurant_gst_number")
-    }
+response_user = await attach_restaurant_context(dict(user), db)
+
+return {
+    "email": response_user["email"],
+    "name": response_user["name"],
+    "role": response_user["role"],
+    "_id": response_user["_id"],
+    "restaurant_id": response_user.get("restaurant_id"),
+    "restaurant_name": response_user.get("restaurant_name"),
+    "restaurant_gst_number": response_user.get("restaurant_gst_number"),
+
+    # 🔥 REQUIRED
+    "access_token": access_token
+}
 
 # ============ Super Admin & Restaurant Management Endpoints ============
 
