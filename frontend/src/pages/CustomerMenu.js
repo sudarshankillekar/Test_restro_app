@@ -6,7 +6,6 @@ import { Badge } from '../components/ui/badge';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { toast } from 'sonner';
 import api from '../lib/api';
-import { BACKEND_URL } from '../lib/config';
 import { normalizeImageUrl } from '../lib/utils';
 import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles } from 'lucide-react';
 
@@ -35,8 +34,8 @@ const CustomerMenu = () => {
     try {
       const params = restId ? `?restaurant_id=${restId}` : '';
       const [catRes, itemsRes] = await Promise.all([
-        axios.get(`${BACKEND_URL}/api/menu/categories${params}`),
-        axios.get(`${BACKEND_URL}/api/menu/items${params}`),
+        api.get(`/api/menu/categories${params}`),
+        api.get(`/api/menu/items${params}`),
       ]);
       
       setCategories(catRes.data);
@@ -89,7 +88,7 @@ const CustomerMenu = () => {
         instructions: c.instructions || '',
       }));
 
-      const response = await axios.post(`${BACKEND_URL}/api/orders`, {
+      const response = await api.post(`/api/orders`, {
         customer_session_token: sessionToken,
         items: orderItems,
       });
@@ -278,3 +277,5 @@ const CustomerMenu = () => {
 };
 
 export default CustomerMenu;
+
+
