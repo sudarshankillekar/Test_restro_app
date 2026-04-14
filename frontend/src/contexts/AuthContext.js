@@ -38,12 +38,17 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [checkAuth]);
 
- const login = async (email, password) => {
+const login = async (email, password) => {
   const response = await api.post(`/api/auth/login`, {
     email,
     password,
   });
+
+
   localStorage.setItem("token", response.data.access_token);
+
+  setUser(response.data);
+
   return response.data;
 };
 
