@@ -284,29 +284,38 @@ async def google_session(request: Request, response: Response):
         "created_at": datetime.now(timezone.utc)
     })
     
-    # Set cookie
-    response.set_cookie(
-        key="access_token",
-        value= access_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=900,
-        path="/"
-    )
+ response.set_cookie(
+    key="access_token",
+    value=access_token,
+    httponly=True,
+    secure=False,
+    samesite="lax",
+    max_age=900,
+    path="/"
+)
 
- user = await db.users.find_one({"_id": result.inserted_id if not user else user["_id"]})
-    response_user = await attach_restaurant_context(dict(user), db)
-    return {
-        "email": response_user["email"],
-        "name": response_user["name"],
-        "role": response_user["role"],
-        "_id": response_user["_id"],
-        "restaurant_id": response_user.get("restaurant_id"),
-        "restaurant_name": response_user.get("restaurant_name"),
-        "restaurant_gst_number": response_user.get("restaurant_gst_number")
-         "access_token": access_token
-    }
+response.set_cookie(
+    key="refresh_token",
+    value=refresh_token,
+    httponly=True,
+    secure=False,
+    samesite="lax",
+    max_age=604800,
+    path="/"
+)
+
+ 
+response_user = await attach_restaurant_context(dict(user), db)
+return {
+    "email": response_user["email"],
+    "name": response_user["name"],
+    "role": response_user["role"],
+    "_id": response_user["_id"],
+    "restaurant_id": response_user.get("restaurant_id"),
+    "restaurant_name": response_user.get("restaurant_name"),
+    "restaurant_gst_number": response_user.get("restaurant_gst_number"),
+    "access_token": access_token
+}
 
 # ============ Super Admin & Restaurant Management Endpoints ============
 
