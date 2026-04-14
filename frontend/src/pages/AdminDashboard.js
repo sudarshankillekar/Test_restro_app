@@ -11,20 +11,9 @@ import { Switch } from '../components/ui/switch';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import { BACKEND_URL } from '../lib/config';
 import { normalizeImageUrl } from '../lib/utils';
 import { ChefHat, LogOut, Plus, TrendingUp, DollarSign, ShoppingBag, QrCode, Trash2, Download, Settings } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
-
-const getAuthHeaders = () => {
-  const token = localStorage.getItem("token");
-  return {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  };
-};
-
 
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
 
@@ -69,7 +58,7 @@ const AdminDashboard = () => {
     name: '',
     gst_number: '',
   });
-// eslint-disable-next-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (activeTab === 'analytics') fetchAnalytics();
     if (activeTab === 'menu') fetchMenu();
@@ -84,7 +73,7 @@ const AdminDashboard = () => {
 
   const fetchAnalytics = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/analytics/dashboard?period=${period}`, {
+      const response = await api.get(`/api/analytics/dashboard?period=${period}`, {
         withCredentials: true,
       });
       setAnalytics(response.data);
@@ -96,8 +85,8 @@ const AdminDashboard = () => {
   const fetchMenu = async () => {
     try {
       const [catRes, itemsRes] = await Promise.all([
-        axios.get(`${BACKEND_URL}/api/menu/categories`, { withCredentials: true }),
-        axios.get(`${BACKEND_URL}/api/menu/items`, { withCredentials: true }),
+        api.get(`/api/menu/categories`),
+        api.get(`/api/menu/items`),
       ]);
       setCategories(catRes.data);
       setMenuItems(itemsRes.data);
@@ -108,7 +97,7 @@ const AdminDashboard = () => {
 
   const fetchTables = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/tables`, {
+      const response = await api.get(`/api/tables`, {
         withCredentials: true,
       });
       setTables(response.data);
@@ -124,10 +113,9 @@ const AdminDashboard = () => {
     }
 
     try {
-      await axios.post(
-        `${BACKEND_URL}/api/menu/categories`,
-        { name: newCategory },
-        { withCredentials: true }
+      await api.post(
+        `/api/menu/categories`,
+        { name: newCategory }
       );
       toast.success('Category created');
       setNewCategory('');
@@ -151,10 +139,9 @@ const AdminDashboard = () => {
       return;
     }
     try {
-      await axios.post(
-        `${BACKEND_URL}/api/menu/items`,
-        { ...newItem, price: parseFloat(newItem.price) },
-        { withCredentials: true }
+      await api.post(
+        `/api/menu/items`,
+        { ...newItem, price: parseFloat(newItem.price) }
       );
       toast.success('Menu item created');
       setNewItem({ name: '', category_id: '', price: '', description: '', image: '' });
@@ -166,10 +153,9 @@ const AdminDashboard = () => {
 
   const toggleItemAvailability = async (itemId, available) => {
     try {
-      await axios.put(
-        `${BACKEND_URL}/api/menu/items/${itemId}`,
-        { available: !available },
-        { withCredentials: true }
+      await api.put(
+        `/api/menu/items/${itemId}`,
+        { available: !available }
       );
       fetchMenu();
     } catch (error) {
@@ -180,7 +166,7 @@ const AdminDashboard = () => {
   const deleteMenuItem = async (itemId) => {
     if (!window.confirm('Delete this item?')) return;
     try {
-      await axios.delete(`${BACKEND_URL}/api/menu/items/${itemId}`, {
+      await api.delete(`/api/menu/items/${itemId}`, {
         withCredentials: true,
       });
       toast.success('Item deleted');
@@ -205,10 +191,9 @@ const AdminDashboard = () => {
     }
 
     try {
-      await axios.post(
-        `${BACKEND_URL}/api/tables`,
-        { table_number: parseInt(newTableNumber) },
-        getAuthHeaders()
+      await api.post(
+        `/api/tables`,
+        { table_number: parseInt(newTableNumber) }
       );
       toast.success('Table created');
       setNewTableNumber('');
@@ -220,7 +205,7 @@ const AdminDashboard = () => {
 
   const exportSales = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/analytics/export`, {
+      const response = await api.get(`/api/analytics/export`, {
         params: exportFilters,
         withCredentials: true,
         responseType: 'blob',
@@ -242,7 +227,7 @@ const AdminDashboard = () => {
   const deleteTable = async (tableId) => {
     if (!window.confirm('Delete this table and its QR code?')) return;
     try {
-      await axios.delete(`${BACKEND_URL}/api/tables/${tableId}`, {
+      await api.delete(`/api/tables/${tableId}`, {
         withCredentials: true,
       });
       toast.success('Table deleted');
@@ -254,7 +239,7 @@ const AdminDashboard = () => {
 
   const fetchStaff = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/admin/staff`, {
+      const response = await api.get(`/api/admin/staff`, {
         withCredentials: true,
       });
       setStaff(response.data);
@@ -265,7 +250,7 @@ const AdminDashboard = () => {
 
   const fetchRestaurantProfile = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/restaurant/profile`, {
+      const response = await api.get(`/api/restaurant/profile`, {
         withCredentials: true,
       });
       setRestaurantProfile({
@@ -279,10 +264,9 @@ const AdminDashboard = () => {
 
   const saveRestaurantProfile = async () => {
     try {
-      const response = await axios.put(
-        `${BACKEND_URL}/api/restaurant/profile`,
-        { gst_number: restaurantProfile.gst_number.trim() },
-        { withCredentials: true }
+      const response = await api.put(
+        `/api/restaurant/profile`,
+        { gst_number: restaurantProfile.gst_number.trim() }
       );
       setRestaurantProfile({
         name: response.data.name || '',
@@ -296,10 +280,9 @@ const AdminDashboard = () => {
 
   const createStaff = async () => {
     try {
-      await axios.post(
-        `${BACKEND_URL}/api/admin/staff`,
-        newStaff,
-        { withCredentials: true }
+      await api.post(
+        `/api/admin/staff`,
+        newStaff
       );
       toast.success('Staff member created');
       setNewStaff({ email: '', password: '', name: '', role: 'kitchen' });
@@ -312,7 +295,7 @@ const AdminDashboard = () => {
   const deleteStaff = async (email) => {
     if (!window.confirm('Delete this staff member?')) return;
     try {
-      await axios.delete(`${BACKEND_URL}/api/admin/staff/${email}`, {
+      await api.delete(`/api/admin/staff/${email}`, {
         withCredentials: true,
       });
       toast.success('Staff member deleted');
