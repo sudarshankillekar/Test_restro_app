@@ -7,7 +7,6 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
-import { BACKEND_URL } from '../lib/config';
 import { BellRing, ChefHat, Clock, LogOut, Sparkles, UtensilsCrossed } from 'lucide-react';
 
 const statusTone = {
@@ -98,7 +97,7 @@ const KitchenDashboard = () => {
 
   const fetchOrders = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/orders`, {
+      const response = await api.get(`/api/orders`, {
         withCredentials: true,
       });
       setOrders(response.data.filter((order) => !['served', 'cancelled'].includes(order.status)));
@@ -111,10 +110,9 @@ const KitchenDashboard = () => {
 
   const updateStatus = async (orderId, status) => {
     try {
-      await axios.put(
-        `${BACKEND_URL}/api/orders/${orderId}/status`,
-        { status },
-        { withCredentials: true }
+      await api.put(
+        `/api/orders/${orderId}/status`,
+        { status }
       );
       toast.success(`Order marked as ${status}`);
     } catch (error) {
