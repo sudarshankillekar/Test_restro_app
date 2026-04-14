@@ -240,7 +240,6 @@ async def google_session(request: Request, response: Response):
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id required")
     
-    # Call Emergent Auth API
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
@@ -251,19 +250,16 @@ async def google_session(request: Request, response: Response):
         
         oauth_data = resp.json()
     
-    # Store/update user in DB
     email = oauth_data["email"].lower()
     user = await db.users.find_one({"email": email})
     
     if user:
-        # Update existing user
         await db.users.update_one(
             {"email": email},
             {"$set": {"name": oauth_data["name"], "picture": oauth_data.get("picture")}}
         )
         user_id = str(user["_id"])
     else:
-        # Create new admin user
         user_doc = {
             "email": email,
             "name": oauth_data["name"],
@@ -273,37 +269,45 @@ async def google_session(request: Request, response: Response):
         }
         result = await db.users.insert_one(user_doc)
         user_id = str(result.inserted_id)
+        user = user_doc  # IMPORTANT
     
-    # Store session token
-    session_token = oauth_data["session_token"]
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    await db.user_sessions.insert_one({
-        "user_id": user_id,
-        "session_token": session_token,
-        "expires_at": expires_at,
-        "created_at": datetime.now(timezone.utc)
-    })
+    # 🔥 CREATE TOKENS (THIS WAS MISSING)
+    access_token = create_access_token(user_id, email)
+    refresh_token = create_refresh_token(user_id)
     
- response.set_cookie(
-    key="access_token",
-    value=access_token,
-    httponly=True,
-    secure=False,
-    samesite="lax",
-    max_age=900,
-    path="/"
-)
+    # 🔥 SET COOKIES (CORRECTLY INDENTED)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=900,
+        path="/"
+    )
 
-response.set_cookie(
-    key="refresh_token",
-    value=refresh_token,
-    httponly=True,
-    secure=False,
-    samesite="lax",
-    max_age=604800,
-    path="/"
-)
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=604800,
+        path="/"
+    )
 
+    response_user = await attach_restaurant_context(dict(user), db)
+
+    return {
+        "email": response_user["email"],
+        "name": response_user["name"],
+        "role": response_user["role"],
+        "_id": response_user["_id"],
+        "restaurant_id": response_user.get("restaurant_id"),
+        "restaurant_name": response_user.get("restaurant_name"),
+        "restaurant_gst_number": response_user.get("restaurant_gst_number"),
+        "access_token": access_token
+    }
  
 response_user = await attach_restaurant_context(dict(user), db)
 return {
