@@ -11,7 +11,6 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
-import { BACKEND_URL } from '../lib/config';
 import { CreditCard, DollarSign, LogOut, Receipt, Wallet } from 'lucide-react';
 
 const formatPaymentMethod = (method) => {
@@ -38,7 +37,7 @@ const BillingDashboard = () => {
 
     const loadRestaurantProfile = async () => {
       try {
-        const response = await axios.get(`${BACKEND_URL}/api/restaurant/profile`, {
+        const response = await api.get(`/api/restaurant/profile`, {
           withCredentials: true,
         });
         setRestaurantProfile({
@@ -86,7 +85,7 @@ const BillingDashboard = () => {
 
   const fetchOrders = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/orders`, {
+      const response = await api.get(`/api/orders`, {
         withCredentials: true,
       });
       setOrders(response.data);
@@ -167,14 +166,13 @@ const BillingDashboard = () => {
     if (!selectedTable) return;
 
     try {
-      await axios.post(
-        `${BACKEND_URL}/api/payments`,
+      await api.post(
+        `/api/payments`,
         {
           order_ids: selectedTable.orders.map((order) => order.order_id),
           payment_method: paymentMethod,
           discount: parseFloat(discount) || 0,
-        },
-        { withCredentials: true }
+        }
       );
 
       toast.success('Bill completed successfully!');
