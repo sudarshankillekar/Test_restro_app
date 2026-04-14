@@ -11,7 +11,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import { BACKEND_URL } from '../lib/config';
 import { Crown, LogOut, Building2, TrendingUp, DollarSign, CheckCircle, XCircle, Clock, AlertTriangle, Download } from 'lucide-react';
 
 const SuperAdminDashboard = () => {
@@ -44,7 +43,7 @@ const SuperAdminDashboard = () => {
 
   const fetchRestaurants = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/super-admin/restaurants`, {
+      const response = await api.get(`/api/super-admin/restaurants`, {
         withCredentials: true,
       });
       setRestaurants(response.data);
@@ -57,7 +56,7 @@ const SuperAdminDashboard = () => {
 
   const fetchAnalytics = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/super-admin/analytics`, {
+      const response = await api.get(`/api/super-admin/analytics`, {
         withCredentials: true,
       });
       setAnalytics(response.data);
@@ -70,10 +69,9 @@ const SuperAdminDashboard = () => {
 
   const createRestaurant = async () => {
     try {
-      await axios.post(
-        `${BACKEND_URL}/api/super-admin/restaurants`,
-        newRestaurant,
-        { withCredentials: true }
+      await api.post(
+        `/api/super-admin/restaurants`,
+        newRestaurant
       );
       toast.success('Restaurant created successfully');
       setNewRestaurant({ name: '', owner_name: '', owner_email: '', owner_password: '', plan: 'BASIC' });
@@ -85,10 +83,9 @@ const SuperAdminDashboard = () => {
 
   const updateRestaurantStatus = async (restaurantId, status) => {
     try {
-      await axios.put(
-        `${BACKEND_URL}/api/super-admin/restaurants/${restaurantId}`,
-        { status },
-        { withCredentials: true }
+      await api.put(
+        `/api/super-admin/restaurants/${restaurantId}`,
+        { status }
       );
       toast.success(`Restaurant ${status.toLowerCase()}`);
       fetchRestaurants();
@@ -99,10 +96,9 @@ const SuperAdminDashboard = () => {
 
   const extendSubscription = async (restaurantId, days) => {
     try {
-      await axios.post(
-        `${BACKEND_URL}/api/super-admin/restaurants/${restaurantId}/extend`,
-        { days },
-        { withCredentials: true }
+      await api.post(
+        `/api/super-admin/restaurants/${restaurantId}/extend`,
+        { days }
       );
       toast.success(`Subscription extended by ${days} days`);
       fetchRestaurants();
@@ -123,7 +119,7 @@ const SuperAdminDashboard = () => {
         end_date: exportFilters.end_date || undefined,
         restaurant_id: exportFilters.restaurant_id === 'all' ? undefined : exportFilters.restaurant_id,
       };
-      const response = await axios.get(`${BACKEND_URL}/api/analytics/export`, {
+      const response = await api.get(`/api/analytics/export`, {
         params,
         withCredentials: true,
         responseType: 'blob',
