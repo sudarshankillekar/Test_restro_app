@@ -308,19 +308,6 @@ async def google_session(request: Request, response: Response):
         "restaurant_gst_number": response_user.get("restaurant_gst_number"),
         "access_token": access_token
     }
- 
-response_user = await attach_restaurant_context(dict(user), db)
-return {
-    "email": response_user["email"],
-    "name": response_user["name"],
-    "role": response_user["role"],
-    "_id": response_user["_id"],
-    "restaurant_id": response_user.get("restaurant_id"),
-    "restaurant_name": response_user.get("restaurant_name"),
-    "restaurant_gst_number": response_user.get("restaurant_gst_number"),
-    "access_token": access_token
-}
-
 # ============ Super Admin & Restaurant Management Endpoints ============
 
 @api_router.post("/super-admin/restaurants")
