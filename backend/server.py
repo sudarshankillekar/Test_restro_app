@@ -215,7 +215,7 @@ async def login(input: LoginRequest, request: Request, response: Response):
         "_id": response_user["_id"],
         "restaurant_id": response_user.get("restaurant_id"),
         "restaurant_name": response_user.get("restaurant_name"),
-        "restaurant_gst_number": response_user.get("restaurant_gst_number")
+        "restaurant_gst_number": response_user.get("restaurant_gst_number"),
         "access_token": access_token
     }
 
