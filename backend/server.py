@@ -286,12 +286,12 @@ async def google_session(request: Request, response: Response):
     
     # Set cookie
     response.set_cookie(
-        key="session_token",
-        value=session_token,
+        key="access_token",
+        value= access_token,
         httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=604800,
+        secure=False,
+        samesite="lax",
+        max_age=900,
         path="/"
     )
     
