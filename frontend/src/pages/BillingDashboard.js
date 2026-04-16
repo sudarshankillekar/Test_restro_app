@@ -19,6 +19,30 @@ const formatPaymentMethod = (method) => {
   return method.toUpperCase();
 };
 
+const summarizeBillItems = (orders = []) => {
+  const grouped = new Map();
+
+  orders.forEach((order) => {
+    (order.items || []).forEach((item) => {
+      const key = `${item.item_id || item.name}-${item.price}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.quantity += item.quantity;
+        existing.amount += item.quantity * item.price;
+        return;
+      }
+
+      grouped.set(key, {
+        name: item.name,
+        quantity: item.quantity,
+        amount: item.quantity * item.price,
+      });
+    });
+  });
+
+  return Array.from(grouped.values());
+};
+
 const BillingDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -239,9 +263,11 @@ const BillingDashboard = () => {
 
   const printBill = (bill) => {
     const payment = bill.payment || {};
-    const subtotal = payment.subtotal || bill.orders.reduce((sum, order) => sum + order.total, 0);
-    const tax = payment.tax || subtotal * 0.05;
-    const total = payment.total || subtotal + tax;
+    const summarizedItems = summarizeBillItems(bill.orders);
+    const lineItemsTotal = summarizedItems.reduce((sum, item) => sum + item.amount, 0);
+    const subtotal = payment.subtotal ?? lineItemsTotal;
+    const tax = payment.tax ?? subtotal * 0.05;
+    const total = payment.total ?? (subtotal + tax - (payment.discount || 0));
     const restaurantName = restaurantProfile.name || user?.restaurant_name || 'Restaurant';
     const gstNumber = restaurantProfile.gst_number?.trim();
     const popup = window.open('', '_blank', 'width=800,height=700');
@@ -250,11 +276,11 @@ const BillingDashboard = () => {
       return;
     }
 
-    const itemsHtml = bill.orders.flatMap((order) => order.items).map((item) => `
+    const itemsHtml = summarizedItems.map((item) => `
       <tr>
         <td>${item.name}</td>
         <td>${item.quantity}</td>
-        <td>Rs. ${(item.quantity * item.price).toFixed(2)}</td>
+        <td>Rs. ${item.amount.toFixed(2)}</td>
       </tr>
     `).join('');
 
