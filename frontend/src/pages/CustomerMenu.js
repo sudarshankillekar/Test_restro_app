@@ -9,6 +9,24 @@ import api from '../lib/api';
 import { normalizeImageUrl } from '../lib/utils';
 import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles } from 'lucide-react';
 
+const buildMenuParams = (tableId, restId) => {
+  const params = new URLSearchParams();
+  const sessionToken = localStorage.getItem('customer_session');
+
+  if (restId) {
+    params.set('restaurant_id', restId);
+  }
+  if (sessionToken) {
+    params.set('customer_session_token', sessionToken);
+  }
+  if (tableId) {
+    params.set('table_id', tableId);
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : '';
+};
+
 const CustomerMenu = () => {
   const { tableId } = useParams();
   const navigate = useNavigate();
@@ -20,19 +38,39 @@ const CustomerMenu = () => {
   const [restaurantId, setRestaurantId] = useState(null);
 
   useEffect(() => {
-    // Get restaurant_id from localStorage (set during session creation)
-    const storedRestaurantId = localStorage.getItem('restaurant_id');
-    if (storedRestaurantId) {
-      setRestaurantId(storedRestaurantId);
-      fetchMenu(storedRestaurantId);
-    } else {
-      fetchMenu(null);
-    }
-  }, []);
+   const initializeMenu = async () => {
+      const storedRestaurantId = localStorage.getItem('restaurant_id');
+      if (storedRestaurantId) {
+        setRestaurantId(storedRestaurantId);
+        fetchMenu(storedRestaurantId);
+        return;
+      }
+
+      const sessionToken = localStorage.getItem('customer_session');
+      if (!sessionToken) {
+        fetchMenu(null);
+        return;
+      }
+
+      try {
+        const response = await axios.get(`${BACKEND_URL}/api/customer/session/${sessionToken}`);
+        const resolvedRestaurantId = response.data?.restaurant_id || null;
+        if (resolvedRestaurantId) {
+          localStorage.setItem('restaurant_id', resolvedRestaurantId);
+          setRestaurantId(resolvedRestaurantId);
+        }
+        fetchMenu(resolvedRestaurantId);
+      } catch (error) {
+        fetchMenu(null);
+      }
+    };
+
+    initializeMenu();
+  }, [tableId]);
 
   const fetchMenu = async (restId) => {
     try {
-      const params = restId ? `?restaurant_id=${restId}` : '';
+      const params = buildMenuParams(tableId, restId);
       const [catRes, itemsRes] = await Promise.all([
         api.get(`/api/menu/categories${params}`),
         api.get(`/api/menu/items${params}`),
@@ -213,6 +251,11 @@ const CustomerMenu = () => {
             </AccordionItem>
           ))}
         </Accordion>
+              {!accordionCategories.length && (
+          <Card className="rounded-[28px] border border-border bg-white p-8 text-center text-muted-foreground shadow-[0_10px_30px_rgba(0,0,0,0.04)]">
+            No menu items are available for this table right now.
+          </Card>
+        )}
       </div>
 
       {/* Sticky Cart */}
