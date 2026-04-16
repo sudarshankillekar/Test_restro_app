@@ -135,7 +135,7 @@ async def get_restaurant_id_from_request(
 ):
     if restaurant_id:
         return restaurant_id
-  if customer_session_token:
+    if customer_session_token:
         session = await db.customer_sessions.find_one({"session_token": customer_session_token}, {"_id": 0, "restaurant_id": 1})
         if session and session.get("restaurant_id"):
             return session["restaurant_id"]
