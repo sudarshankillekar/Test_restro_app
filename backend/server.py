@@ -960,7 +960,7 @@ async def get_categories(
     table_id: str = None,
 ):
     """Get menu categories (public for customers, filtered by restaurant)"""
-       resolved_restaurant_id = await get_restaurant_id_from_request(
+    resolved_restaurant_id = await get_restaurant_id_from_request(
         request,
         restaurant_id,
         customer_session_token=customer_session_token,
@@ -1009,7 +1009,7 @@ async def get_menu_items(
     table_id: str = None,
 ):
     """Get menu items - filtered by restaurant for customers"""
-        resolved_restaurant_id = await get_restaurant_id_from_request(
+    resolved_restaurant_id = await get_restaurant_id_from_request(
         request,
         restaurant_id,
         customer_session_token=customer_session_token,
@@ -1122,7 +1122,7 @@ async def get_tables(
     table_id: str = None,
 ):
     """Get tables - filtered by restaurant for staff, or by restaurant_id param for customers"""
-        resolved_restaurant_id = await get_restaurant_id_from_request(
+    resolved_restaurant_id = await get_restaurant_id_from_request(
         request,
         restaurant_id,
         customer_session_token=customer_session_token,
@@ -1153,7 +1153,7 @@ async def create_table(input: TableCreate, request: Request):
 
     table_id = f"table_{secrets.token_hex(6)}"
     
-   # Prefer the actual admin app origin so generated QR codes stay valid in prod.
+    # Prefer the actual admin app origin so generated QR codes stay valid in prod.
     frontend_url = get_frontend_url(request)
     
     table_doc = {
@@ -1464,7 +1464,7 @@ async def get_order(order_id: str, request: Request, customer_session_token: str
 
     return response_order
     
-    @api_router.get("/admin/orders/search")
+@api_router.get("/admin/orders/search")
     async def search_order(order_id: str, request: Request):
       """Restaurant admin searches an order by order ID"""
     user = await get_current_user(request, db)
@@ -1551,7 +1551,7 @@ async def update_order_items(order_id: str, input: OrderItemsUpdate, request: Re
     await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'order_{order_id}')
     return enriched[0]
     
-    @api_router.delete("/admin/orders/{order_id}")
+@api_router.delete("/admin/orders/{order_id}")
     async def delete_order_admin(order_id: str, request: Request):
       """Restaurant admin deletes an order and unlinks it from any bill"""
     user = await get_current_user(request, db)
