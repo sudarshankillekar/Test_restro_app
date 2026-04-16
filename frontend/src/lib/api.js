@@ -3,6 +3,7 @@ import { BACKEND_URL } from "./config";
 
 const api = axios.create({
   baseURL: BACKEND_URL,
+  withCredentials: true,
 });
 
 // 🔥 Automatically attach token to every request

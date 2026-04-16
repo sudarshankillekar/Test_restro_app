@@ -68,10 +68,18 @@ class OrderItem(BaseModel):
     quantity: int
     instructions: Optional[str] = None
 
+class OrderItemUpdate(BaseModel):
+    item_id: str
+    quantity: int = Field(gt=0)
+    instructions: Optional[str] = None
+
 class OrderCreate(BaseModel):
     customer_session_token: str
     items: List[OrderItem]
 
+class OrderItemsUpdate(BaseModel):
+    items: List[OrderItemUpdate]
+    
 class OrderResponse(BaseModel):
     order_id: str
     table_id: str

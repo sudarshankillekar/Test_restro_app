@@ -87,11 +87,15 @@ const KitchenDashboard = () => {
     });
 
     socket.on('order_status_updated', upsertOrder);
+    socket.on('order_deleted', (payload) => {
+      setOrders((prev) => prev.filter((order) => order.order_id !== payload.order_id));
+    });
 
     return () => {
       socket.off('new_order');
       socket.off('kitchen_notification');
       socket.off('order_status_updated', upsertOrder);
+      socket.off('order_deleted');
     };
   }, [socket]);
 
@@ -110,10 +114,13 @@ const KitchenDashboard = () => {
 
   const updateStatus = async (orderId, status) => {
     try {
-      await api.put(
+     const response = await api.put(
         `/api/orders/${orderId}/status`,
         { status }
       );
+      setOrders((prev) => prev.map((order) => (
+      order.order_id === orderId ? response.data : order
+      )));
       toast.success(`Order marked as ${status}`);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to update status');
@@ -268,7 +275,7 @@ const KitchenDashboard = () => {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+               <CardContent className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
                 {group.orders.map((order) => {
                   const tone = statusTone[order.status] || statusTone.pending;
                   const priorityAddOn = order.is_add_on && group.orders.some((candidate) => (
@@ -282,10 +289,10 @@ const KitchenDashboard = () => {
                       className={`rounded-2xl border ${tone.border} bg-white p-4 space-y-4`}
                       data-testid={`order-card-${order.order_id}`}
                     >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-lg font-semibold">{order.order_id}</h3>
+                             <h3 className="text-base font-semibold">{order.order_id}</h3>
                             <Badge className={`rounded-full ${tone.badge}`}>{tone.label}</Badge>
                             {order.is_add_on && (
                               <Badge className={`rounded-full ${priorityAddOn ? 'bg-amber-100 text-amber-800' : 'bg-orange-50 text-orange-700'}`}>
@@ -293,7 +300,7 @@ const KitchenDashboard = () => {
                               </Badge>
                             )}
                           </div>
-                          <p className="text-sm text-muted-foreground">{order.customer_name}</p>
+                          <p className="text-sm text-muted-foreground truncate">{order.customer_name}</p>
                           <p className="text-xs text-muted-foreground">{new Date(order.created_at).toLocaleString()}</p>
                           {order.add_on_to_order_id && (
                             <p className="text-xs text-amber-700">Linked to {order.add_on_to_order_id}</p>
@@ -306,12 +313,13 @@ const KitchenDashboard = () => {
                         )}
                       </div>
 
-                      <div className="space-y-2">
+                    
+                        <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
                         {order.items.map((item, index) => (
-                          <div key={`${order.order_id}-${index}`} className="rounded-xl bg-accent px-4 py-3">
-                            <p className="font-medium">{item.quantity}x {item.name}</p>
+                          <div key={`${order.order_id}-${index}`} className="rounded-xl bg-accent px-3 py-2">
+                            <p className="font-medium text-sm">{item.quantity}x {item.name}</p>
                             {item.instructions && (
-                              <p className="text-sm text-muted-foreground mt-1">{item.instructions}</p>
+                             <p className="text-xs text-muted-foreground mt-1">{item.instructions}</p>
                             )}
                           </div>
                         ))}

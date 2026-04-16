@@ -5,7 +5,8 @@ import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
-import { CheckCircle, Clock, ChefHat, Package, Loader2 } from 'lucide-react';
+import { CheckCircle, Clock, ChefHat, Download, Package, Loader2 } from 'lucide-react';
+
 
 const statusConfig = {
   pending: { color: 'bg-gray-500', icon: Clock, label: 'Pending' },
@@ -46,7 +47,15 @@ const OrderTracking = () => {
 
     const handleOrderUpdate = (updatedOrder) => {
       if (updatedOrder.order_id === orderId) {
-        setOrder(updatedOrder);
+       api.get(`${BACKEND_URL}/api/orders/${orderId}`, {
+          params: {
+            customer_session_token: localStorage.getItem('customer_session') || '',
+          },
+        }).then((response) => {
+          setOrder(response.data);
+        }).catch(() => {
+          setOrder((prev) => ({ ...prev, ...updatedOrder }));
+        });
         toast.success(`Order status: ${updatedOrder.status}`);
       }
     };
@@ -78,7 +87,74 @@ const OrderTracking = () => {
   const tableSummary = order.table_order_summary;
   const activeTableOrders = tableSummary?.orders || [];
   const combinedTotal = tableSummary?.combined_total ?? order.total;
+   const billSummary = order.bill_summary;
 
+  const downloadBill = () => {
+    if (!billSummary?.payment) {
+      toast.error('Bill is not available yet.');
+      return;
+    }
+
+    const payment = billSummary.payment;
+    const restaurantName = billSummary.restaurant_name || 'Restaurant';
+    const gstNumber = billSummary.restaurant_gst_number?.trim();
+    const itemsHtml = billSummary.orders.flatMap((tableOrder) => tableOrder.items).map((item) => `
+      <tr>
+        <td>${item.name}</td>
+        <td>${item.quantity}</td>
+        <td>Rs. ${(item.price * item.quantity).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    const billHtml = `
+      <html>
+        <head>
+          <title>${restaurantName} - ${billSummary.bill_id}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+            h1, p { margin: 0 0 12px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; }
+            .header { border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
+            .totals { margin-top: 20px; width: 320px; margin-left: auto; }
+            .totals div { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .strong { font-weight: 700; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${restaurantName}</h1>
+            <p>Bill ID: ${billSummary.bill_id}</p>
+            ${gstNumber ? `<p>GST Number: ${gstNumber}</p>` : ''}
+          </div>
+          <p>${order.table_label || `Table ${order.table_id}`}</p>
+          <p>Customer: ${order.customer_name}</p>
+          <p>Payment Method: ${(payment.payment_method || 'N/A').toUpperCase()}</p>
+          <p>Generated At: ${new Date(payment.created_at || Date.now()).toLocaleString()}</p>
+          <table>
+            <thead>
+              <tr><th>Item</th><th>Qty</th><th>Amount</th></tr>
+            </thead>
+            <tbody>${itemsHtml}</tbody>
+          </table>
+          <div class="totals">
+            <div><span>Subtotal</span><span>Rs. ${(payment.subtotal || 0).toFixed(2)}</span></div>
+            <div><span>Tax (5%)</span><span>Rs. ${(payment.tax || 0).toFixed(2)}</span></div>
+            <div><span>Discount</span><span>Rs. ${(payment.discount || 0).toFixed(2)}</span></div>
+            <div class="strong"><span>Total</span><span>Rs. ${(payment.total || 0).toFixed(2)}</span></div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const blob = new Blob([billHtml], { type: 'text/html;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${billSummary.bill_id || order.order_id}-bill.html`;
+    link.click();
+    window.URL.revokeObjectURL(url);
+  };
   return (
     <div className="min-h-screen p-6" style={{ background: '#F9F8F6' }}>
       <div className="max-w-2xl mx-auto space-y-6">
@@ -124,7 +200,16 @@ const OrderTracking = () => {
                 </div>
               )}
             </div>
-
+               {billSummary?.payment && (
+              <button
+                type="button"
+                onClick={downloadBill}
+                className="w-full rounded-full bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-[#C54E2C]"
+              >
+                <Download className="inline-block w-4 h-4 mr-2" />
+                Download Bill
+              </button>
+            )}
             <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
               <p className="text-sm text-blue-900">
                 {order.status === 'pending' && 'Your order is being reviewed by the kitchen.'}

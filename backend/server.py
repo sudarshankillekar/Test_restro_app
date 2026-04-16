@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 import socketio
 import uvicorn
 
@@ -31,12 +32,23 @@ from subscription import (
 )
 from models import (
     LoginRequest, RegisterRequest, UserResponse, MenuItemCreate, MenuItemUpdate,
-    TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, OrderResponse,
+    TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, OrderItemsUpdate, OrderResponse,
     PaymentCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
 from xlsx_export import build_xlsx_bytes
 import jwt
 import secrets
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+       allow_origins=os.environ.get('CORS_ORIGINS', 'http://127.0.0.1:3000,http://localhost:3000,http://192.168.29.241:3000').split(','),
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -215,8 +227,7 @@ async def login(input: LoginRequest, request: Request, response: Response):
         "_id": response_user["_id"],
         "restaurant_id": response_user.get("restaurant_id"),
         "restaurant_name": response_user.get("restaurant_name"),
-        "restaurant_gst_number": response_user.get("restaurant_gst_number"),
-        "access_token": access_token
+        "restaurant_gst_number": response_user.get("restaurant_gst_number")
     }
 
 @api_router.get("/auth/me")
@@ -240,6 +251,7 @@ async def google_session(request: Request, response: Response):
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id required")
     
+    # Call Emergent Auth API
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
@@ -250,16 +262,19 @@ async def google_session(request: Request, response: Response):
         
         oauth_data = resp.json()
     
+    # Store/update user in DB
     email = oauth_data["email"].lower()
     user = await db.users.find_one({"email": email})
     
     if user:
+        # Update existing user
         await db.users.update_one(
             {"email": email},
             {"$set": {"name": oauth_data["name"], "picture": oauth_data.get("picture")}}
         )
         user_id = str(user["_id"])
     else:
+        # Create new admin user
         user_doc = {
             "email": email,
             "name": oauth_data["name"],
@@ -269,45 +284,42 @@ async def google_session(request: Request, response: Response):
         }
         result = await db.users.insert_one(user_doc)
         user_id = str(result.inserted_id)
-        user = user_doc  # IMPORTANT
     
-    # 🔥 CREATE TOKENS (THIS WAS MISSING)
-    access_token = create_access_token(user_id, email)
-    refresh_token = create_refresh_token(user_id)
+    # Store session token
+    session_token = oauth_data["session_token"]
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at,
+        "created_at": datetime.now(timezone.utc)
+    })
     
-    # 🔥 SET COOKIES (CORRECTLY INDENTED)
+    # Set cookie
     response.set_cookie(
-        key="access_token",
-        value=access_token,
+        key="session_token",
+        value=session_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
-        max_age=900,
-        path="/"
-    )
-
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
         max_age=604800,
         path="/"
     )
-
+    
+    user = await db.users.find_one({"_id": result.inserted_id if not user else user["_id"]})
     response_user = await attach_restaurant_context(dict(user), db)
-
     return {
+       "access_token": access_token,   # ✅ ADD THIS
+        "token_type": "bearer", 
         "email": response_user["email"],
         "name": response_user["name"],
         "role": response_user["role"],
         "_id": response_user["_id"],
         "restaurant_id": response_user.get("restaurant_id"),
         "restaurant_name": response_user.get("restaurant_name"),
-        "restaurant_gst_number": response_user.get("restaurant_gst_number"),
-        "access_token": access_token
+        "restaurant_gst_number": response_user.get("restaurant_gst_number")
     }
+
 # ============ Super Admin & Restaurant Management Endpoints ============
 
 @api_router.post("/super-admin/restaurants")
@@ -1105,6 +1117,41 @@ def build_table_order_summary(orders):
         "orders": active_orders,
     }
 
+async def build_order_bill_summary(order_doc):
+    payment = order_doc.get("payment")
+    if not payment:
+        return None
+
+    bill_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+    if not bill_order_ids:
+        return None
+
+    bill_orders = await db.orders.find(
+        {
+            "order_id": {"$in": bill_order_ids},
+            "restaurant_id": order_doc.get("restaurant_id"),
+        },
+        {"_id": 0}
+    ).sort("created_at", 1).to_list(len(bill_order_ids))
+    if not bill_orders:
+        return None
+
+    enriched_bill_orders = await enrich_orders(bill_orders)
+    restaurant = None
+    if order_doc.get("restaurant_id"):
+        restaurant = await db.restaurants.find_one(
+            {"restaurant_id": order_doc["restaurant_id"]},
+            {"_id": 0, "name": 1, "gst_number": 1}
+        )
+
+    return {
+        "bill_id": payment.get("bill_id") or payment.get("payment_id"),
+        "payment": payment,
+        "orders": enriched_bill_orders,
+        "restaurant_name": restaurant.get("name") if restaurant else None,
+        "restaurant_gst_number": restaurant.get("gst_number") if restaurant else None,
+    }
+
 @api_router.delete("/tables/{table_id}")
 async def delete_table(table_id: str, request: Request):
     """Delete a table"""
@@ -1302,8 +1349,165 @@ async def get_order(order_id: str, request: Request, customer_session_token: str
         }, {"_id": 0}).sort("created_at", 1).to_list(100)
         enriched_related_orders = await enrich_orders(related_orders)
         response_order["table_order_summary"] = build_table_order_summary(enriched_related_orders)
+        response_order["bill_summary"] = await build_order_bill_summary(response_order)
 
     return response_order
+    
+    @api_router.get("/admin/orders/search")
+    async def search_order(order_id: str, request: Request):
+      """Restaurant admin searches an order by order ID"""
+    user = await get_current_user(request, db)
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Restaurant admin access required")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    normalized_order_id = (order_id or "").strip()
+    if not normalized_order_id:
+        raise HTTPException(status_code=400, detail="Please enter an order ID to search.")
+
+    order = await db.orders.find_one(
+        {"order_id": normalized_order_id, "restaurant_id": restaurant_id},
+        {"_id": 0}
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    enriched = await enrich_orders([order])
+    return enriched[0]
+
+@api_router.put("/orders/{order_id}/items")
+async def update_order_items(order_id: str, input: OrderItemsUpdate, request: Request):
+    """Update order items before billing"""
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    if not input.items:
+        raise HTTPException(status_code=400, detail="Please keep at least one item in the order.")
+
+    order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("payment_status") == "completed":
+        raise HTTPException(status_code=400, detail="Completed bills cannot be edited.")
+
+    existing_item_ids = {item.get("item_id") for item in order.get("items", [])}
+    requested_item_ids = [item.item_id for item in input.items]
+    if any(item_id not in existing_item_ids for item_id in requested_item_ids):
+        raise HTTPException(status_code=400, detail="Only items already in the order can be edited.")
+
+    menu_items = await db.menu_items.find(
+        {"item_id": {"$in": requested_item_ids}, "restaurant_id": restaurant_id},
+        {"_id": 0, "item_id": 1, "name": 1, "price": 1}
+    ).to_list(len(requested_item_ids))
+    menu_item_map = {item["item_id"]: item for item in menu_items}
+    if len(menu_item_map) != len(set(requested_item_ids)):
+        raise HTTPException(status_code=404, detail="One or more menu items were not found.")
+
+    updated_items = []
+    total = 0
+    for item in input.items:
+        menu_item = menu_item_map[item.item_id]
+        updated_item = {
+            "item_id": menu_item["item_id"],
+            "name": menu_item["name"],
+            "quantity": item.quantity,
+            "price": menu_item["price"],
+            "instructions": (item.instructions or "").strip(),
+        }
+        updated_items.append(updated_item)
+        total += updated_item["quantity"] * updated_item["price"]
+
+    await db.orders.update_one(
+        {"order_id": order_id, "restaurant_id": restaurant_id},
+        {"$set": {
+            "items": updated_items,
+            "total": round(total, 2),
+            "updated_at": datetime.now(timezone.utc),
+        }}
+    )
+
+    updated_order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id}, {"_id": 0})
+    enriched = await enrich_orders([updated_order])
+    await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'restaurant_{restaurant_id}')
+    await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'order_{order_id}')
+    return enriched[0]
+    
+    @api_router.delete("/admin/orders/{order_id}")
+    async def delete_order_admin(order_id: str, request: Request):
+      """Restaurant admin deletes an order and unlinks it from any bill"""
+    user = await get_current_user(request, db)
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Restaurant admin access required")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    payment = await db.payments.find_one(
+        {
+            "restaurant_id": restaurant_id,
+            "$or": [
+                {"order_id": order_id},
+                {"order_ids": order_id},
+            ]
+        },
+        {"_id": 0}
+    )
+
+    if payment:
+        linked_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+        remaining_order_ids = [linked_order_id for linked_order_id in linked_order_ids if linked_order_id != order_id]
+
+        if remaining_order_ids:
+            remaining_orders = await db.orders.find(
+                {"order_id": {"$in": remaining_order_ids}, "restaurant_id": restaurant_id},
+                {"_id": 0, "total": 1}
+            ).to_list(len(remaining_order_ids))
+            remaining_subtotal = round(sum(item.get("total", 0) for item in remaining_orders), 2)
+            remaining_tax = round(remaining_subtotal * 0.05, 2)
+            discount = payment.get("discount", 0) or 0
+            await db.payments.update_one(
+                {"payment_id": payment["payment_id"], "restaurant_id": restaurant_id},
+                {"$set": {
+                    "order_id": remaining_order_ids[0],
+                    "order_ids": remaining_order_ids,
+                    "subtotal": remaining_subtotal,
+                    "tax": remaining_tax,
+                    "total": remaining_subtotal + remaining_tax - discount,
+                    "updated_at": datetime.now(timezone.utc),
+                }}
+            )
+        else:
+            await db.payments.delete_one({"payment_id": payment["payment_id"], "restaurant_id": restaurant_id})
+
+    result = await db.orders.delete_one({"order_id": order_id, "restaurant_id": restaurant_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    await sio.emit('order_deleted', {
+        "order_id": order_id,
+        "restaurant_id": restaurant_id,
+        "table_id": order.get("table_id"),
+    }, room=f'restaurant_{restaurant_id}')
+    await sio.emit('order_deleted', {
+        "order_id": order_id,
+        "restaurant_id": restaurant_id,
+        "table_id": order.get("table_id"),
+    }, room=f'order_{order_id}')
+
+    return {"message": "Order deleted successfully"}
 
 @api_router.put("/orders/{order_id}/status")
 async def update_order_status(order_id: str, request: Request):
@@ -1348,6 +1552,8 @@ async def update_order_status(order_id: str, request: Request):
     await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'order_{order_id}')
     
     return enriched[0]
+
+
 
 # ============ Payment Endpoints ============
 @api_router.post("/payments")

@@ -11,7 +11,8 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
-import { CreditCard, DollarSign, LogOut, Receipt, Wallet } from 'lucide-react';
+import { CreditCard, DollarSign, LogOut, Pencil, Receipt, Trash2, Wallet } from 'lucide-react';
+
 
 const formatPaymentMethod = (method) => {
   if (!method) return 'N/A';
@@ -27,6 +28,8 @@ const BillingDashboard = () => {
   const [selectedTable, setSelectedTable] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [discount, setDiscount] = useState(0);
+  const [editingOrder, setEditingOrder] = useState(null);
+  const [editingItems, setEditingItems] = useState([]);
   const [restaurantProfile, setRestaurantProfile] = useState({
     name: '',
     gst_number: '',
@@ -76,10 +79,13 @@ const BillingDashboard = () => {
 
     socket.on('new_order', upsertOrder);
     socket.on('order_status_updated', upsertOrder);
-
+    socket.on('order_deleted', (payload) => {
+      setOrders((prev) => prev.filter((order) => order.order_id !== payload.order_id));
+    });
     return () => {
       socket.off('new_order', upsertOrder);
       socket.off('order_status_updated', upsertOrder);
+      socket.off('order_deleted');
     };
   }, [socket]);
 
@@ -163,13 +169,14 @@ const BillingDashboard = () => {
   };
 
   const processPayment = async () => {
-    if (!selectedTable) return;
+     if (!currentSelectedTable) return;
+    
 
     try {
       await api.post(
         `/api/payments`,
         {
-          order_ids: selectedTable.orders.map((order) => order.order_id),
+          order_ids: currentSelectedTable.orders.map((order) => order.order_id),
           payment_method: paymentMethod,
           discount: parseFloat(discount) || 0,
         }
@@ -181,6 +188,52 @@ const BillingDashboard = () => {
       fetchOrders();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Payment failed');
+    }
+  };
+
+   const openEditOrder = (order) => {
+    setEditingOrder(order);
+    setEditingItems(order.items.map((item) => ({ ...item })));
+  };
+
+  const updateEditingQuantity = (itemId, nextQuantity) => {
+    if (nextQuantity <= 0) {
+      setEditingItems((prev) => prev.filter((item) => item.item_id !== itemId));
+      return;
+    }
+
+    setEditingItems((prev) => prev.map((item) => (
+      item.item_id === itemId ? { ...item, quantity: nextQuantity } : item
+    )));
+  };
+
+  const saveOrderChanges = async () => {
+    if (!editingOrder) return;
+    if (editingItems.length === 0) {
+      toast.error('Please keep at least one item in the order.');
+      return;
+    }
+
+    try {
+      const response = await axios.put(
+        `${BACKEND_URL}/api/orders/${editingOrder.order_id}/items`,
+        {
+          items: editingItems.map((item) => ({
+            item_id: item.item_id,
+            quantity: item.quantity,
+            instructions: item.instructions || '',
+          })),
+        },
+        { withCredentials: true }
+      );
+      setOrders((prev) => prev.map((order) => (
+        order.order_id === editingOrder.order_id ? response.data : order
+      )));
+      setEditingOrder(null);
+      setEditingItems([]);
+      toast.success('Order updated');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to update order');
     }
   };
 
@@ -254,6 +307,11 @@ const BillingDashboard = () => {
     `);
     popup.document.close();
   };
+
+  const currentSelectedTable = useMemo(() => {
+    if (!selectedTable) return null;
+    return preparedGroups.find((group) => group.table_id === selectedTable.table_id) || selectedTable;
+  }, [preparedGroups, selectedTable]);
 
   if (loading) {
     return (
@@ -353,14 +411,36 @@ const BillingDashboard = () => {
                             <DialogTitle>Process Payment - {group.table_label}</DialogTitle>
                           </DialogHeader>
                           <div className="space-y-4 py-4">
+                                   <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                              {currentSelectedTable?.orders.map((order) => (
+                                <div key={order.order_id} className="rounded-xl border border-border bg-accent/60 p-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <p className="font-medium text-sm">{order.order_id}</p>
+                                      <p className="text-xs text-muted-foreground">{order.items.length} item{order.items.length > 1 ? 's' : ''}</p>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="rounded-full"
+                                      onClick={() => openEditOrder(order)}
+                                    >
+                                      <Pencil className="w-3.5 h-3.5 mr-1" />
+                                      Edit
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                             <div className="space-y-2">
                               <div className="flex justify-between">
                                 <span>Subtotal</span>
-                                <span>₹{calculateBill(group).subtotal.toFixed(2)}</span>
+                                  <span>₹{calculateBill(currentSelectedTable || group).subtotal.toFixed(2)}</span> 
                               </div>
                               <div className="flex justify-between">
-                                <span>Tax (5%)</span>
-                                <span>₹{calculateBill(group).tax.toFixed(2)}</span>
+                                <span>Tax (5%)</span>       
+                                <span>₹{calculateBill(currentSelectedTable || group).tax.toFixed(2)}</span>
                               </div>
                               <div className="flex justify-between items-center">
                                 <Label htmlFor="discount">Discount</Label>
@@ -375,7 +455,7 @@ const BillingDashboard = () => {
                               </div>
                               <div className="flex justify-between font-bold text-lg border-t pt-2">
                                 <span>Total</span>
-                                <span className="text-primary">₹{calculateBill(group).total.toFixed(2)}</span>
+                              <span className="text-primary">₹{calculateBill(currentSelectedTable || group).total.toFixed(2)}</span>  
                               </div>
                             </div>
                             <div className="space-y-2">
@@ -471,6 +551,66 @@ const BillingDashboard = () => {
           </div>
         </div>
       </div>
+       <Dialog open={Boolean(editingOrder)} onOpenChange={(open) => {
+        if (!open) {
+          setEditingOrder(null);
+          setEditingItems([]);
+        }
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Order {editingOrder?.order_id}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 max-h-[70vh] overflow-y-auto">
+            {editingItems.map((item) => (
+              <div key={item.item_id} className="rounded-xl border border-border p-3 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium">{item.name}</p>
+                    <p className="text-xs text-muted-foreground">₹{item.price.toFixed(2)} each</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="rounded-full text-destructive"
+                    onClick={() => updateEditingQuantity(item.item_id, 0)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full"
+                    onClick={() => updateEditingQuantity(item.item_id, item.quantity - 1)}
+                  >
+                    -
+                  </Button>
+                  <div className="min-w-[3rem] text-center font-semibold">{item.quantity}</div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full"
+                    onClick={() => updateEditingQuantity(item.item_id, item.quantity + 1)}
+                  >
+                    +
+                  </Button>
+                  <div className="ml-auto font-semibold text-primary">
+                    ₹{(item.quantity * item.price).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <Button onClick={saveOrderChanges} className="w-full rounded-full bg-primary hover:bg-[#C54E2C]">
+              Save Order Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

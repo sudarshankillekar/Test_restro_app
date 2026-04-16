@@ -28,7 +28,8 @@ const AdminDashboard = () => {
   const [analytics, setAnalytics] = useState(null);
   const [period, setPeriod] = useState('daily');
   const [exportFilters, setExportFilters] = useState({ start_date: '', end_date: '' });
-  
+  const [orderSearchId, setOrderSearchId] = useState('');
+  const [searchedOrder, setSearchedOrder] = useState(null);
   // Menu state
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
@@ -292,6 +293,40 @@ const AdminDashboard = () => {
     }
   };
 
+   const searchOrder = async () => {
+    if (!orderSearchId.trim()) {
+      toast.error('Please enter an order ID to search.');
+      return;
+    }
+    try {
+      const response = await axios.get(`${BACKEND_URL}/api/admin/orders/search`, {
+        params: { order_id: orderSearchId.trim() },
+        withCredentials: true,
+      });
+      setSearchedOrder(response.data);
+      toast.success('Order found');
+    } catch (error) {
+      setSearchedOrder(null);
+      toast.error(getErrorMessage(error, 'Failed to search order'));
+    }
+  };
+
+  const deleteOrder = async () => {
+    if (!searchedOrder) return;
+    if (!window.confirm(`Delete order ${searchedOrder.order_id}?`)) return;
+    try {
+      await axios.delete(`${BACKEND_URL}/api/admin/orders/${searchedOrder.order_id}`, {
+        withCredentials: true,
+      });
+      toast.success('Order deleted');
+      setSearchedOrder(null);
+      setOrderSearchId('');
+      fetchAnalytics();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to delete order'));
+    }
+  };
+
   const deleteStaff = async (email) => {
     if (!window.confirm('Delete this staff member?')) return;
     try {
@@ -405,7 +440,48 @@ const AdminDashboard = () => {
                 </Button>
               </div>
             </div>
-
+               <Card className="border-border rounded-2xl">
+              <CardHeader>
+                <CardTitle>Search Order ID</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    value={orderSearchId}
+                    onChange={(e) => setOrderSearchId(e.target.value.toUpperCase())}
+                    placeholder="Enter order ID"
+                    className="rounded-full"
+                    data-testid="search-order-id-input"
+                  />
+                  <Button onClick={searchOrder} className="rounded-full bg-primary hover:bg-[#C54E2C]">
+                    Search Order
+                  </Button>
+                </div>
+                {searchedOrder && (
+                  <div className="rounded-2xl border border-border bg-accent/60 p-4 space-y-3">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-semibold">{searchedOrder.order_id}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {searchedOrder.table_label || `Table ${searchedOrder.table_id}`} • {searchedOrder.customer_name}
+                        </p>
+                      </div>
+                      <div className="text-sm font-medium">
+                        ₹{searchedOrder.payment?.total?.toFixed?.(2) || searchedOrder.total.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>Status: {searchedOrder.status}</span>
+                      <span>Payment: {searchedOrder.payment_status}</span>
+                      {searchedOrder.payment?.bill_id && <span>Bill: {searchedOrder.payment.bill_id}</span>}
+                    </div>
+                    <Button variant="destructive" className="rounded-full" onClick={deleteOrder}>
+                      Delete Order
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
             {analytics && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
                 <Card className="border-border rounded-2xl">
