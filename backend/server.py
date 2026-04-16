@@ -127,10 +127,23 @@ async def resolve_restaurant_access(request: Request, allowed_roles: list[str], 
     return user, user_restaurant_id
 
 
-async def get_restaurant_id_from_request(request: Request, restaurant_id: Optional[str] = None):
+async def get_restaurant_id_from_request(
+    request: Request,
+    restaurant_id: Optional[str] = None,
+    customer_session_token: Optional[str] = None,
+    table_id: Optional[str] = None,
+):
     if restaurant_id:
         return restaurant_id
+  if customer_session_token:
+        session = await db.customer_sessions.find_one({"session_token": customer_session_token}, {"_id": 0, "restaurant_id": 1})
+        if session and session.get("restaurant_id"):
+            return session["restaurant_id"]
 
+    if table_id:
+        table = await db.tables.find_one({"table_id": table_id}, {"_id": 0, "restaurant_id": 1})
+        if table and table.get("restaurant_id"):
+            return table["restaurant_id"]
     try:
         _, resolved_restaurant_id = await resolve_restaurant_access(
             request,
@@ -933,15 +946,26 @@ async def get_customer_session(token: str):
     
     return {
         "table_id": session["table_id"],
+         "restaurant_id": session.get("restaurant_id"),
         "customer_name": session["customer_name"],
         "phone": session["phone"]
     }
 
 # ============ Menu Endpoints ============
 @api_router.get("/menu/categories")
-async def get_categories(request: Request, restaurant_id: str = None):
+async def get_categories(
+    request: Request,
+    restaurant_id: str = None,
+    customer_session_token: str = None,
+    table_id: str = None,
+):
     """Get menu categories (public for customers, filtered by restaurant)"""
-    resolved_restaurant_id = await get_restaurant_id_from_request(request, restaurant_id)
+     resolved_restaurant_id = await get_restaurant_id_from_request(
+        request,
+        restaurant_id,
+        customer_session_token=customer_session_token,
+        table_id=table_id,
+    )
     query = {"restaurant_id": resolved_restaurant_id}
     categories = await db.menu_categories.find(query, {"_id": 0}).sort("order", 1).to_list(100)
     return categories
@@ -978,9 +1002,19 @@ async def create_category(input: CategoryCreate, request: Request):
     return {k: v for k, v in cat_doc.items() if k != "_id"}
 
 @api_router.get("/menu/items")
-async def get_menu_items(request: Request, restaurant_id: str = None):
+async def get_menu_items(
+    request: Request,
+    restaurant_id: str = None,
+    customer_session_token: str = None,
+    table_id: str = None,
+):
     """Get menu items - filtered by restaurant for customers"""
-    resolved_restaurant_id = await get_restaurant_id_from_request(request, restaurant_id)
+     resolved_restaurant_id = await get_restaurant_id_from_request(
+        request,
+        restaurant_id,
+        customer_session_token=customer_session_token,
+        table_id=table_id,
+    )
     query = {"restaurant_id": resolved_restaurant_id}
     items = await db.menu_items.find(query, {"_id": 0}).to_list(1000)
     return items
@@ -1081,9 +1115,19 @@ async def delete_menu_item(item_id: str, request: Request):
 
 # ============ Table Endpoints ============
 @api_router.get("/tables")
-async def get_tables(request: Request = None, restaurant_id: str = None):
+async def get_tables(
+    request: Request = None,
+    restaurant_id: str = None,
+    customer_session_token: str = None,
+    table_id: str = None,
+):
     """Get tables - filtered by restaurant for staff, or by restaurant_id param for customers"""
-    resolved_restaurant_id = await get_restaurant_id_from_request(request, restaurant_id)
+     resolved_restaurant_id = await get_restaurant_id_from_request(
+        request,
+        restaurant_id,
+        customer_session_token=customer_session_token,
+        table_id=table_id,
+    )
     query = {"restaurant_id": resolved_restaurant_id}
     
     tables = await db.tables.find(query, {"_id": 0}).sort("table_number", 1).to_list(1000)
