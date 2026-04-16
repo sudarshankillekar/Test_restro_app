@@ -960,7 +960,7 @@ async def get_categories(
     table_id: str = None,
 ):
     """Get menu categories (public for customers, filtered by restaurant)"""
-     resolved_restaurant_id = await get_restaurant_id_from_request(
+       resolved_restaurant_id = await get_restaurant_id_from_request(
         request,
         restaurant_id,
         customer_session_token=customer_session_token,
@@ -1009,7 +1009,7 @@ async def get_menu_items(
     table_id: str = None,
 ):
     """Get menu items - filtered by restaurant for customers"""
-     resolved_restaurant_id = await get_restaurant_id_from_request(
+        resolved_restaurant_id = await get_restaurant_id_from_request(
         request,
         restaurant_id,
         customer_session_token=customer_session_token,
@@ -1122,7 +1122,7 @@ async def get_tables(
     table_id: str = None,
 ):
     """Get tables - filtered by restaurant for staff, or by restaurant_id param for customers"""
-     resolved_restaurant_id = await get_restaurant_id_from_request(
+        resolved_restaurant_id = await get_restaurant_id_from_request(
         request,
         restaurant_id,
         customer_session_token=customer_session_token,
@@ -1425,7 +1425,7 @@ async def get_orders(request: Request, status: str = None):
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str, request: Request, customer_session_token: str = None):
     """Get single order (customer tracking)"""
-    query = {"order_id": order_id}
+       query = {"order_id": order_id}
 
     try:
         user = await get_current_user(request, db)
