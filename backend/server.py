@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from typing import Optional
+from urllib.parse import urlparse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 import socketio
@@ -155,10 +156,77 @@ def build_date_match(start_date: Optional[str] = None, end_date: Optional[str] =
 
 def to_socket_payload(data):
     return jsonable_encoder(data)
+def parse_bool_env(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_cookie_settings(request: Optional[Request] = None) -> dict:
+    forwarded_proto = request.headers.get("x-forwarded-proto") if request else None
+    request_scheme = request.url.scheme if request else None
+    secure_default = (forwarded_proto or request_scheme or "").lower() == "https"
+    secure = parse_bool_env("COOKIE_SECURE", secure_default)
+    same_site = os.environ.get("COOKIE_SAMESITE", "none" if secure else "lax").lower()
+    if same_site == "none" and not secure:
+        same_site = "lax"
+    return {
+        "httponly": True,
+        "secure": secure,
+        "samesite": same_site,
+        "path": "/",
+    }
+
+
+def get_request_origin(request: Optional[Request]) -> Optional[str]:
+    if not request:
+        return None
+
+    origin = request.headers.get("origin")
+    if origin:
+        return origin.rstrip("/")
+
+    referer = request.headers.get("referer")
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+
+    return None
+
+
+def get_frontend_url(request: Optional[Request] = None) -> str:
+    configured = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+
+    request_origin = get_request_origin(request)
+    if request_origin:
+        return request_origin
+
+    return "http://127.0.0.1:3000"
+
+
+def build_cors_origins() -> list[str]:
+    configured = [origin.strip() for origin in os.environ.get("CORS_ORIGINS", "").split(",") if origin.strip()]
+    frontend_url = os.environ.get("FRONTEND_URL", "").strip().rstrip("/")
+
+    if configured:
+        return configured
+
+    default_origins = {
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    }
+    if frontend_url:
+        default_origins.add(frontend_url)
+
+    return sorted(default_origins)
 
 # ============ Auth Endpoints ============
 @api_router.post("/auth/register")
-async def register(input: RegisterRequest, response: Response):
+async def register(input: RegisterRequest, request: Request, response: Response):
     """Register new staff user - ONLY restaurant admins can create kitchen/billing staff"""
     email = input.email.lower()
     existing = await db.users.find_one({"email": email})
@@ -184,8 +252,9 @@ async def register(input: RegisterRequest, response: Response):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    cookie_settings = get_cookie_settings(request)
+    response.set_cookie(key="access_token", value=access_token, max_age=900, **cookie_settings)
+    response.set_cookie(key="refresh_token", value=refresh_token, max_age=604800, **cookie_settings)
     
     return {"email": email, "name": input.name, "role": input.role, "_id": user_id}
 
@@ -216,8 +285,9 @@ async def login(input: LoginRequest, request: Request, response: Response):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    cookie_settings = get_cookie_settings(request)
+    response.set_cookie(key="access_token", value=access_token, max_age=900, **cookie_settings)
+    response.set_cookie(key="refresh_token", value=refresh_token, max_age=604800, **cookie_settings)
     
     response_user = await attach_restaurant_context(dict(user), db)
     return {
@@ -299,11 +369,8 @@ async def google_session(request: Request, response: Response):
     response.set_cookie(
         key="session_token",
         value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=604800,
-        path="/"
+        **get_cookie_settings(request),
+        max_age=604800
     )
     
     user = await db.users.find_one({"_id": result.inserted_id if not user else user["_id"]})
@@ -1042,8 +1109,8 @@ async def create_table(input: TableCreate, request: Request):
 
     table_id = f"table_{secrets.token_hex(6)}"
     
-    # Get frontend URL from env or use local dev default
-    frontend_url = os.environ.get('FRONTEND_URL', 'http://127.0.0.1:3000')
+   # Prefer the actual admin app origin so generated QR codes stay valid in prod.
+    frontend_url = get_frontend_url(request)
     
     table_doc = {
         "table_id": table_id,
@@ -1866,7 +1933,7 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=build_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
