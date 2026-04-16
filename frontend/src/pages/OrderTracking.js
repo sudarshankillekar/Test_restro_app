@@ -16,6 +16,30 @@ const statusConfig = {
   cancelled: { color: 'bg-destructive', icon: Clock, label: 'Cancelled' },
 };
 
+const summarizeBillItems = (orders = []) => {
+  const grouped = new Map();
+
+  orders.forEach((orderItem) => {
+    (orderItem.items || []).forEach((item) => {
+      const key = `${item.item_id || item.name}-${item.price}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.quantity += item.quantity;
+        existing.amount += item.quantity * item.price;
+        return;
+      }
+
+      grouped.set(key, {
+        name: item.name,
+        quantity: item.quantity,
+        amount: item.quantity * item.price,
+      });
+    });
+  });
+
+  return Array.from(grouped.values());
+};
+
 const OrderTracking = () => {
   const { orderId } = useParams();
   const [order, setOrder] = useState(null);
@@ -98,11 +122,12 @@ const OrderTracking = () => {
     const payment = billSummary.payment;
     const restaurantName = billSummary.restaurant_name || 'Restaurant';
     const gstNumber = billSummary.restaurant_gst_number?.trim();
-    const itemsHtml = billSummary.orders.flatMap((tableOrder) => tableOrder.items).map((item) => `
+    const summarizedItems = summarizeBillItems(billSummary.orders);
+    const itemsHtml = summarizedItems.map((item) => `
       <tr>
         <td>${item.name}</td>
         <td>${item.quantity}</td>
-        <td>Rs. ${(item.price * item.quantity).toFixed(2)}</td>
+        <td>Rs. ${item.amount.toFixed(2)}</td>
       </tr>
     `).join('');
 
