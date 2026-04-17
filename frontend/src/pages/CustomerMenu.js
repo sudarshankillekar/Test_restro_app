@@ -17,25 +17,36 @@ const CustomerMenu = () => {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [restaurantId, setRestaurantId] = useState(null);
 
   useEffect(() => {
-    // Get restaurant_id from localStorage (set during session creation)
-    const storedRestaurantId = localStorage.getItem('restaurant_id');
-    if (storedRestaurantId) {
-      setRestaurantId(storedRestaurantId);
-      fetchMenu(storedRestaurantId);
-    } else {
-      fetchMenu(null);
-    }
-  }, []);
+    const sessionToken = localStorage.getItem('customer_session');
+    const storedTableId = localStorage.getItem('customer_table_id');
 
-  const fetchMenu = async (restId) => {
+    if (!sessionToken || storedTableId !== tableId) {
+      toast.error('Please scan the QR code again to continue.');
+      navigate(`/customer/${tableId}`, { replace: true });
+      return;
+    }
+
+    fetchMenu();
+  }, [navigate, tableId]);
+
+  const fetchMenu = async () => {
     try {
-      const params = restId ? `?restaurant_id=${restId}` : '';
+      const sessionToken = localStorage.getItem('customer_session') || '';
       const [catRes, itemsRes] = await Promise.all([
-        api.get(`/api/menu/categories${params}`),
-        api.get(`/api/menu/items${params}`),
+        api.get('/api/menu/categories', {
+          params: {
+            customer_session_token: sessionToken,
+            table_id: tableId,
+          },
+        }),
+        api.get('/api/menu/items', {
+          params: {
+            customer_session_token: sessionToken,
+            table_id: tableId,
+          },
+        }),
       ]);
       
       setCategories(catRes.data);
@@ -213,6 +224,15 @@ const CustomerMenu = () => {
             </AccordionItem>
           ))}
         </Accordion>
+
+        {accordionCategories.length === 0 && (
+          <Card className="rounded-[28px] border border-border bg-white p-8 text-center shadow-[0_10px_30px_rgba(0,0,0,0.04)]">
+            <h3 className="text-xl font-semibold tracking-tight">Menu not available</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              No available menu items were found for this restaurant yet.
+            </p>
+          </Card>
+        )}
       </div>
 
       {/* Sticky Cart */}
@@ -277,5 +297,3 @@ const CustomerMenu = () => {
 };
 
 export default CustomerMenu;
-
-
