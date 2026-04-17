@@ -1425,7 +1425,7 @@ async def get_orders(request: Request, status: str = None):
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str, request: Request, customer_session_token: str = None):
     """Get single order (customer tracking)"""
-       query = {"order_id": order_id}
+    query = {"order_id": order_id}
 
     try:
         user = await get_current_user(request, db)
@@ -1465,7 +1465,7 @@ async def get_order(order_id: str, request: Request, customer_session_token: str
     return response_order
     
 @api_router.get("/admin/orders/search")
-    async def search_order(order_id: str, request: Request):
+async def search_order(order_id: str, request: Request):
       """Restaurant admin searches an order by order ID"""
     user = await get_current_user(request, db)
     if user["role"] != "admin":
@@ -1552,8 +1552,8 @@ async def update_order_items(order_id: str, input: OrderItemsUpdate, request: Re
     return enriched[0]
     
 @api_router.delete("/admin/orders/{order_id}")
-    async def delete_order_admin(order_id: str, request: Request):
-      """Restaurant admin deletes an order and unlinks it from any bill"""
+async def delete_order_admin(order_id: str, request: Request):
+    """Restaurant admin deletes an order and unlinks it from any bill"""
     user = await get_current_user(request, db)
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Restaurant admin access required")
