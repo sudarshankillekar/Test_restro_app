@@ -12,8 +12,6 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.cors import CORSMiddleware
 import socketio
 import uvicorn
 
@@ -40,16 +38,6 @@ from xlsx_export import build_xlsx_bytes
 import jwt
 import secrets
 
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-       allow_origins=os.environ.get('CORS_ORIGINS', 'http://127.0.0.1:3000,http://localhost:3000,http://192.168.29.241:3000').split(','),
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
