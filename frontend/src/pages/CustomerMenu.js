@@ -53,8 +53,9 @@ const CustomerMenu = () => {
       }
 
       try {
-        const response = await axios.get(`${BACKEND_URL}/api/customer/session/${sessionToken}`);
-        const resolvedRestaurantId = response.data?.restaurant_id || null;
+      const response = await api.get(`/api/customer/session/${sessionToken}`);
+      const resolvedRestaurantId = response.data?.restaurant_id || null;
+ 
         if (resolvedRestaurantId) {
           localStorage.setItem('restaurant_id', resolvedRestaurantId);
           setRestaurantId(resolvedRestaurantId);
