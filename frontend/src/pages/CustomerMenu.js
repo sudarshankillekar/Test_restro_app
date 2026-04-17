@@ -48,9 +48,33 @@ const CustomerMenu = () => {
 
       const sessionToken = localStorage.getItem('customer_session');
       if (!sessionToken) {
-        fetchMenu(null);
-        return;
-      }
+  try {
+    const res = await api.post("/api/customer/session", {
+      table_id: tableId,
+      customer_name: "Guest",
+    });
+
+    const newSession = res.data.session_token;
+
+    localStorage.setItem("customer_session", newSession);
+
+    // OPTIONAL: store restaurant_id also
+    if (res.data.restaurant_id) {
+      localStorage.setItem("restaurant_id", res.data.restaurant_id);
+      setRestaurantId(res.data.restaurant_id);
+      fetchMenu(res.data.restaurant_id);
+    } else {
+      fetchMenu(null);
+    }
+
+    return;
+
+  } catch (err) {
+    console.error("Session creation failed", err);
+    toast.error("Failed to start session");
+    return;
+  }
+}
 
       try {
       const response = await api.get(`/api/customer/session/${sessionToken}`);
