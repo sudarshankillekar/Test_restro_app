@@ -9,24 +9,6 @@ import api from '../lib/api';
 import { normalizeImageUrl } from '../lib/utils';
 import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles } from 'lucide-react';
 
-const buildMenuParams = (tableId, restId) => {
-  const params = new URLSearchParams();
-  const sessionToken = localStorage.getItem('customer_session');
-
-  if (restId) {
-    params.set('restaurant_id', restId);
-  }
-  if (sessionToken) {
-    params.set('customer_session_token', sessionToken);
-  }
-  if (tableId) {
-    params.set('table_id', tableId);
-  }
-
-  const query = params.toString();
-  return query ? `?${query}` : '';
-};
-
 const CustomerMenu = () => {
   const { tableId } = useParams();
   const navigate = useNavigate();
@@ -35,77 +17,66 @@ const CustomerMenu = () => {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [restaurantId, setRestaurantId] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-   const initializeMenu = async () => {
-      const storedRestaurantId = localStorage.getItem('restaurant_id');
-      if (storedRestaurantId) {
-        setRestaurantId(storedRestaurantId);
-        fetchMenu(storedRestaurantId);
+    const initializeMenu = async () => {
+      const sessionToken = localStorage.getItem('customer_session');
+
+      // No session at all — send back to landing to collect name/phone
+      if (!sessionToken) {
+        navigate(`/customer/${tableId}`, { replace: true });
         return;
       }
 
-      const sessionToken = localStorage.getItem('customer_session');
-      if (!sessionToken) {
-  try {
-    const res = await api.post("/api/customer/session", {
-      table_id: tableId,
-      customer_name: "Guest",
-    });
+      // Try to get restaurant_id from localStorage first (fastest path)
+      let restaurantId = localStorage.getItem('restaurant_id');
 
-    const newSession = res.data.session_token;
-
-    localStorage.setItem("customer_session", newSession);
-
-    // OPTIONAL: store restaurant_id also
-    if (res.data.restaurant_id) {
-      localStorage.setItem("restaurant_id", res.data.restaurant_id);
-      setRestaurantId(res.data.restaurant_id);
-      fetchMenu(res.data.restaurant_id);
-    } else {
-      fetchMenu(null);
-    }
-
-    return;
-
-  } catch (err) {
-    console.error("Session creation failed", err);
-    toast.error("Failed to start session");
-    return;
-  }
-}
-
-      try {
-      const response = await api.get(`/api/customer/session/${sessionToken}`);
-      const resolvedRestaurantId = response.data?.restaurant_id || null;
- 
-        if (resolvedRestaurantId) {
-          localStorage.setItem('restaurant_id', resolvedRestaurantId);
-          setRestaurantId(resolvedRestaurantId);
+      // If not cached, resolve it from the session API
+      if (!restaurantId) {
+        try {
+          const res = await api.get(`/api/customer/session/${sessionToken}`);
+          restaurantId = res.data?.restaurant_id || null;
+          if (restaurantId) {
+            localStorage.setItem('restaurant_id', restaurantId);
+          }
+        } catch (err) {
+          // Session expired or invalid — send back to landing
+          localStorage.removeItem('customer_session');
+          localStorage.removeItem('restaurant_id');
+          localStorage.removeItem('session_table_id');
+          navigate(`/customer/${tableId}`, { replace: true });
+          return;
         }
-        fetchMenu(resolvedRestaurantId);
-      } catch (error) {
-        fetchMenu(null);
       }
+
+      // Now fetch the menu
+      await fetchMenu(restaurantId, sessionToken);
     };
 
     initializeMenu();
   }, [tableId]);
 
-  const fetchMenu = async (restId) => {
+  const fetchMenu = async (restaurantId, sessionToken) => {
     try {
-      const params = buildMenuParams(tableId, restId);
+      const params = new URLSearchParams();
+      if (restaurantId) params.set('restaurant_id', restaurantId);
+      if (sessionToken) params.set('customer_session_token', sessionToken);
+      if (tableId) params.set('table_id', tableId);
+      const query = params.toString() ? `?${params.toString()}` : '';
+
       const [catRes, itemsRes] = await Promise.all([
-        api.get(`/api/menu/categories${params}`),
-        api.get(`/api/menu/items${params}`),
+        api.get(`/api/menu/categories${query}`),
+        api.get(`/api/menu/items${query}`),
       ]);
-      
-      setCategories(catRes.data);
-      setMenuItems(itemsRes.data);
+
+      setCategories(catRes.data || []);
+      // Filter to only available items
+      setMenuItems((itemsRes.data || []).filter(item => item.available !== false));
       setLoading(false);
-    } catch (error) {
-      toast.error('Failed to load menu');
+    } catch (err) {
+      console.error('Failed to load menu:', err);
+      setError('Failed to load menu. Please refresh the page.');
       setLoading(false);
     }
   };
@@ -138,8 +109,8 @@ const CustomerMenu = () => {
 
     const sessionToken = localStorage.getItem('customer_session');
     if (!sessionToken) {
-      toast.error('Session expired');
-      navigate(`/customer/${tableId}`);
+      toast.error('Session expired. Please scan the QR code again.');
+      navigate(`/customer/${tableId}`, { replace: true });
       return;
     }
 
@@ -175,7 +146,23 @@ const CustomerMenu = () => {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: '#F9F8F6' }}>
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <div className="text-center space-y-3">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+          <p className="text-sm text-muted-foreground">Loading menu…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: '#F9F8F6' }}>
+        <div className="text-center space-y-4">
+          <p className="text-red-500 font-medium">{error}</p>
+          <Button onClick={() => window.location.reload()} className="rounded-full">
+            Retry
+          </Button>
+        </div>
       </div>
     );
   }
@@ -210,76 +197,75 @@ const CustomerMenu = () => {
           </div>
         </div>
 
-        <Accordion
-          type="multiple"
-          defaultValue={accordionCategories.slice(0, 2).map((category) => category.category_id)}
-          className="space-y-4"
-        >
-          {accordionCategories.map((category) => (
-            <AccordionItem
-              key={category.category_id}
-              value={category.category_id}
-              className="rounded-[28px] border border-border bg-white px-5 shadow-[0_10px_30px_rgba(0,0,0,0.04)]"
-            >
-              <AccordionTrigger className="py-5 no-underline hover:no-underline">
-                <div className="flex min-w-0 flex-1 items-center justify-between gap-4 pr-4">
-                  <div className="min-w-0">
-                    <h3 className="text-left text-xl font-semibold tracking-tight">{category.name}</h3>
-                    <p className="text-left text-sm text-muted-foreground">{category.items.length} items</p>
-                  </div>
-                  <Badge className="rounded-full bg-accent text-foreground">{category.items.length}</Badge>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="pb-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {category.items.map((item) => (
-                    <Card
-                      key={item.item_id}
-                      className="overflow-hidden rounded-[24px] border border-border bg-[#FCFBF8] h-full"
-                      data-testid={`menu-item-${item.item_id}`}
-                    >
-                      {item.image && (
-                        <div className="h-44 overflow-hidden">
-                          <img
-                            src={normalizeImageUrl(item.image)}
-                            alt={item.name}
-                            className="h-full w-full object-cover"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                            }}
-                          />
-                        </div>
-                      )}
-                      <div className="flex h-full flex-col gap-4 p-4">
-                        <div className="min-w-0">
-                          <h4 className="text-lg font-semibold break-words">{item.name}</h4>
-                          {item.description && (
-                            <p className="mt-1 text-sm text-muted-foreground break-words">{item.description}</p>
-                          )}
-                        </div>
-                        <div className="mt-auto flex items-center justify-between gap-3">
-                          <p className="text-2xl font-bold text-primary">₹{item.price}</p>
-                          <Button
-                            onClick={() => addToCart(item)}
-                            className="rounded-full bg-primary hover:bg-[#C54E2C] text-white"
-                            data-testid={`add-to-cart-${item.item_id}`}
-                          >
-                            <Plus className="mr-1 h-4 w-4" />
-                            Add
-                          </Button>
-                        </div>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          ))}
-        </Accordion>
-              {!accordionCategories.length && (
+        {accordionCategories.length === 0 ? (
           <Card className="rounded-[28px] border border-border bg-white p-8 text-center text-muted-foreground shadow-[0_10px_30px_rgba(0,0,0,0.04)]">
-            No menu items are available for this table right now.
+            No menu items are available right now. Please check back soon.
           </Card>
+        ) : (
+          <Accordion
+            type="multiple"
+            defaultValue={accordionCategories.map((c) => c.category_id)}
+            className="space-y-4"
+          >
+            {accordionCategories.map((category) => (
+              <AccordionItem
+                key={category.category_id}
+                value={category.category_id}
+                className="rounded-[28px] border border-border bg-white px-5 shadow-[0_10px_30px_rgba(0,0,0,0.04)]"
+              >
+                <AccordionTrigger className="py-5 no-underline hover:no-underline">
+                  <div className="flex min-w-0 flex-1 items-center justify-between gap-4 pr-4">
+                    <div className="min-w-0">
+                      <h3 className="text-left text-xl font-semibold tracking-tight">{category.name}</h3>
+                      <p className="text-left text-sm text-muted-foreground">{category.items.length} items</p>
+                    </div>
+                    <Badge className="rounded-full bg-accent text-foreground">{category.items.length}</Badge>
+                  </div>
+                </AccordionTrigger>
+                <AccordionContent className="pb-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {category.items.map((item) => (
+                      <Card
+                        key={item.item_id}
+                        className="overflow-hidden rounded-[24px] border border-border bg-[#FCFBF8] h-full"
+                        data-testid={`menu-item-${item.item_id}`}
+                      >
+                        {item.image && (
+                          <div className="h-44 overflow-hidden">
+                            <img
+                              src={normalizeImageUrl(item.image)}
+                              alt={item.name}
+                              className="h-full w-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          </div>
+                        )}
+                        <div className="flex h-full flex-col gap-4 p-4">
+                          <div className="min-w-0">
+                            <h4 className="text-lg font-semibold break-words">{item.name}</h4>
+                            {item.description && (
+                              <p className="mt-1 text-sm text-muted-foreground break-words">{item.description}</p>
+                            )}
+                          </div>
+                          <div className="mt-auto flex items-center justify-between gap-3">
+                            <p className="text-2xl font-bold text-primary">₹{item.price}</p>
+                            <Button
+                              onClick={() => addToCart(item)}
+                              className="rounded-full bg-primary hover:bg-[#C54E2C] text-white"
+                              data-testid={`add-to-cart-${item.item_id}`}
+                            >
+                              <Plus className="mr-1 h-4 w-4" />
+                              Add
+                            </Button>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
         )}
       </div>
 
@@ -290,7 +276,7 @@ const CustomerMenu = () => {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-primary" />
-                <span className="font-semibold">{cart.length} items</span>
+                <span className="font-semibold">{cart.reduce((s, i) => s + i.quantity, 0)} items</span>
               </div>
               <span className="text-2xl font-bold text-primary">₹{cartTotal.toFixed(2)}</span>
             </div>
@@ -345,5 +331,3 @@ const CustomerMenu = () => {
 };
 
 export default CustomerMenu;
-
-
