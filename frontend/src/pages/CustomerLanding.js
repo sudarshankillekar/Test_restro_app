@@ -20,19 +20,71 @@ const CustomerMenu = () => {
   const [restaurantId, setRestaurantId] = useState(null);
 
   useEffect(() => {
-    // Get restaurant_id from localStorage (set during session creation)
-    const storedRestaurantId = localStorage.getItem('restaurant_id');
-    if (storedRestaurantId) {
-      setRestaurantId(storedRestaurantId);
-      fetchMenu(storedRestaurantId);
-    } else {
+    const initializeMenu = async () => {
+      // If we already have the restaurant_id cached, use it directly
+      const storedRestaurantId = localStorage.getItem('restaurant_id');
+      if (storedRestaurantId) {
+        setRestaurantId(storedRestaurantId);
+        fetchMenu(storedRestaurantId);
+        return;
+      }
+
+      // If we have a session token, resolve the restaurant_id from it
+      const sessionToken = localStorage.getItem('customer_session');
+      if (sessionToken) {
+        try {
+          const response = await api.get(`/api/customer/session/${sessionToken}`);
+          const resolvedRestaurantId = response.data?.restaurant_id || null;
+          if (resolvedRestaurantId) {
+            localStorage.setItem('restaurant_id', resolvedRestaurantId);
+            setRestaurantId(resolvedRestaurantId);
+          }
+          fetchMenu(resolvedRestaurantId);
+        } catch (error) {
+          fetchMenu(null);
+        }
+        return;
+      }
+
+      // No session at all — create one using the tableId from the URL
+      if (tableId) {
+        try {
+          const res = await api.post('/api/customer/session', {
+            table_id: tableId,
+            customer_name: 'Guest',
+          });
+          const newSession = res.data.session_token;
+          localStorage.setItem('customer_session', newSession);
+          if (res.data.restaurant_id) {
+            localStorage.setItem('restaurant_id', res.data.restaurant_id);
+            setRestaurantId(res.data.restaurant_id);
+            fetchMenu(res.data.restaurant_id);
+          } else {
+            fetchMenu(null);
+          }
+        } catch (err) {
+          console.error('Session creation failed', err);
+          toast.error('Failed to start session');
+          fetchMenu(null);
+        }
+        return;
+      }
+
       fetchMenu(null);
-    }
-  }, []);
+    };
+
+    initializeMenu();
+  }, [tableId]);
 
   const fetchMenu = async (restId) => {
     try {
-      const params = restId ? `?restaurant_id=${restId}` : '';
+      const searchParams = new URLSearchParams();
+      if (restId) searchParams.set('restaurant_id', restId);
+      const sessionToken = localStorage.getItem('customer_session');
+      if (sessionToken) searchParams.set('customer_session_token', sessionToken);
+      if (tableId) searchParams.set('table_id', tableId);
+      const params = searchParams.toString() ? `?${searchParams.toString()}` : '';
+
       const [catRes, itemsRes] = await Promise.all([
         api.get(`/api/menu/categories${params}`),
         api.get(`/api/menu/items${params}`),
