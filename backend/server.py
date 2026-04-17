@@ -1475,7 +1475,7 @@ async def get_order(order_id: str, request: Request, customer_session_token: str
     
 @api_router.get("/admin/orders/search")
 async def search_order(order_id: str, request: Request):
-      """Restaurant admin searches an order by order ID"""
+    """Restaurant admin searches an order by order ID"""
     user = await get_current_user(request, db)
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Restaurant admin access required")
