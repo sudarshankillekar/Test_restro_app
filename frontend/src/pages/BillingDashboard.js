@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CreditCard, DollarSign, Loader2, LogOut, Pencil, Plus, Printer, Receipt, Trash2, Wallet } from 'lucide-react';
+import { CreditCard, DollarSign, Loader2, LogOut, Pencil, Plus, Printer, Receipt, Search, Trash2, Wallet, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
@@ -86,6 +86,7 @@ const BillingDashboard = () => {
 
   const [orders, setOrders] = useState([]);
   const [tables, setTables] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedGroup, setSelectedGroup] = useState(null);
@@ -101,20 +102,24 @@ const BillingDashboard = () => {
   const [counterCustomerName, setCounterCustomerName] = useState('');
   const [counterPhone, setCounterPhone] = useState('');
   const [counterCart, setCounterCart] = useState([]);
+  const [counterSearch, setCounterSearch] = useState('');
+  const [counterCategory, setCounterCategory] = useState('all');
 
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        const [ordersResponse, tablesResponse, itemsResponse, profileResponse] = await Promise.all([
+        const [ordersResponse, tablesResponse, itemsResponse, categoriesResponse, profileResponse] = await Promise.all([
           api.get('/api/orders', { withCredentials: true }),
           api.get('/api/tables', { withCredentials: true }),
           api.get('/api/menu/items', { withCredentials: true }),
+          api.get('/api/menu/categories', { withCredentials: true }),
           api.get('/api/restaurant/profile', { withCredentials: true }),
         ]);
 
         setOrders(ordersResponse.data);
         setTables(tablesResponse.data);
         setMenuItems(itemsResponse.data.filter((item) => item.available));
+        setCategories(categoriesResponse.data);
         setRestaurantProfile({
           name: profileResponse.data.name || '',
           gst_number: profileResponse.data.gst_number || '',
@@ -249,6 +254,8 @@ const BillingDashboard = () => {
     setCounterCustomerName('');
     setCounterPhone('');
     setCounterCart([]);
+    setCounterSearch('');
+    setCounterCategory('all');
   };
 
   const addCounterItem = (menuItem) => {
@@ -477,6 +484,23 @@ const BillingDashboard = () => {
   }
 
   const counterCartTotal = counterCart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const cartItemCount = counterCart.reduce((sum, item) => sum + item.quantity, 0);
+  const menuItemMap = new Map(menuItems.map((item) => [item.item_id, item]));
+  const filteredMenuItems = menuItems.filter((item) => {
+    const matchesCategory = counterCategory === 'all' || item.category_id === counterCategory;
+    const search = counterSearch.trim().toLowerCase();
+    const matchesSearch = !search || item.name.toLowerCase().includes(search) || (item.description || '').toLowerCase().includes(search);
+    return matchesCategory && matchesSearch;
+  });
+  const cartPreviewItems = counterCart
+    .map((item) => {
+      const menuItem = menuItemMap.get(item.item_id);
+      return {
+        ...item,
+        category_id: menuItem?.category_id,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="min-h-screen" style={{ background: '#F3F4F6' }}>
@@ -505,135 +529,178 @@ const BillingDashboard = () => {
                   Take Counter Order
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-4xl rounded-2xl">
+              <DialogContent className="max-w-6xl rounded-[28px] border-border p-0">
                 <DialogHeader>
-                  <DialogTitle>Create Billing Counter Order</DialogTitle>
+                  <div className="border-b border-border px-6 py-5">
+                    <DialogTitle className="text-2xl tracking-tight">Create Billing Counter Order</DialogTitle>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Search menu items fast, review the cart on the left, and place large orders without losing the action buttons.
+                    </p>
+                  </div>
                 </DialogHeader>
-                <div className="grid gap-6 py-2 lg:grid-cols-[320px,1fr]">
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>Order Type</Label>
-                      <Select value={counterOrderType} onValueChange={(value) => {
-                        setCounterOrderType(value);
-                        if (value !== 'dine_in') {
-                          setCounterTableId('');
-                        }
-                      }}>
-                        <SelectTrigger className="rounded-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="dine_in">Dine-In</SelectItem>
-                          <SelectItem value="takeaway">Takeaway</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                <div className="grid max-h-[85vh] gap-0 lg:grid-cols-[360px,1fr]">
+                  <div className="border-b border-border bg-[#FCFBF8] lg:border-b-0 lg:border-r">
+                    <div className="flex h-full flex-col">
+                      <div className="space-y-4 px-5 py-5">
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                          <div className="space-y-2">
+                            <Label>Order Type</Label>
+                            <Select value={counterOrderType} onValueChange={(value) => {
+                              setCounterOrderType(value);
+                              if (value !== 'dine_in') {
+                                setCounterTableId('');
+                              }
+                            }}>
+                              <SelectTrigger className="rounded-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="dine_in">Dine-In</SelectItem>
+                                <SelectItem value="takeaway">Takeaway</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
 
-                    {counterOrderType === 'dine_in' && (
-                      <div className="space-y-2">
-                        <Label>Select Table</Label>
-                        <Select value={counterTableId} onValueChange={setCounterTableId}>
-                          <SelectTrigger className="rounded-full">
-                            <SelectValue placeholder="Choose a table" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {tables.map((table) => (
-                              <SelectItem key={table.table_id} value={table.table_id}>
-                                Table {table.table_number}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
+                          {counterOrderType === 'dine_in' && (
+                            <div className="space-y-2">
+                              <Label>Select Table</Label>
+                              <Select value={counterTableId} onValueChange={setCounterTableId}>
+                                <SelectTrigger className="rounded-full">
+                                  <SelectValue placeholder="Choose a table" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {tables.map((table) => (
+                                    <SelectItem key={table.table_id} value={table.table_id}>
+                                      Table {table.table_number}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                        </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="counter-customer-name">Customer Name</Label>
-                      <Input
-                        id="counter-customer-name"
-                        value={counterCustomerName}
-                        onChange={(event) => setCounterCustomerName(event.target.value)}
-                        placeholder="Enter customer name"
-                        className="rounded-full"
-                      />
-                    </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="counter-customer-name">Customer Name</Label>
+                          <Input
+                            id="counter-customer-name"
+                            value={counterCustomerName}
+                            onChange={(event) => setCounterCustomerName(event.target.value)}
+                            placeholder="Enter customer name"
+                            className="rounded-full"
+                          />
+                        </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="counter-phone">Phone Number</Label>
-                      <Input
-                        id="counter-phone"
-                        value={counterPhone}
-                        onChange={(event) => setCounterPhone(event.target.value)}
-                        placeholder="Enter phone number"
-                        className="rounded-full"
-                      />
-                    </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="counter-phone">Phone Number</Label>
+                          <Input
+                            id="counter-phone"
+                            value={counterPhone}
+                            onChange={(event) => setCounterPhone(event.target.value)}
+                            placeholder="Enter phone number"
+                            className="rounded-full"
+                          />
+                        </div>
 
-                    <Card className="rounded-2xl border-border">
-                      <CardHeader>
-                        <CardTitle className="text-lg">Order Summary</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        {counterCart.length === 0 && (
-                          <p className="text-sm text-muted-foreground">No items added yet.</p>
-                        )}
-                        {counterCart.map((item) => (
-                          <div key={item.item_id} className="rounded-xl border border-border p-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <div>
-                                <p className="font-medium">{item.name}</p>
-                                <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
-                              </div>
+                        <div className="rounded-[24px] border border-border bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-lg font-semibold">Order Summary</h3>
+                              <p className="text-sm text-muted-foreground">
+                                {cartItemCount} item{cartItemCount !== 1 ? 's' : ''} in cart
+                              </p>
+                            </div>
+                            {counterCart.length > 0 && (
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                className="rounded-full text-destructive"
-                                onClick={() => updateCounterQuantity(item.item_id, 0)}
+                                className="rounded-full text-muted-foreground"
+                                onClick={() => setCounterCart([])}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                Clear
                               </Button>
-                            </div>
-                            <div className="mt-3 flex items-center gap-2">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="rounded-full"
-                                onClick={() => updateCounterQuantity(item.item_id, item.quantity - 1)}
-                              >
-                                -
-                              </Button>
-                              <div className="min-w-[2rem] text-center font-semibold">{item.quantity}</div>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="rounded-full"
-                                onClick={() => updateCounterQuantity(item.item_id, item.quantity + 1)}
-                              >
-                                +
-                              </Button>
-                              <div className="ml-auto font-semibold text-primary">
-                                {formatCurrency(item.quantity * item.price)}
-                              </div>
-                            </div>
-                            <Textarea
-                              value={item.instructions}
-                              onChange={(event) => updateCounterInstructions(item.item_id, event.target.value)}
-                              placeholder="Special instructions"
-                              className="mt-3 min-h-[72px] rounded-2xl"
-                            />
+                            )}
                           </div>
-                        ))}
-                        <div className="flex items-center justify-between border-t pt-3 text-base font-bold">
+                        </div>
+                      </div>
+
+                      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+                        <div className="space-y-3">
+                          {counterCart.length === 0 && (
+                            <div className="rounded-[24px] border border-dashed border-border bg-white p-6 text-center">
+                              <p className="text-sm font-medium text-foreground">No items added yet</p>
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                Search the menu on the right and tap Add to build the order.
+                              </p>
+                            </div>
+                          )}
+
+                          {cartPreviewItems.map((item) => (
+                            <div key={item.item_id} className="rounded-[24px] border border-border bg-white p-4 shadow-sm">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold">{item.name}</p>
+                                  <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 rounded-full p-0 text-destructive"
+                                  onClick={() => updateCounterQuantity(item.item_id, 0)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+
+                              <div className="mt-3 flex items-center gap-2">
+                                <div className="flex items-center rounded-full border border-border bg-accent/60">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-9 w-9 rounded-full p-0"
+                                    onClick={() => updateCounterQuantity(item.item_id, item.quantity - 1)}
+                                  >
+                                    -
+                                  </Button>
+                                  <div className="min-w-[2.5rem] text-center text-base font-semibold">{item.quantity}</div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-9 w-9 rounded-full p-0"
+                                    onClick={() => updateCounterQuantity(item.item_id, item.quantity + 1)}
+                                  >
+                                    +
+                                  </Button>
+                                </div>
+                                <div className="ml-auto font-semibold text-primary">
+                                  {formatCurrency(item.quantity * item.price)}
+                                </div>
+                              </div>
+
+                              <Textarea
+                                value={item.instructions}
+                                onChange={(event) => updateCounterInstructions(item.item_id, event.target.value)}
+                                placeholder="Special instructions"
+                                className="mt-3 min-h-[56px] rounded-2xl text-sm"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-border bg-white px-5 py-4">
+                        <div className="mb-3 flex items-center justify-between text-base font-bold">
                           <span>Total</span>
                           <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
                         </div>
                         <Button
                           onClick={submitCounterOrder}
                           disabled={counterSubmitting}
-                          className="w-full rounded-full bg-primary hover:bg-[#C54E2C]"
+                          className="w-full rounded-full bg-primary py-6 text-base hover:bg-[#C54E2C]"
                         >
                           {counterSubmitting ? (
                             <>
@@ -644,39 +711,159 @@ const BillingDashboard = () => {
                             'Create & Print Order'
                           )}
                         </Button>
-                      </CardContent>
-                    </Card>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-lg font-semibold">Available Menu Items</h3>
-                      <Badge className="rounded-full bg-accent text-foreground">{menuItems.length} items</Badge>
+                  <div className="flex min-h-0 flex-col bg-white">
+                    <div className="space-y-4 border-b border-border px-6 py-5">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <h3 className="text-xl font-semibold">Available Menu Items</h3>
+                          <p className="text-sm text-muted-foreground">
+                            {filteredMenuItems.length} showing out of {menuItems.length} items
+                          </p>
+                        </div>
+                        <Badge className="w-fit rounded-full bg-accent text-foreground">
+                          {cartItemCount} items selected
+                        </Badge>
+                      </div>
+
+                      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                        <div className="relative flex-1">
+                          <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            value={counterSearch}
+                            onChange={(event) => setCounterSearch(event.target.value)}
+                            placeholder="Search by item name or description"
+                            className="rounded-full pl-11 pr-11"
+                          />
+                          {counterSearch && (
+                            <button
+                              type="button"
+                              className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground"
+                              onClick={() => setCounterSearch('')}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        <Select value={counterCategory} onValueChange={setCounterCategory}>
+                          <SelectTrigger className="w-full rounded-full xl:w-[220px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Categories</SelectItem>
+                            {categories.map((category) => (
+                              <SelectItem key={category.category_id} value={category.category_id}>
+                                {category.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {categories.length > 0 && (
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                          <Button
+                            type="button"
+                            variant={counterCategory === 'all' ? 'default' : 'outline'}
+                            className="rounded-full"
+                            onClick={() => setCounterCategory('all')}
+                          >
+                            All
+                          </Button>
+                          {categories.map((category) => (
+                            <Button
+                              key={category.category_id}
+                              type="button"
+                              variant={counterCategory === category.category_id ? 'default' : 'outline'}
+                              className="rounded-full whitespace-nowrap"
+                              onClick={() => setCounterCategory(category.category_id)}
+                            >
+                              {category.name}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="grid max-h-[65vh] gap-3 overflow-y-auto pr-1 md:grid-cols-2">
-                      {menuItems.map((item) => (
-                        <Card key={item.item_id} className="rounded-2xl border-border">
-                          <CardContent className="p-4 space-y-3">
-                            <div>
-                              <p className="font-semibold">{item.name}</p>
-                              {item.description && (
-                                <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
-                              )}
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-lg font-bold text-primary">{formatCurrency(item.price)}</span>
-                              <Button
-                                type="button"
-                                onClick={() => addCounterItem(item)}
-                                className="rounded-full bg-primary hover:bg-[#C54E2C]"
+
+                    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                      {filteredMenuItems.length === 0 ? (
+                        <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
+                          <p className="text-base font-medium">No menu items found</p>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            Try a different search or switch the category filter.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                          {filteredMenuItems.map((item) => {
+                            const cartItem = counterCart.find((cartEntry) => cartEntry.item_id === item.item_id);
+                            return (
+                              <Card
+                                key={item.item_id}
+                                className={`rounded-[24px] border-border transition-colors ${cartItem ? 'border-primary/30 bg-primary/5' : 'bg-white'}`}
                               >
-                                <Plus className="mr-1 h-4 w-4" />
-                                Add
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                                <CardContent className="flex h-full flex-col p-4">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-lg font-semibold">{item.name}</p>
+                                      {item.description && (
+                                        <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.description}</p>
+                                      )}
+                                    </div>
+                                    {cartItem && (
+                                      <Badge className="rounded-full bg-primary text-white">
+                                        x{cartItem.quantity}
+                                      </Badge>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-auto pt-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span className="text-xl font-bold text-primary">{formatCurrency(item.price)}</span>
+                                      {cartItem ? (
+                                        <div className="flex items-center gap-2 rounded-full border border-border bg-accent/60 px-1 py-1">
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 w-8 rounded-full p-0"
+                                            onClick={() => updateCounterQuantity(item.item_id, cartItem.quantity - 1)}
+                                          >
+                                            -
+                                          </Button>
+                                          <span className="min-w-[1.5rem] text-center font-semibold">{cartItem.quantity}</span>
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 w-8 rounded-full p-0"
+                                            onClick={() => updateCounterQuantity(item.item_id, cartItem.quantity + 1)}
+                                          >
+                                            +
+                                          </Button>
+                                        </div>
+                                      ) : (
+                                        <Button
+                                          type="button"
+                                          onClick={() => addCounterItem(item)}
+                                          className="rounded-full bg-primary hover:bg-[#C54E2C]"
+                                        >
+                                          <Plus className="mr-1 h-4 w-4" />
+                                          Add
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
