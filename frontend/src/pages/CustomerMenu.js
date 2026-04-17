@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { normalizeImageUrl } from '../lib/utils';
 import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles } from 'lucide-react';
-#deploymenttest
+
 const buildMenuParams = (tableId, restId) => {
   const params = new URLSearchParams();
   const sessionToken = localStorage.getItem('customer_session');
