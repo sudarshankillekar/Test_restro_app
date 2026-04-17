@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -19,6 +19,13 @@ const CustomerMenu = () => {
   const [submitting, setSubmitting] = useState(false);
   const [restaurantId, setRestaurantId] = useState(null);
 
+  useEffect(() => {
+    localStorage.removeItem('customer_session');
+    localStorage.removeItem('restaurant_id');
+    localStorage.removeItem('customer_name');
+  }, [tableId]);
+
+  
   useEffect(() => {
     // Get restaurant_id from localStorage (set during session creation)
     const storedRestaurantId = localStorage.getItem('restaurant_id');
