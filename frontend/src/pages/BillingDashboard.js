@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CreditCard, DollarSign, Loader2, LogOut, Pencil, Plus, Printer, Receipt, Search, Trash2, Wallet, X } from 'lucide-react';
+import { CalendarDays, CreditCard, DollarSign, Loader2, LogOut, Pencil, Plus, Printer, Receipt, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
+import { normalizeImageUrl } from '../lib/utils';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -374,7 +375,7 @@ const BillingDashboard = () => {
     `, `${restaurantName} - ${bill.bill_id}`);
   };
 
-  const submitCounterOrder = async () => {
+  const submitCounterOrder = async (shouldPrint = false) => {
     if (!counterCustomerName.trim()) {
       toast.error('Please enter customer name.');
       return;
@@ -406,7 +407,9 @@ const BillingDashboard = () => {
       setCounterDialogOpen(false);
       resetCounterForm();
       toast.success('Counter order created successfully.');
-      printOrderTicket(response.data);
+      if (shouldPrint) {
+        printOrderTicket(response.data);
+      }
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to create counter order');
     } finally {
@@ -501,6 +504,9 @@ const BillingDashboard = () => {
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+  const selectedCategoryName = counterCategory === 'all'
+    ? 'All Categories'
+    : (categories.find((category) => category.category_id === counterCategory)?.name || 'Category');
 
   return (
     <div className="min-h-screen" style={{ background: '#F3F4F6' }}>
@@ -529,7 +535,7 @@ const BillingDashboard = () => {
                   Take Counter Order
                 </Button>
               </DialogTrigger>
-              <DialogContent className="flex h-[90vh] max-h-[90vh] max-w-6xl flex-col overflow-hidden rounded-[28px] border-border p-0">
+              <DialogContent className="flex h-[90vh] max-h-[90vh] max-w-[1180px] flex-col overflow-hidden rounded-[28px] border-border bg-white p-0">
                 <DialogHeader>
                   <div className="border-b border-border px-6 py-5">
                     <DialogTitle className="text-2xl tracking-tight">Create Billing Counter Order</DialogTitle>
@@ -538,32 +544,32 @@ const BillingDashboard = () => {
                     </p>
                   </div>
                 </DialogHeader>
-                <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[360px,1fr]">
-                  <div className="border-b border-border bg-[#FCFBF8] lg:border-b-0 lg:border-r">
-                    <div className="flex h-full min-h-0 flex-col">
-                      <div className="shrink-0 space-y-4 px-5 py-5">
-                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                          <div className="space-y-2">
-                            <Label>Order Type</Label>
-                            <Select value={counterOrderType} onValueChange={(value) => {
-                              setCounterOrderType(value);
-                              if (value !== 'dine_in') {
-                                setCounterTableId('');
-                              }
-                            }}>
-                              <SelectTrigger className="rounded-full">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="dine_in">Dine-In</SelectItem>
-                                <SelectItem value="takeaway">Takeaway</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
+                <div className="grid min-h-0 flex-1 gap-0 xl:grid-cols-[300px,minmax(0,1fr),310px]">
+                  <div className="border-b border-border bg-white xl:border-b-0 xl:border-r">
+                    <div className="flex h-full min-h-0 flex-col px-5 py-5">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label>Order Type</Label>
+                          <Select value={counterOrderType} onValueChange={(value) => {
+                            setCounterOrderType(value);
+                            if (value !== 'dine_in') {
+                              setCounterTableId('');
+                            }
+                          }}>
+                            <SelectTrigger className="rounded-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="dine_in">Dine-In</SelectItem>
+                              <SelectItem value="takeaway">Takeaway</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
 
-                          {counterOrderType === 'dine_in' && (
-                            <div className="space-y-2">
-                              <Label>Select Table</Label>
+                        {counterOrderType === 'dine_in' && (
+                          <div className="space-y-2">
+                            <Label>Table</Label>
+                            <div className="flex gap-2">
                               <Select value={counterTableId} onValueChange={setCounterTableId}>
                                 <SelectTrigger className="rounded-full">
                                   <SelectValue placeholder="Choose a table" />
@@ -576,9 +582,12 @@ const BillingDashboard = () => {
                                   ))}
                                 </SelectContent>
                               </Select>
+                              <Button type="button" variant="outline" className="rounded-xl px-3">
+                                <CalendarDays className="h-4 w-4" />
+                              </Button>
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
                         <div className="space-y-2">
                           <Label htmlFor="counter-customer-name">Customer Name</Label>
@@ -625,22 +634,13 @@ const BillingDashboard = () => {
                         </div>
                       </div>
 
-                      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-                        <div className="space-y-3">
-                          {counterCart.length === 0 && (
-                            <div className="rounded-[24px] border border-dashed border-border bg-white p-6 text-center">
-                              <p className="text-sm font-medium text-foreground">No items added yet</p>
-                              <p className="mt-1 text-sm text-muted-foreground">
-                                Search the menu on the right and tap Add to build the order.
-                              </p>
-                            </div>
-                          )}
-
-                          {cartPreviewItems.map((item) => (
+                      <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
+                        <div className="space-y-3 pr-1">
+                          {cartPreviewItems.slice(0, 2).map((item) => (
                             <div key={item.item_id} className="rounded-[24px] border border-border bg-white p-4 shadow-sm">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="truncate font-semibold">{item.name}</p>
+                                  <p className="truncate text-xl font-semibold">{item.name}</p>
                                   <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
                                 </div>
                                 <Button
@@ -653,7 +653,6 @@ const BillingDashboard = () => {
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </div>
-
                               <div className="mt-3 flex items-center gap-2">
                                 <div className="flex items-center rounded-full border border-border bg-accent/60">
                                   <Button
@@ -676,47 +675,25 @@ const BillingDashboard = () => {
                                     +
                                   </Button>
                                 </div>
-                                <div className="ml-auto font-semibold text-primary">
+                                <div className="ml-auto text-2xl font-bold text-primary">
                                   {formatCurrency(item.quantity * item.price)}
                                 </div>
                               </div>
-
                               <Textarea
                                 value={item.instructions}
                                 onChange={(event) => updateCounterInstructions(item.item_id, event.target.value)}
                                 placeholder="Special instructions"
-                                className="mt-3 min-h-[56px] rounded-2xl text-sm"
+                                className="mt-3 min-h-[48px] rounded-2xl text-sm"
                               />
                             </div>
                           ))}
                         </div>
                       </div>
-
-                      <div className="shrink-0 border-t border-border bg-white px-5 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
-                        <div className="mb-3 flex items-center justify-between text-base font-bold">
-                          <span>Total</span>
-                          <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
-                        </div>
-                        <Button
-                          onClick={submitCounterOrder}
-                          disabled={counterSubmitting}
-                          className="w-full rounded-full bg-primary py-6 text-base hover:bg-[#C54E2C]"
-                        >
-                          {counterSubmitting ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Saving Order...
-                            </>
-                          ) : (
-                            'Create & Print Order'
-                          )}
-                        </Button>
-                      </div>
                     </div>
                   </div>
 
-                  <div className="flex min-h-0 flex-col bg-white">
-                    <div className="shrink-0 space-y-4 border-b border-border px-6 py-5">
+                  <div className="flex min-h-0 flex-col bg-white xl:border-r">
+                    <div className="shrink-0 space-y-4 border-b border-border px-5 py-5">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                           <h3 className="text-xl font-semibold">Available Menu Items</h3>
@@ -729,7 +706,7 @@ const BillingDashboard = () => {
                         </Badge>
                       </div>
 
-                      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
                         <div className="relative flex-1">
                           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                           <Input
@@ -750,14 +727,14 @@ const BillingDashboard = () => {
                         </div>
 
                         <Select value={counterCategory} onValueChange={setCounterCategory}>
-                          <SelectTrigger className="w-full rounded-full xl:w-[220px]">
-                            <SelectValue />
+                          <SelectTrigger className="w-full rounded-full border-primary/40 sm:w-[220px]">
+                            <SelectValue placeholder={`View by: ${selectedCategoryName}`} />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="all">All Categories</SelectItem>
+                            <SelectItem value="all">View by: All Categories</SelectItem>
                             {categories.map((category) => (
                               <SelectItem key={category.category_id} value={category.category_id}>
-                                {category.name}
+                                View by: {category.name}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -765,7 +742,7 @@ const BillingDashboard = () => {
                       </div>
 
                       {categories.length > 0 && (
-                        <div className="flex gap-2 overflow-x-auto pb-1">
+                        <div className="flex flex-wrap gap-2">
                           <Button
                             type="button"
                             variant={counterCategory === 'all' ? 'default' : 'outline'}
@@ -789,7 +766,7 @@ const BillingDashboard = () => {
                       )}
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
                       {filteredMenuItems.length === 0 ? (
                         <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
                           <p className="text-base font-medium">No menu items found</p>
@@ -798,72 +775,203 @@ const BillingDashboard = () => {
                           </p>
                         </div>
                       ) : (
-                        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                        <div className="grid gap-4 md:grid-cols-2">
                           {filteredMenuItems.map((item) => {
                             const cartItem = counterCart.find((cartEntry) => cartEntry.item_id === item.item_id);
                             return (
                               <Card
                                 key={item.item_id}
-                                className={`rounded-[24px] border-border transition-colors ${cartItem ? 'border-primary/30 bg-primary/5' : 'bg-white'}`}
+                                className={`overflow-hidden rounded-[24px] border-border transition-colors ${cartItem ? 'border-primary/30 bg-[#FFF8F4]' : 'bg-white'}`}
                               >
                                 <CardContent className="flex h-full flex-col p-4">
                                   <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <p className="truncate text-lg font-semibold">{item.name}</p>
-                                      {item.description && (
-                                        <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.description}</p>
-                                      )}
+                                    <div className="flex min-w-0 items-center gap-3">
+                                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-accent">
+                                        {item.image && (
+                                          <img
+                                            src={normalizeImageUrl(item.image)}
+                                            alt={item.name}
+                                            className="h-full w-full object-cover"
+                                            onError={(event) => {
+                                              event.currentTarget.style.display = 'none';
+                                            }}
+                                          />
+                                        )}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="truncate text-lg font-semibold">{item.name}</p>
+                                      </div>
                                     </div>
-                                    {cartItem && (
-                                      <Badge className="rounded-full bg-primary text-white">
-                                        x{cartItem.quantity}
-                                      </Badge>
-                                    )}
                                   </div>
 
-                                  <div className="mt-auto pt-4">
-                                    <div className="flex items-center justify-between gap-3">
-                                      <span className="text-xl font-bold text-primary">{formatCurrency(item.price)}</span>
-                                      {cartItem ? (
-                                        <div className="flex items-center gap-2 rounded-full border border-border bg-accent/60 px-1 py-1">
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-8 w-8 rounded-full p-0"
-                                            onClick={() => updateCounterQuantity(item.item_id, cartItem.quantity - 1)}
-                                          >
-                                            -
-                                          </Button>
-                                          <span className="min-w-[1.5rem] text-center font-semibold">{cartItem.quantity}</span>
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-8 w-8 rounded-full p-0"
-                                            onClick={() => updateCounterQuantity(item.item_id, cartItem.quantity + 1)}
-                                          >
-                                            +
-                                          </Button>
-                                        </div>
-                                      ) : (
-                                        <Button
-                                          type="button"
-                                          onClick={() => addCounterItem(item)}
-                                          className="rounded-full bg-primary hover:bg-[#C54E2C]"
-                                        >
-                                          <Plus className="mr-1 h-4 w-4" />
-                                          Add
-                                        </Button>
-                                      )}
+                                  <div className="mt-4 flex items-center justify-between gap-3">
+                                    <span className="text-xl font-bold text-primary">{formatCurrency(item.price)}</span>
+                                    <div className="flex items-center gap-2 rounded-full border border-border bg-accent/60 px-1 py-1">
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 rounded-full p-0"
+                                        onClick={() => updateCounterQuantity(item.item_id, Math.max((cartItem?.quantity || 0) - 1, 0))}
+                                      >
+                                        -
+                                      </Button>
+                                      <span className="min-w-[1.5rem] text-center font-semibold">{cartItem?.quantity || 0}</span>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 rounded-full p-0"
+                                        onClick={() => cartItem ? updateCounterQuantity(item.item_id, cartItem.quantity + 1) : addCounterItem(item)}
+                                      >
+                                        +
+                                      </Button>
                                     </div>
                                   </div>
+
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => addCounterItem(item)}
+                                    className="mt-4 w-full rounded-xl border-border bg-white text-base font-medium hover:bg-accent"
+                                  >
+                                    Add to Order
+                                  </Button>
                                 </CardContent>
                               </Card>
                             );
                           })}
                         </div>
                       )}
+                    </div>
+                  </div>
+
+                  <div className="flex min-h-0 flex-col bg-white">
+                    <div className="shrink-0 border-b border-border px-5 py-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-2xl font-semibold tracking-tight">Order Summary</h3>
+                          <p className="text-sm text-muted-foreground">
+                            {cartItemCount} item{cartItemCount !== 1 ? 's' : ''} in cart
+                          </p>
+                        </div>
+                        {counterCart.length > 0 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="rounded-full text-muted-foreground"
+                            onClick={() => setCounterCart([])}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                      <div className="space-y-3">
+                        {counterCart.length === 0 && (
+                          <div className="rounded-[24px] border border-dashed border-border bg-white p-6 text-center">
+                            <ShoppingCart className="mx-auto h-10 w-10 text-muted-foreground" />
+                            <p className="mt-3 text-sm font-medium text-foreground">No items added yet</p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              Choose items from the center panel to start this counter order.
+                            </p>
+                          </div>
+                        )}
+
+                        {cartPreviewItems.map((item) => (
+                          <div key={item.item_id} className="rounded-[24px] border border-border bg-white p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-xl font-semibold">{item.name}</p>
+                                <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 rounded-full p-0 text-destructive"
+                                onClick={() => updateCounterQuantity(item.item_id, 0)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+
+                            <div className="mt-4 flex items-center gap-3">
+                              <div className="flex items-center rounded-full border border-border bg-accent/60 px-1 py-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 rounded-full p-0"
+                                  onClick={() => updateCounterQuantity(item.item_id, item.quantity - 1)}
+                                >
+                                  -
+                                </Button>
+                                <div className="min-w-[2.5rem] text-center text-base font-semibold">{item.quantity}</div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 rounded-full p-0"
+                                  onClick={() => updateCounterQuantity(item.item_id, item.quantity + 1)}
+                                >
+                                  +
+                                </Button>
+                              </div>
+                              <div className="ml-auto text-2xl font-bold text-primary">
+                                {formatCurrency(item.quantity * item.price)}
+                              </div>
+                            </div>
+
+                            <Textarea
+                              value={item.instructions}
+                              onChange={(event) => updateCounterInstructions(item.item_id, event.target.value)}
+                              placeholder="Special instructions"
+                              className="mt-3 min-h-[52px] rounded-2xl text-sm"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 border-t border-border bg-white px-5 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
+                      <div className="mb-4 flex items-center justify-between text-lg font-bold">
+                        <span>Total</span>
+                        <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={counterSubmitting || counterCart.length === 0}
+                          onClick={() => submitCounterOrder(true)}
+                          className="rounded-xl py-6 text-base"
+                        >
+                          <Printer className="mr-2 h-4 w-4" />
+                          Print
+                        </Button>
+                        <Button
+                          type="button"
+                          disabled={counterSubmitting || counterCart.length === 0}
+                          onClick={() => submitCounterOrder(false)}
+                          className="rounded-xl bg-[#2D8DA7] py-6 text-base hover:bg-[#24778d]"
+                        >
+                          {counterSubmitting ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Ordering...
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingCart className="mr-2 h-4 w-4" />
+                              Order
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
