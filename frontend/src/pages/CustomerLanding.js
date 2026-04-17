@@ -21,15 +21,7 @@ const CustomerMenu = () => {
 
   useEffect(() => {
     const initializeMenu = async () => {
-      // If we already have the restaurant_id cached, use it directly
-      const storedRestaurantId = localStorage.getItem('restaurant_id');
-      if (storedRestaurantId) {
-        setRestaurantId(storedRestaurantId);
-        fetchMenu(storedRestaurantId);
-        return;
-      }
-
-      // If we have a session token, resolve the restaurant_id from it
+      // Step 1: Check if we have a valid existing session token
       const sessionToken = localStorage.getItem('customer_session');
       if (sessionToken) {
         try {
@@ -39,14 +31,17 @@ const CustomerMenu = () => {
             localStorage.setItem('restaurant_id', resolvedRestaurantId);
             setRestaurantId(resolvedRestaurantId);
           }
+          // Session is valid — load menu and return
           fetchMenu(resolvedRestaurantId);
+          return;
         } catch (error) {
-          fetchMenu(null);
+          // Session is expired or invalid — clear it and create a new one below
+          localStorage.removeItem('customer_session');
+          localStorage.removeItem('restaurant_id');
         }
-        return;
       }
 
-      // No session at all — create one using the tableId from the URL
+      // Step 2: No valid session — create a fresh one using the tableId from the URL
       if (tableId) {
         try {
           const res = await api.post('/api/customer/session', {
