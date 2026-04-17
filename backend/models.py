@@ -78,9 +78,9 @@ class OrderCreate(BaseModel):
     items: List[OrderItem]
 
 class CounterOrderCreate(BaseModel):
-    fulfillment_type: str
+    order_type: str = "dine_in"  # dine_in, takeaway
     table_id: Optional[str] = None
-    customer_name: Optional[str] = None
+    customer_name: str
     phone: Optional[str] = None
     items: List[OrderItem]
 
