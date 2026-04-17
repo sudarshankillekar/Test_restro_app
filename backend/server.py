@@ -79,6 +79,15 @@ app.add_middleware(
 )
 api_router = APIRouter(prefix="/api")
 
+@app.get("/")
+async def root_health():
+    return {"status": "ok", "service": "restro-api"}
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
 # ============ Socket.IO Events ============
 @sio.event
 async def connect(sid, environ):
