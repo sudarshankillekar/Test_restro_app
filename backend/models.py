@@ -77,6 +77,13 @@ class OrderCreate(BaseModel):
     customer_session_token: str
     items: List[OrderItem]
 
+class CounterOrderCreate(BaseModel):
+    fulfillment_type: str
+    table_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    phone: Optional[str] = None
+    items: List[OrderItem]
+
 class OrderItemsUpdate(BaseModel):
     items: List[OrderItemUpdate]
     
