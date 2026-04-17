@@ -71,7 +71,7 @@ const OrderTracking = () => {
 
     const handleOrderUpdate = (updatedOrder) => {
       if (updatedOrder.order_id === orderId) {
-       api.get(`${BACKEND_URL}/api/orders/${orderId}`, {
+        api.get(`/api/orders/${orderId}`, {
           params: {
             customer_session_token: localStorage.getItem('customer_session') || '',
           },
