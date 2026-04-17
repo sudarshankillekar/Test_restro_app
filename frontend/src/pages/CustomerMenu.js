@@ -78,7 +78,7 @@ const CustomerMenu = () => {
       ]);
       
       setCategories(catRes.data);
-      setMenuItems(itemsRes.data.filter(item => item.available));
+      setMenuItems(itemsRes.data);
       setLoading(false);
     } catch (error) {
       toast.error('Failed to load menu');
