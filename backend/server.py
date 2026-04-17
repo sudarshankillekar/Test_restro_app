@@ -31,7 +31,7 @@ from subscription import (
 )
 from models import (
     LoginRequest, RegisterRequest, UserResponse, MenuItemCreate, MenuItemUpdate,
-    TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, OrderItemsUpdate, OrderResponse,
+    TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, CounterOrderCreate, OrderItemsUpdate, OrderResponse,
     PaymentCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
 from xlsx_export import build_xlsx_bytes
@@ -1198,7 +1198,7 @@ async def enrich_orders(order_docs):
         if cloned["table_number"] is not None:
             cloned["table_label"] = f"Table {cloned['table_number']}"
         else:
-            cloned["table_label"] = cloned.get("table_id")
+             cloned["table_label"] = cloned.get("table_label") or cloned.get("table_id")
         payment = payment_map.get(cloned.get("order_id"))
         if payment:
             cloned["payment"] = payment
@@ -1260,6 +1260,75 @@ async def build_order_bill_summary(order_doc):
         "restaurant_gst_number": restaurant.get("gst_number") if restaurant else None,
     }
 
+async def build_order_items_from_menu(restaurant_id: str, items: list):
+    if not items:
+        raise HTTPException(status_code=400, detail="Please add at least one item to the order.")
+
+    requested_item_ids = [item.item_id for item in items]
+    menu_items = await db.menu_items.find(
+        {"item_id": {"$in": requested_item_ids}, "restaurant_id": restaurant_id},
+        {"_id": 0}
+    ).to_list(len(requested_item_ids))
+    menu_item_map = {item["item_id"]: item for item in menu_items}
+
+    total = 0
+    order_items = []
+    for item in items:
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Item quantity must be at least 1.")
+
+        menu_item = menu_item_map.get(item.item_id)
+        if not menu_item:
+            raise HTTPException(status_code=404, detail=f"Item {item.item_id} not found")
+        if not menu_item.get("available"):
+            raise HTTPException(status_code=400, detail=f"{menu_item['name']} is not available")
+
+        item_total = menu_item["price"] * item.quantity
+        total += item_total
+        order_items.append({
+            "item_id": item.item_id,
+            "name": menu_item["name"],
+            "quantity": item.quantity,
+            "price": menu_item["price"],
+            "instructions": (item.instructions or "").strip(),
+        })
+
+    return round(total, 2), order_items
+
+
+async def upsert_customer_profile(restaurant_id: str, customer_name: str, phone: str):
+    normalized_phone = (phone or "").strip()
+    normalized_name = (customer_name or "").strip()
+
+    if not normalized_phone:
+        return
+
+    customer_data = {
+        "customer_name": normalized_name or "Walk-in Customer",
+        "phone": normalized_phone,
+        "restaurant_id": restaurant_id,
+        "last_visit": datetime.now(timezone.utc)
+    }
+
+    existing_customer = await db.customers.find_one({
+        "phone": normalized_phone,
+        "restaurant_id": restaurant_id
+    })
+
+    if existing_customer:
+        await db.customers.update_one(
+            {"phone": normalized_phone, "restaurant_id": restaurant_id},
+            {
+                "$set": customer_data,
+                "$inc": {"total_orders": 1}
+            }
+        )
+        return
+
+    customer_data["total_orders"] = 1
+    customer_data["created_at"] = datetime.now(timezone.utc)
+    await db.customers.insert_one(customer_data)
+
 @api_router.delete("/tables/{table_id}")
 async def delete_table(table_id: str, request: Request):
     """Delete a table"""
@@ -1309,59 +1378,14 @@ async def create_order(input: OrderCreate):
         "status": {"$nin": ["served", "cancelled"]}
     }, {"_id": 0, "order_id": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
     
-    # Calculate total
-    total = 0
-    order_items = []
-    for item in input.items:
-        menu_item = await db.menu_items.find_one({
-            "item_id": item.item_id,
-            "restaurant_id": restaurant_id
-        }, {"_id": 0})
-        if not menu_item:
-            raise HTTPException(status_code=404, detail=f"Item {item.item_id} not found")
-        if not menu_item["available"]:
-            raise HTTPException(status_code=400, detail=f"{menu_item['name']} is not available")
-        
-        item_total = menu_item["price"] * item.quantity
-        total += item_total
-        order_items.append({
-            "item_id": item.item_id,
-            "name": menu_item["name"],
-            "quantity": item.quantity,
-            "price": menu_item["price"],
-            "instructions": item.instructions or ""
-        })
+    total, order_items = await build_order_items_from_menu(restaurant_id, input.items)
     
     latest_active_order = existing_active_orders[0] if existing_active_orders else None
     prioritized_add_on = any(order["status"] in ["pending", "accepted"] for order in existing_active_orders)
 
     order_id = f"ORD{secrets.token_hex(6).upper()}"
     
-    # Store/update customer data in customers collection
-    customer_data = {
-        "customer_name": session["customer_name"],
-        "phone": session["phone"],
-        "restaurant_id": restaurant_id,
-        "last_visit": datetime.now(timezone.utc)
-    }
-    
-    existing_customer = await db.customers.find_one({
-        "phone": session["phone"],
-        "restaurant_id": restaurant_id
-    })
-    
-    if existing_customer:
-        await db.customers.update_one(
-            {"phone": session["phone"], "restaurant_id": restaurant_id},
-            {
-                "$set": customer_data,
-                "$inc": {"total_orders": 1}
-            }
-        )
-    else:
-        customer_data["total_orders"] = 1
-        customer_data["created_at"] = datetime.now(timezone.utc)
-        await db.customers.insert_one(customer_data)
+    await upsert_customer_profile(restaurant_id, session["customer_name"], session["phone"])
     
     order_doc = {
         "order_id": order_id,
@@ -1374,6 +1398,8 @@ async def create_order(input: OrderCreate):
         "total": total,
         "status": "pending",
         "payment_status": "pending",
+        "fulfillment_type": "dine_in",
+        "source": "customer_qr",
         "is_add_on": bool(latest_active_order),
         "add_on_to_order_id": latest_active_order["order_id"] if latest_active_order else None,
         "priority": "high" if latest_active_order and prioritized_add_on else "normal",
@@ -1399,6 +1425,110 @@ async def create_order(input: OrderCreate):
     
     return created_order
 
+@api_router.post("/billing/orders")
+async def create_billing_counter_order(input: CounterOrderCreate, request: Request):
+    """Create dine-in or takeaway order from billing counter"""
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    await check_restaurant_subscription(db, restaurant_id)
+
+    fulfillment_type = (input.fulfillment_type or "").strip().lower()
+    if fulfillment_type not in ["dine_in", "takeaway"]:
+        raise HTTPException(status_code=400, detail="fulfillment_type must be dine_in or takeaway.")
+
+    table = None
+    table_id = None
+    table_number = None
+    table_label = None
+
+    if fulfillment_type == "dine_in":
+        table_id = (input.table_id or "").strip()
+        if not table_id:
+            raise HTTPException(status_code=400, detail="Please select a table for dine-in orders.")
+        table = await db.tables.find_one(
+            {"table_id": table_id, "restaurant_id": restaurant_id},
+            {"_id": 0, "table_id": 1, "table_number": 1}
+        )
+        if not table:
+            raise HTTPException(status_code=404, detail="Selected table was not found.")
+        table_number = table.get("table_number")
+    else:
+        table_id = f"takeaway_{secrets.token_hex(4)}"
+        table_label = "Takeaway"
+
+    total, order_items = await build_order_items_from_menu(restaurant_id, input.items)
+
+    existing_active_orders = []
+    latest_active_order = None
+    prioritized_add_on = False
+    if fulfillment_type == "dine_in":
+        existing_active_orders = await db.orders.find({
+            "table_id": table_id,
+            "restaurant_id": restaurant_id,
+            "status": {"$nin": ["served", "cancelled"]}
+        }, {"_id": 0, "order_id": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
+        latest_active_order = existing_active_orders[0] if existing_active_orders else None
+        prioritized_add_on = any(order["status"] in ["pending", "accepted"] for order in existing_active_orders)
+
+    customer_name = (input.customer_name or "").strip()
+    if not customer_name:
+        if fulfillment_type == "takeaway":
+            customer_name = "Takeaway Customer"
+        elif table_number is not None:
+            customer_name = f"Walk-in Table {table_number}"
+        else:
+            customer_name = "Walk-in Customer"
+    phone = (input.phone or "").strip()
+
+    await upsert_customer_profile(restaurant_id, customer_name, phone)
+
+    now = datetime.now(timezone.utc)
+    order_id = f"ORD{secrets.token_hex(6).upper()}"
+    order_doc = {
+        "order_id": order_id,
+        "table_id": table_id,
+        "table_number": table_number,
+        "table_label": table_label,
+        "restaurant_id": restaurant_id,
+        "customer_name": customer_name,
+        "phone": phone,
+        "items": order_items,
+        "total": total,
+        "status": "pending",
+        "payment_status": "pending",
+        "fulfillment_type": fulfillment_type,
+        "source": "billing_counter",
+        "is_add_on": bool(latest_active_order),
+        "add_on_to_order_id": latest_active_order["order_id"] if latest_active_order else None,
+        "priority": "high" if latest_active_order and prioritized_add_on else "normal",
+        "created_at": now,
+        "updated_at": now,
+        "timestamps": {
+            "pending": now.isoformat()
+        }
+    }
+    await db.orders.insert_one(order_doc)
+
+    created_order = (await enrich_orders([{k: v for k, v in order_doc.items() if k != "_id"}]))[0]
+
+    await sio.emit('new_order', to_socket_payload(created_order), room=f'restaurant_{restaurant_id}')
+    if created_order.get("is_add_on"):
+        await sio.emit('kitchen_notification', {
+            "type": "add_on",
+            "order_id": created_order["order_id"],
+            "table_id": created_order["table_id"],
+            "table_label": created_order.get("table_label"),
+            "message": f"Add-on order received for {created_order.get('table_label') or created_order['table_id']}"
+        }, room=f'restaurant_{restaurant_id}')
+
+    return created_order
+    
 @api_router.get("/orders")
 async def get_orders(request: Request, status: str = None):
     """Get all orders (kitchen/billing dashboard - requires auth)"""
