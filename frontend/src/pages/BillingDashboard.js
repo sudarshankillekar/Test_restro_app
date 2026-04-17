@@ -529,7 +529,7 @@ const BillingDashboard = () => {
                   Take Counter Order
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-6xl rounded-[28px] border-border p-0">
+              <DialogContent className="flex h-[90vh] max-h-[90vh] max-w-6xl flex-col overflow-hidden rounded-[28px] border-border p-0">
                 <DialogHeader>
                   <div className="border-b border-border px-6 py-5">
                     <DialogTitle className="text-2xl tracking-tight">Create Billing Counter Order</DialogTitle>
@@ -538,10 +538,10 @@ const BillingDashboard = () => {
                     </p>
                   </div>
                 </DialogHeader>
-                <div className="grid max-h-[85vh] gap-0 lg:grid-cols-[360px,1fr]">
+                <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[360px,1fr]">
                   <div className="border-b border-border bg-[#FCFBF8] lg:border-b-0 lg:border-r">
-                    <div className="flex h-full flex-col">
-                      <div className="space-y-4 px-5 py-5">
+                    <div className="flex h-full min-h-0 flex-col">
+                      <div className="shrink-0 space-y-4 px-5 py-5">
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
                           <div className="space-y-2">
                             <Label>Order Type</Label>
@@ -692,7 +692,7 @@ const BillingDashboard = () => {
                         </div>
                       </div>
 
-                      <div className="border-t border-border bg-white px-5 py-4">
+                      <div className="shrink-0 border-t border-border bg-white px-5 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
                         <div className="mb-3 flex items-center justify-between text-base font-bold">
                           <span>Total</span>
                           <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
@@ -716,7 +716,7 @@ const BillingDashboard = () => {
                   </div>
 
                   <div className="flex min-h-0 flex-col bg-white">
-                    <div className="space-y-4 border-b border-border px-6 py-5">
+                    <div className="shrink-0 space-y-4 border-b border-border px-6 py-5">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                           <h3 className="text-xl font-semibold">Available Menu Items</h3>
