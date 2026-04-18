@@ -846,7 +846,7 @@ const BillingDashboard = () => {
                     </div>
                   </div>
 
-                  <div className="flex min-h-0 flex-col bg-white">
+                  <div className="flex min-h-0 flex-col overflow-hidden bg-white">
                     <div className="shrink-0 border-b border-border px-5 py-5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -937,7 +937,7 @@ const BillingDashboard = () => {
                       </div>
                     </div>
 
-                    <div className="shrink-0 border-t border-border bg-white px-5 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
+                    <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-5 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
                       <div className="mb-4 flex items-center justify-between text-lg font-bold">
                         <span>Total</span>
                         <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
