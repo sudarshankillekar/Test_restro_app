@@ -610,84 +610,6 @@ const BillingDashboard = () => {
                             className="rounded-full"
                           />
                         </div>
-
-                        <div className="rounded-[24px] border border-border bg-white p-4 shadow-sm">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h3 className="text-lg font-semibold">Order Summary</h3>
-                              <p className="text-sm text-muted-foreground">
-                                {cartItemCount} item{cartItemCount !== 1 ? 's' : ''} in cart
-                              </p>
-                            </div>
-                            {counterCart.length > 0 && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="rounded-full text-muted-foreground"
-                                onClick={() => setCounterCart([])}
-                              >
-                                Clear
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
-                        <div className="space-y-3 pr-1">
-                          {cartPreviewItems.slice(0, 2).map((item) => (
-                            <div key={item.item_id} className="rounded-[24px] border border-border bg-white p-4 shadow-sm">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="truncate text-xl font-semibold">{item.name}</p>
-                                  <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
-                                </div>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-8 w-8 rounded-full p-0 text-destructive"
-                                  onClick={() => updateCounterQuantity(item.item_id, 0)}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                              <div className="mt-3 flex items-center gap-2">
-                                <div className="flex items-center rounded-full border border-border bg-accent/60">
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-9 w-9 rounded-full p-0"
-                                    onClick={() => updateCounterQuantity(item.item_id, item.quantity - 1)}
-                                  >
-                                    -
-                                  </Button>
-                                  <div className="min-w-[2.5rem] text-center text-base font-semibold">{item.quantity}</div>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-9 w-9 rounded-full p-0"
-                                    onClick={() => updateCounterQuantity(item.item_id, item.quantity + 1)}
-                                  >
-                                    +
-                                  </Button>
-                                </div>
-                                <div className="ml-auto text-2xl font-bold text-primary">
-                                  {formatCurrency(item.quantity * item.price)}
-                                </div>
-                              </div>
-                              <Textarea
-                                value={item.instructions}
-                                onChange={(event) => updateCounterInstructions(item.item_id, event.target.value)}
-                                placeholder="Special instructions"
-                                className="mt-3 min-h-[48px] rounded-2xl text-sm"
-                              />
-                            </div>
-                          ))}
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -882,10 +804,10 @@ const BillingDashboard = () => {
                         )}
 
                         {cartPreviewItems.map((item) => (
-                          <div key={item.item_id} className="rounded-[24px] border border-border bg-white p-4 shadow-sm">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="truncate text-xl font-semibold">{item.name}</p>
+                         <div key={item.item_id} className="rounded-[18px] border border-border bg-white px-4 py-3 shadow-sm">
+                            <div className="flex items-center gap-3">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-base font-semibold">{item.name}</p>
                                 <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
                               </div>
                               <Button
@@ -899,29 +821,29 @@ const BillingDashboard = () => {
                               </Button>
                             </div>
 
-                            <div className="mt-4 flex items-center gap-3">
+                            <div className="mt-3 flex items-center gap-3">
                               <div className="flex items-center rounded-full border border-border bg-accent/60 px-1 py-1">
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-8 w-8 rounded-full p-0"
+                                  className="h-7 w-7 rounded-full p-0"
                                   onClick={() => updateCounterQuantity(item.item_id, item.quantity - 1)}
                                 >
                                   -
                                 </Button>
-                                <div className="min-w-[2.5rem] text-center text-base font-semibold">{item.quantity}</div>
+                                  <div className="min-w-[2rem] text-center text-sm font-semibold">{item.quantity}</div>
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-8 w-8 rounded-full p-0"
+                                  className="h-7 w-7 rounded-full p-0"
                                   onClick={() => updateCounterQuantity(item.item_id, item.quantity + 1)}
                                 >
                                   +
                                 </Button>
                               </div>
-                              <div className="ml-auto text-2xl font-bold text-primary">
+                               <div className="ml-auto text-lg font-bold text-primary">
                                 {formatCurrency(item.quantity * item.price)}
                               </div>
                             </div>
@@ -930,7 +852,7 @@ const BillingDashboard = () => {
                               value={item.instructions}
                               onChange={(event) => updateCounterInstructions(item.item_id, event.target.value)}
                               placeholder="Special instructions"
-                              className="mt-3 min-h-[52px] rounded-2xl text-sm"
+                              className="mt-3 min-h-[44px] rounded-2xl text-sm"
                             />
                           </div>
                         ))}
