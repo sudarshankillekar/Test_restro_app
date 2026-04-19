@@ -5,7 +5,7 @@ import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
-import { CheckCircle, Clock, ChefHat, Download, Package, Loader2 } from 'lucide-react';
+import { CheckCircle, Clock, ChefHat, Download, Package, Loader2, Star } from 'lucide-react';
 
 
 const statusConfig = {
@@ -111,7 +111,8 @@ const OrderTracking = () => {
   const tableSummary = order.table_order_summary;
   const activeTableOrders = tableSummary?.orders || [];
   const combinedTotal = tableSummary?.combined_total ?? order.total;
-   const billSummary = order.bill_summary;
+  const billSummary = order.bill_summary;
+  const googleReviewUrl = billSummary?.google_review_url;
 
   const downloadBill = () => {
     if (!billSummary?.payment) {
@@ -226,14 +227,42 @@ const OrderTracking = () => {
               )}
             </div>
                {billSummary?.payment && (
-              <button
-                type="button"
-                onClick={downloadBill}
-                className="w-full rounded-full bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-[#C54E2C]"
-              >
-                <Download className="inline-block w-4 h-4 mr-2" />
-                Download Bill
-              </button>
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={downloadBill}
+                  className="w-full rounded-full bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-[#C54E2C]"
+                >
+                  <Download className="inline-block w-4 h-4 mr-2" />
+                  Download Bill
+                </button>
+
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center">
+                  <div className="mx-auto mb-2 flex w-fit items-center gap-1 text-amber-500">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Star key={star} className="h-5 w-5 fill-current" />
+                    ))}
+                  </div>
+                  <h3 className="font-semibold text-amber-950">How was your experience?</h3>
+                  <p className="mt-1 text-sm text-amber-900">
+                    Your feedback helps us serve you better. Please leave us a Google review.
+                  </p>
+                  {googleReviewUrl ? (
+                    <a
+                      href={googleReviewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-amber-500 px-4 py-3 text-sm font-semibold text-white hover:bg-amber-600"
+                    >
+                      Give Google Review
+                    </a>
+                  ) : (
+                    <p className="mt-3 rounded-xl bg-white/70 px-3 py-2 text-xs text-amber-900">
+                      Google review link is not configured yet.
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
             <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
               <p className="text-sm text-blue-900">
