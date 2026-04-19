@@ -66,7 +66,7 @@ const statusTone = {
   const { user, logout } = useAuth();
   const { socket, joinRoom } = useSocket();
   const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
+ 
 
   useEffect(() => {
     fetchOrders();
@@ -166,7 +166,6 @@ const statusTone = {
   };
 const enableSound = () => {
     playKitchenAlert();
-    setSoundEnabled(true);
     toast.success('Kitchen notification sound enabled');
   };
   const groupedTables = useMemo(() => {
@@ -253,15 +252,13 @@ const enableSound = () => {
             <LogOut className="w-4 h-4 mr-2" />
             Logout
           </Button>
-             {!soundEnabled && (
-            <Button
-              onClick={enableSound}
-              className="rounded-full bg-primary hover:bg-[#C54E2C]"
-            >
-              <BellRing className="w-4 h-4 mr-2" />
-              Enable Sound
-            </Button>
-          )}   
+             <Button
+            onClick={enableSound}
+            className="rounded-full bg-primary hover:bg-[#C54E2C]"
+          >
+            <BellRing className="w-4 h-4 mr-2" />
+            Enable Sound
+          </Button>  
         </div>
       </div>
 
