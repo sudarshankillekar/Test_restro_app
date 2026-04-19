@@ -21,7 +21,8 @@ load_dotenv(ROOT_DIR / '.env')
 from auth import (
     hash_password, verify_password, create_access_token, create_refresh_token,
     get_current_user, get_jwt_secret, JWT_ALGORITHM, seed_admin, attach_restaurant_context,
-    check_brute_force, record_failed_login, clear_failed_logins
+    check_brute_force, record_failed_login, clear_failed_logins,
+    ACCESS_TOKEN_MAX_AGE_SECONDS, REFRESH_TOKEN_MAX_AGE_SECONDS
 )
 from subscription import (
     check_restaurant_subscription, get_restaurant_from_user,
@@ -263,8 +264,8 @@ async def register(input: RegisterRequest, request: Request, response: Response)
     refresh_token = create_refresh_token(user_id)
     
     cookie_settings = get_cookie_settings(request)
-    response.set_cookie(key="access_token", value=access_token, max_age=900, **cookie_settings)
-    response.set_cookie(key="refresh_token", value=refresh_token, max_age=604800, **cookie_settings)
+    response.set_cookie(key="access_token", value=access_token, max_age=ACCESS_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
+    response.set_cookie(key="refresh_token", value=refresh_token, max_age=REFRESH_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
     
     return {"email": email, "name": input.name, "role": input.role, "_id": user_id}
 
@@ -296,8 +297,9 @@ async def login(input: LoginRequest, request: Request, response: Response):
     refresh_token = create_refresh_token(user_id)
     
     cookie_settings = get_cookie_settings(request)
-    response.set_cookie(key="access_token", value=access_token, max_age=900, **cookie_settings)
-    response.set_cookie(key="refresh_token", value=refresh_token, max_age=604800, **cookie_settings)
+    response.set_cookie(key="access_token", value=access_token, max_age=ACCESS_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
+    response.set_cookie(key="refresh_token", value=refresh_token, max_age=REFRESH_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
+    
     
     response_user = await attach_restaurant_context(dict(user), db)
     return {
@@ -367,7 +369,7 @@ async def google_session(request: Request, response: Response):
     
     # Store session token
     session_token = oauth_data["session_token"]
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     await db.user_sessions.insert_one({
         "user_id": user_id,
         "session_token": session_token,
@@ -380,7 +382,7 @@ async def google_session(request: Request, response: Response):
         key="session_token",
         value=session_token,
         **get_cookie_settings(request),
-        max_age=604800
+        max_age=REFRESH_TOKEN_MAX_AGE_SECONDS
     )
     
     user = await db.users.find_one({"_id": result.inserted_id if not user else user["_id"]})
