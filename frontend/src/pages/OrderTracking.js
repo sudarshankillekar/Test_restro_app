@@ -113,7 +113,19 @@ const OrderTracking = () => {
   const combinedTotal = tableSummary?.combined_total ?? order.total;
   const billSummary = order.bill_summary;
   const googleReviewUrl = billSummary?.google_review_url;
-
+  const paidBillItems = billSummary?.payment ? summarizeBillItems(billSummary.orders) : [];
+  const displayItems = billSummary?.payment
+    ? paidBillItems.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      amount: item.amount,
+    }))
+    : order.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      instructions: item.instructions,
+      amount: item.price * item.quantity,
+    }));
   const downloadBill = () => {
     if (!billSummary?.payment) {
       toast.error('Bill is not available yet.');
@@ -197,9 +209,11 @@ const OrderTracking = () => {
           </CardHeader>
           <CardContent className="space-y-6">
             <div>
-              <h3 className="font-semibold mb-3">Order Items</h3>
+               <h3 className="font-semibold mb-3">
+                {billSummary?.payment ? 'Final Bill Items' : 'Order Items'}
+              </h3>
               <div className="space-y-2">
-                {order.items.map((item, idx) => (
+                {displayItems.map((item, idx) => (
                   <div key={idx} className="flex justify-between items-center p-3 bg-accent rounded-xl">
                     <div>
                       <p className="font-medium">{item.name}</p>
@@ -208,22 +222,45 @@ const OrderTracking = () => {
                         <p className="text-xs text-muted-foreground italic">Note: {item.instructions}</p>
                       )}
                     </div>
-                    <p className="font-semibold">₹{(item.price * item.quantity).toFixed(2)}</p>
+                     <p className="font-semibold">₹{item.amount.toFixed(2)}</p>
                   </div>
                 ))}
               </div>
             </div>
 
             <div className="border-t border-border pt-4">
-              <div className="flex justify-between text-lg font-bold">
-                <span>This Order</span>
-                <span className="text-primary">₹{order.total.toFixed(2)}</span>
-              </div>
-              {activeTableOrders.length > 1 && (
-                <div className="flex justify-between text-lg font-bold mt-3">
-                  <span>Running Table Total</span>
-                  <span className="text-primary">₹{combinedTotal.toFixed(2)}</span>
+               {billSummary?.payment ? (
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>₹{(billSummary.payment.subtotal || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Tax (5%)</span>
+                    <span>₹{(billSummary.payment.tax || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Discount</span>
+                    <span>₹{(billSummary.payment.discount || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-border pt-2 text-lg font-bold">
+                    <span>Final Bill Total</span>
+                    <span className="text-primary">₹{(billSummary.payment.total || 0).toFixed(2)}</span>
+                  </div>
                 </div>
+              ) : (
+                <>
+                  <div className="flex justify-between text-lg font-bold">
+                    <span>This Order</span>
+                    <span className="text-primary">₹{order.total.toFixed(2)}</span>
+                  </div>
+                  {activeTableOrders.length > 1 && (
+                    <div className="flex justify-between text-lg font-bold mt-3">
+                      <span>Running Table Total</span>
+                      <span className="text-primary">₹{combinedTotal.toFixed(2)}</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
                {billSummary?.payment && (
