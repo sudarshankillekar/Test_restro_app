@@ -61,14 +61,29 @@ const printHtml = (html, title) => {
         <style>
           body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
           h1, h2, p { margin: 0 0 12px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-          th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; }
-          .totals { margin-top: 20px; width: 320px; margin-left: auto; }
+          table { width: 100%; border-collapse: collapse; margin-top: 16px; table-layout: fixed; }
+          th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; word-break: break-word; }
+          th:nth-child(2), td:nth-child(2) { width: 48px; text-align: center; }
+          th:nth-child(3), td:nth-child(3) { width: 96px; text-align: right; }
+          .totals { margin-top: 20px; width: min(320px, 100%); margin-left: auto; }
           .totals div { display: flex; justify-content: space-between; margin-bottom: 8px; }
           .strong { font-weight: 700; }
           .header { border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
           .muted { color: #555; }
           .chip { display: inline-block; padding: 6px 12px; border-radius: 999px; background: #f1f5f9; margin-right: 8px; }
+          @page { size: auto; margin: 4mm; }
+          @media print {
+            html, body { margin: 0; padding: 0; }
+            body { width: 100%; max-width: 80mm; padding: 3mm; font-size: 12px; }
+            h1 { font-size: 18px; }
+            p { margin-bottom: 6px; }
+            table { margin-top: 10px; }
+            th, td { padding: 5px 2px; }
+            th:nth-child(2), td:nth-child(2) { width: 32px; }
+            th:nth-child(3), td:nth-child(3) { width: 66px; }
+            .totals { width: 100%; margin-top: 12px; }
+            .chip { padding: 3px 6px; margin-bottom: 4px; }
+          }
         </style>
       </head>
       <body>
