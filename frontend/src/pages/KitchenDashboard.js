@@ -221,7 +221,16 @@ const enableSound = () => {
         return newestB - newestA;
       });
   }, [orders]);
+    const queueTokenMap = useMemo(() => {
+    const queueOrders = orders
+      .filter((order) => ['pending', 'accepted'].includes(order.status))
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
+    return queueOrders.reduce((tokens, order, index) => {
+      tokens[order.order_id] = index + 1;
+      return tokens;
+    }, {});
+  }, [orders]);
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: '#F3F4F6' }}>
@@ -294,16 +303,16 @@ const enableSound = () => {
           </Card>
         </div>
 
-        <div className="space-y-5">
+        <div className="space-y-4">
           {groupedTables.map((group) => (
             <Card
               key={group.table_id}
-              className={`border-border rounded-[28px] ${group.tablePriority ? 'ring-2 ring-amber-300' : ''}`}
+              className={`border-border rounded-2xl ${group.tablePriority ? 'ring-2 ring-amber-300' : ''}`}
             >
-              <CardHeader className="pb-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <CardHeader className="px-4 py-3">
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <CardTitle className="text-2xl">{group.table_label}</CardTitle>
+                    <CardTitle className="text-xl">{group.table_label}</CardTitle>
                     <p className="text-sm text-muted-foreground">{group.orders.length} active ticket{group.orders.length > 1 ? 's' : ''}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -319,9 +328,16 @@ const enableSound = () => {
                   </div>
                 </div>
               </CardHeader>
-               <CardContent className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+              <CardContent className="grid grid-cols-1 gap-2 px-4 pb-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"> 
                 {group.orders.map((order) => {
                   const tone = statusTone[order.status] || statusTone.pending;
+                  const queueToken = queueTokenMap[order.order_id];
+                  const isPriorityTicket = queueToken === 1 && ['pending', 'accepted'].includes(order.status);
+                  const ticketStateClass = isPriorityTicket
+                    ? 'border-red-500 ring-2 ring-red-300 animate-pulse'
+                    : order.status === 'prepared'
+                      ? 'border-emerald-500 ring-1 ring-emerald-200'
+                      : 'border-orange-400 ring-1 ring-orange-100';
                   const priorityAddOn = order.is_add_on && group.orders.some((candidate) => (
                     candidate.order_id !== order.order_id &&
                     new Date(candidate.created_at).getTime() < new Date(order.created_at).getTime() &&
@@ -333,10 +349,20 @@ const enableSound = () => {
                       className={`rounded-2xl border ${tone.border} bg-white p-4 space-y-4`}
                       data-testid={`order-card-${order.order_id}`}
                     >
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                              <h3 className="text-base font-semibold">{order.order_id}</h3>
+                             <div className={`rounded-full px-3 py-1 text-xs font-bold ${
+                              isPriorityTicket
+                                ? 'bg-red-100 text-red-700'
+                                : order.status === 'prepared'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {order.status === 'prepared' ? 'DONE' : `TOKEN #${queueToken || '-'}`}
+                            </div>
+                             <h3 className="truncate text-sm font-semibold">{order.order_id}</h3> 
                             <Badge className={`rounded-full ${tone.badge}`}>{tone.label}</Badge>
                             {order.is_add_on && (
                               <Badge className={`rounded-full ${priorityAddOn ? 'bg-amber-100 text-amber-800' : 'bg-orange-50 text-orange-700'}`}>
@@ -344,24 +370,24 @@ const enableSound = () => {
                               </Badge>
                             )}
                           </div>
-                          <p className="text-sm text-muted-foreground truncate">{order.customer_name}</p>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">{order.customer_name}</p>
                           <p className="text-xs text-muted-foreground">{new Date(order.created_at).toLocaleString()}</p>
                           {order.add_on_to_order_id && (
                             <p className="text-xs text-amber-700">Linked to {order.add_on_to_order_id}</p>
                           )}
                         </div>
                         {priorityAddOn && (
-                          <div className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
-                            Prioritize now
+                          <div className="shrink-0 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800">
+                            Add-on
                           </div>
                         )}
                       </div>
 
                     
-                        <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                        <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
                         {order.items.map((item, index) => (
-                          <div key={`${order.order_id}-${index}`} className="rounded-xl bg-accent px-3 py-2">
-                            <p className="font-medium text-sm">{item.quantity}x {item.name}</p>
+                          <div key={`${order.order_id}-${index}`} className="rounded-lg bg-accent px-2.5 py-1.5">
+                            <p className="text-xs font-medium">{item.quantity}x {item.name}</p>
                             {item.instructions && (
                              <p className="text-xs text-muted-foreground mt-1">{item.instructions}</p>
                             )}
@@ -369,10 +395,11 @@ const enableSound = () => {
                         ))}
                       </div>
 
-                      <div className="flex flex-col sm:flex-row gap-2">
+                     <div className="flex gap-2">
                         {order.status === 'pending' && (
                           <Button
                             onClick={() => updateStatus(order.order_id, 'accepted')}
+                             size="sm"
                             className={`flex-1 rounded-full ${tone.button}`}
                             data-testid={`accept-order-${order.order_id}`}
                           >
@@ -382,6 +409,7 @@ const enableSound = () => {
                         {order.status === 'accepted' && (
                           <Button
                             onClick={() => updateStatus(order.order_id, 'prepared')}
+                             size="sm"
                             className={`flex-1 rounded-full ${tone.button}`}
                             data-testid={`mark-prepared-${order.order_id}`}
                           >
@@ -389,7 +417,7 @@ const enableSound = () => {
                           </Button>
                         )}
                         {order.status === 'prepared' && (
-                          <div className="flex-1 rounded-full border border-emerald-200 px-4 py-2 text-center text-sm text-emerald-700">
+                          <div className="flex-1 rounded-full border border-emerald-200 px-3 py-1.5 text-center text-xs font-medium text-emerald-700">
                             Ready for billing
                           </div>
                         )}
