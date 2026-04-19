@@ -33,7 +33,8 @@ class RestaurantUpdate(BaseModel):
 
 class RestaurantProfileUpdate(BaseModel):
     gst_number: Optional[str] = None
-
+    google_review_url: Optional[str] = None
+    
 class SubscriptionRenew(BaseModel):
     plan: str
     payment_method: str  # upi, card, cash
