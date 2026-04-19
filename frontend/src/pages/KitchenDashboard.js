@@ -30,7 +30,38 @@ const statusTone = {
   },
 };
 
-const KitchenDashboard = () => {
+  const playKitchenAlert = () => {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+
+    const audioContext = new AudioContext();
+    const playTone = (startTime, frequency, duration) => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, startTime);
+      gain.gain.setValueAtTime(0.001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.35, startTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(startTime);
+      oscillator.stop(startTime + duration + 0.02);
+    };
+
+    const now = audioContext.currentTime;
+    playTone(now, 880, 0.18);
+    playTone(now + 0.24, 1175, 0.22);
+    setTimeout(() => audioContext.close().catch(() => {}), 800);
+  } catch (error) {
+    // Some browsers block audio before the first user interaction.
+  }
+};
+
+  const KitchenDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { socket, joinRoom } = useSocket();
@@ -68,6 +99,7 @@ const KitchenDashboard = () => {
 
     socket.on('new_order', (newOrder) => {
       upsertOrder(newOrder);
+      playKitchenAlert();
       if (newOrder.is_add_on) {
         toast.warning(`Add-on order for ${newOrder.table_label || newOrder.table_id}`, {
           description: 'Previous table ticket is still in progress.',
@@ -78,6 +110,7 @@ const KitchenDashboard = () => {
     });
 
     socket.on('kitchen_notification', (notification) => {
+      playKitchenAlert();
       toast.warning(notification.message);
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         new Notification('Kitchen Alert', {
@@ -131,7 +164,11 @@ const KitchenDashboard = () => {
     await logout();
     navigate('/login');
   };
-
+const enableSound = () => {
+    playKitchenAlert();
+    setSoundEnabled(true);
+    toast.success('Kitchen notification sound enabled');
+  };
   const groupedTables = useMemo(() => {
     const activeOrders = orders.filter((order) => !['served', 'cancelled'].includes(order.status));
     const tableGroups = activeOrders.reduce((groups, order) => {
@@ -216,6 +253,15 @@ const KitchenDashboard = () => {
             <LogOut className="w-4 h-4 mr-2" />
             Logout
           </Button>
+             {!soundEnabled && (
+            <Button
+              onClick={enableSound}
+              className="rounded-full bg-primary hover:bg-[#C54E2C]"
+            >
+              <BellRing className="w-4 h-4 mr-2" />
+              Enable Sound
+            </Button>
+          )}   
         </div>
       </div>
 
