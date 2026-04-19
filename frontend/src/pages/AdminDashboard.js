@@ -58,6 +58,7 @@ const AdminDashboard = () => {
   const [restaurantProfile, setRestaurantProfile] = useState({
     name: '',
     gst_number: '',
+    google_review_url: '',
   });
 
   useEffect(() => {
@@ -257,6 +258,7 @@ const AdminDashboard = () => {
       setRestaurantProfile({
         name: response.data.name || '',
         gst_number: response.data.gst_number || '',
+        google_review_url: response.data.google_review_url || '',
       });
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to load restaurant settings'));
@@ -267,11 +269,15 @@ const AdminDashboard = () => {
     try {
       const response = await api.put(
         `/api/restaurant/profile`,
-        { gst_number: restaurantProfile.gst_number.trim() }
+          {
+          gst_number: restaurantProfile.gst_number.trim(),
+          google_review_url: restaurantProfile.google_review_url.trim(),
+          }
       );
       setRestaurantProfile({
         name: response.data.name || '',
         gst_number: response.data.gst_number || '',
+        google_review_url: response.data.google_review_url || '',
       });
       toast.success('Restaurant settings updated');
     } catch (error) {
@@ -912,6 +918,19 @@ const AdminDashboard = () => {
                       Optional. It will print on the bill only when provided.
                     </p>
                   </div>
+                 <div className="space-y-2 sm:col-span-2">
+                    <Label>Google Review Link</Label>
+                    <Input
+                      value={restaurantProfile.google_review_url}
+                      onChange={(e) => setRestaurantProfile((prev) => ({ ...prev, google_review_url: e.target.value }))}
+                      className="rounded-full"
+                      placeholder="Paste your Google review link"
+                      data-testid="restaurant-google-review-input"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Customers will see this link after billing is completed.
+                    </p>
+                  </div>        
                 </div>
                 <Button
                   onClick={saveRestaurantProfile}
