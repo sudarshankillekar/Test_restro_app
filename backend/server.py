@@ -691,7 +691,7 @@ async def get_restaurant_profile(request: Request):
 
     restaurant = await db.restaurants.find_one(
         {"restaurant_id": restaurant_id},
-        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1}
+        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1}
     )
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -710,20 +710,23 @@ async def update_restaurant_profile(input: RestaurantProfileUpdate, request: Req
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
 
     gst_number = (input.gst_number or "").strip() or None
+    google_review_url = (input.google_review_url or "").strip() or None
     if gst_number and len(gst_number) > 30:
         raise HTTPException(status_code=400, detail="GST number must be 30 characters or fewer.")
-
+    if google_review_url and not google_review_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Google review link must start with http:// or https://")
     await db.restaurants.update_one(
         {"restaurant_id": restaurant_id},
         {"$set": {
             "gst_number": gst_number,
+            "google_review_url": google_review_url,
             "updated_at": datetime.now(timezone.utc)
         }}
     )
 
     updated_restaurant = await db.restaurants.find_one(
         {"restaurant_id": restaurant_id},
-        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1}
+        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1}
     )
     if not updated_restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -1287,7 +1290,7 @@ async def build_order_bill_summary(order_doc):
     if order_doc.get("restaurant_id"):
         restaurant = await db.restaurants.find_one(
             {"restaurant_id": order_doc["restaurant_id"]},
-            {"_id": 0, "name": 1, "gst_number": 1}
+            {"_id": 0, "name": 1, "gst_number": 1, "google_review_url": 1}
         )
 
     return {
@@ -1296,6 +1299,7 @@ async def build_order_bill_summary(order_doc):
         "orders": enriched_bill_orders,
         "restaurant_name": restaurant.get("name") if restaurant else None,
         "restaurant_gst_number": restaurant.get("gst_number") if restaurant else None,
+        "google_review_url": restaurant.get("google_review_url") if restaurant else None,
     }
 
 @api_router.delete("/tables/{table_id}")
