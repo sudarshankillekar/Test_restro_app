@@ -66,6 +66,7 @@ const statusTone = {
   const { user, logout } = useAuth();
   const { socket, joinRoom } = useSocket();
   const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);  
  
 
   useEffect(() => {
