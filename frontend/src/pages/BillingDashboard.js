@@ -550,20 +550,20 @@ const BillingDashboard = () => {
                   Take Counter Order
                 </Button>
               </DialogTrigger>
-              <DialogContent className="flex h-[90vh] max-h-[90vh] max-w-[1180px] flex-col overflow-hidden rounded-[28px] border-border bg-white p-0">
+              <DialogContent className="flex h-[95dvh] max-h-[95dvh] w-[calc(100vw-1rem)] max-w-[1180px] flex-col overflow-hidden rounded-[24px] border-border bg-white p-0 sm:w-[calc(100vw-2rem)] xl:h-[90vh] xl:max-h-[90vh] xl:rounded-[28px]">
                 <DialogHeader>
-                  <div className="border-b border-border px-6 py-5">
-                    <DialogTitle className="text-2xl tracking-tight">Create Billing Counter Order</DialogTitle>
+                    <div className="shrink-0 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
+                    <DialogTitle className="text-xl tracking-tight sm:text-2xl">Create Billing Counter Order</DialogTitle>
                     <p className="mt-1 text-sm text-muted-foreground">
                       Search menu items fast, review the cart on the left, and place large orders without losing the action buttons.
                     </p>
                   </div>
                 </DialogHeader>
-                <div className="grid min-h-0 flex-1 gap-0 xl:grid-cols-[300px,minmax(0,1fr),310px]">
-                  <div className="border-b border-border bg-white xl:border-b-0 xl:border-r">
-                    <div className="flex h-full min-h-0 flex-col px-5 py-5">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
+                 <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-y-auto lg:grid-cols-[280px,minmax(0,1fr)] xl:grid-cols-[300px,minmax(0,1fr),310px] xl:overflow-hidden">
+                  <div className="border-b border-border bg-white lg:border-b-0 lg:border-r">
+                    <div className="flex h-full min-h-0 flex-col px-4 py-4 sm:px-5 sm:py-5">
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                        <div className="space-y-2 sm:col-span-2 lg:col-span-1">
                           <Label>Order Type</Label>
                           <Select value={counterOrderType} onValueChange={(value) => {
                             setCounterOrderType(value);
@@ -630,7 +630,7 @@ const BillingDashboard = () => {
                   </div>
 
                   <div className="flex min-h-0 flex-col bg-white xl:border-r">
-                    <div className="shrink-0 space-y-4 border-b border-border px-5 py-5">
+                    <div className="shrink-0 space-y-4 border-b border-border px-4 py-4 sm:px-5 sm:py-5">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                           <h3 className="text-xl font-semibold">Available Menu Items</h3>
@@ -643,7 +643,7 @@ const BillingDashboard = () => {
                         </Badge>
                       </div>
 
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <div className="relative flex-1">
                           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                           <Input
@@ -703,7 +703,7 @@ const BillingDashboard = () => {
                       )}
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+                    <div className="max-h-[58dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5 lg:max-h-[62dvh] xl:max-h-none">
                       {filteredMenuItems.length === 0 ? (
                         <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
                           <p className="text-base font-medium">No menu items found</p>
@@ -712,7 +712,7 @@ const BillingDashboard = () => {
                           </p>
                         </div>
                       ) : (
-                        <div className="grid gap-4 md:grid-cols-2">
+                         <div className="grid gap-3 sm:grid-cols-2 xl:gap-4">
                           {filteredMenuItems.map((item) => {
                             const cartItem = counterCart.find((cartEntry) => cartEntry.item_id === item.item_id);
                             return (
@@ -723,7 +723,7 @@ const BillingDashboard = () => {
                                 <CardContent className="flex h-full flex-col p-4">
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="flex min-w-0 items-center gap-3">
-                                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl bg-accent">
+                                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-2xl bg-accent sm:h-14 sm:w-14">
                                         {item.image && (
                                           <img
                                             src={normalizeImageUrl(item.image)}
@@ -742,7 +742,7 @@ const BillingDashboard = () => {
                                   </div>
 
                                   <div className="mt-4 flex items-center justify-between gap-3">
-                                    <span className="text-xl font-bold text-primary">{formatCurrency(item.price)}</span>
+                                    <span className="text-lg font-bold text-primary sm:text-xl">{formatCurrency(item.price)}</span>
                                     <div className="flex items-center gap-2 rounded-full border border-border bg-accent/60 px-1 py-1">
                                       <Button
                                         type="button"
@@ -783,8 +783,8 @@ const BillingDashboard = () => {
                     </div>
                   </div>
 
-                  <div className="flex min-h-0 flex-col overflow-hidden bg-white">
-                    <div className="shrink-0 border-b border-border px-5 py-5">
+                    <div className="flex min-h-0 flex-col overflow-hidden border-t border-border bg-white lg:col-span-2 xl:col-span-1 xl:border-t-0">
+                    <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5 sm:py-5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <h3 className="text-2xl font-semibold tracking-tight">Order Summary</h3>
@@ -806,7 +806,7 @@ const BillingDashboard = () => {
                       </div>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                    <div className="max-h-[42dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 lg:max-h-[34dvh] xl:max-h-none">
                       <div className="space-y-3">
                         {counterCart.length === 0 && (
                           <div className="rounded-[24px] border border-dashed border-border bg-white p-6 text-center">
@@ -874,7 +874,7 @@ const BillingDashboard = () => {
                       </div>
                     </div>
 
-                    <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-5 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
+                     <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-4 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] sm:px-5">
                       <div className="mb-4 flex items-center justify-between text-lg font-bold">
                         <span>Total</span>
                         <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
