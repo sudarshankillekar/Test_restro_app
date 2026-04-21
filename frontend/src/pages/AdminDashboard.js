@@ -305,7 +305,7 @@ const AdminDashboard = () => {
       return;
     }
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/admin/orders/search`, {
+     const response = await api.get(`/api/admin/orders/search`, {
         params: { order_id: orderSearchId.trim() },
         withCredentials: true,
       });
@@ -321,7 +321,7 @@ const AdminDashboard = () => {
     if (!searchedOrder) return;
     if (!window.confirm(`Delete order ${searchedOrder.order_id}?`)) return;
     try {
-      await axios.delete(`${BACKEND_URL}/api/admin/orders/${searchedOrder.order_id}`, {
+       await api.delete(`/api/admin/orders/${searchedOrder.order_id}`, {
         withCredentials: true,
       });
       toast.success('Order deleted');
@@ -481,6 +481,14 @@ const AdminDashboard = () => {
                       <span>Payment: {searchedOrder.payment_status}</span>
                       {searchedOrder.payment?.bill_id && <span>Bill: {searchedOrder.payment.bill_id}</span>}
                     </div>
+                      <div className="space-y-2 rounded-xl bg-white p-3">
+                      {(searchedOrder.items || []).map((item, idx) => (
+                        <div key={`${searchedOrder.order_id}-${idx}`} className="flex items-center justify-between gap-3 text-sm">
+                          <span className="min-w-0 truncate">{item.quantity}x {item.name}</span>
+                          <span className="font-medium">₹{(item.quantity * item.price).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>   
                     <Button variant="destructive" className="rounded-full" onClick={deleteOrder}>
                       Delete Order
                     </Button>
@@ -558,31 +566,6 @@ const AdminDashboard = () => {
                           <p className="text-sm text-muted-foreground">{item.quantity} qty sold</p>
                         </div>
                         <p className="font-bold text-primary">₹{item.revenue.toFixed(2)}</p>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {analytics?.recent_sales && analytics.recent_sales.length > 0 && (
-              <Card className="border-border rounded-2xl">
-                <CardHeader>
-                  <CardTitle>Items Sold</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {analytics.recent_sales.map((sale, idx) => (
-                      <div key={`${sale.order_id}-${idx}`} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 bg-accent rounded-xl">
-                        <div className="min-w-0">
-                          <p className="font-semibold">{sale.item_name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {sale.table_number ? `Table ${sale.table_number}` : sale.table_id} • {sale.quantity} qty
-                          </p>
-                        </div>
-                        <p className="text-sm font-medium">
-                          {new Date(sale.sold_at).toLocaleString()}
-                        </p>
                       </div>
                     ))}
                   </div>
