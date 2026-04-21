@@ -344,7 +344,7 @@ const enableSound = () => {
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                              <h3 className="text-base font-semibold">{order.order_id}</h3>
-                             <div className={`rounded-full px-3 py-1 text-xs font-bold ${
+                              <div className={`rounded-2xl px-4 py-2 text-2xl font-black leading-none shadow-sm ${
                               isPriorityTicket
                                 ? 'bg-red-100 text-red-700'
                                 : order.status === 'prepared'
@@ -360,7 +360,7 @@ const enableSound = () => {
                               </Badge>
                             )}
                           </div>
-                          <h3 className="mt-1 truncate text-sm font-semibold">Order {order.order_id}</h3>    
+                          <h3 className="mt-2 truncate text-sm font-semibold">Order {order.order_id}</h3>    
                           <p className="mt-1 truncate text-xs text-muted-foreground">{order.customer_name}</p>
                           <p className="text-xs text-muted-foreground">{new Date(order.created_at).toLocaleString()}</p>
                           {order.add_on_to_order_id && (
@@ -378,9 +378,9 @@ const enableSound = () => {
                         <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
                         {order.items.map((item, index) => (
                           <div key={`${order.order_id}-${index}`} className="rounded-lg bg-accent px-2.5 py-1.5">
-                             <p className="text-lg font-bold leading-tight text-foreground">{item.quantity}x {item.name}</p>
+                             <p className="text-2xl font-bold leading-tight text-foreground">{item.quantity}x {item.name}</p>
                             {item.instructions && (
-                             <p className="mt-1 text-sm font-medium text-muted-foreground">{item.instructions}</p>
+                             <p className="mt-1 text-base font-bold text-muted-foreground">{item.instructions}</p>
                             )}
                           </div>
                         ))}
