@@ -184,25 +184,19 @@ const enableSound = () => {
       return groups;
     }, {});
 
-    const statusRank = { pending: 0, accepted: 1, prepared: 2 };
-    const getPriorityScore = (group, order) => {
-      const hasEarlierPreparingOrder = group.orders.some((candidate) => (
-        candidate.order_id !== order.order_id &&
-        new Date(candidate.created_at).getTime() < new Date(order.created_at).getTime() &&
-        ['pending', 'accepted'].includes(candidate.status)
-      ));
-      return order.is_add_on && hasEarlierPreparingOrder ? 0 : 1;
-    };
+
 
     return Object.values(tableGroups)
       .map((group) => {
         const sortedOrders = [...group.orders].sort((a, b) => {
-          const priorityDiff = getPriorityScore(group, a) - getPriorityScore(group, b);
-          if (priorityDiff !== 0) return priorityDiff;
-          const statusDiff = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
-          if (statusDiff !== 0) return statusDiff;
+          const aIsPrepared = a.status === 'prepared';
+          const bIsPrepared = b.status === 'prepared';
+          if (aIsPrepared !== bIsPrepared) return aIsPrepared ? 1 : -1;
           return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
         });
+        const earliestQueueTime = sortedOrders
+          .filter((order) => ['pending', 'accepted'].includes(order.status))
+          .map((order) => new Date(order.created_at).getTime())[0] ?? Number.MAX_SAFE_INTEGER;
         const counts = sortedOrders.reduce((acc, order) => {
           acc[order.status] = (acc[order.status] || 0) + 1;
           return acc;
@@ -211,14 +205,15 @@ const enableSound = () => {
           ...group,
           orders: sortedOrders,
           counts,
-          tablePriority: sortedOrders.some((order) => getPriorityScore(group, order) === 0),
+          earliestQueueTime,
+          tablePriority: sortedOrders.some((order) => order.is_add_on && ['pending', 'accepted'].includes(order.status)),
         };
       })
       .sort((a, b) => {
-        if (a.tablePriority !== b.tablePriority) return a.tablePriority ? -1 : 1;
-        const newestA = Math.max(...a.orders.map((order) => new Date(order.created_at).getTime()));
-        const newestB = Math.max(...b.orders.map((order) => new Date(order.created_at).getTime()));
-        return newestB - newestA;
+        if (a.earliestQueueTime !== b.earliestQueueTime) return a.earliestQueueTime - b.earliestQueueTime;
+        const oldestA = Math.min(...a.orders.map((order) => new Date(order.created_at).getTime()));
+        const oldestB = Math.min(...b.orders.map((order) => new Date(order.created_at).getTime()));
+        return oldestA - oldestB;
       });
   }, [orders]);
     const queueTokenMap = useMemo(() => {
@@ -338,11 +333,7 @@ const enableSound = () => {
                     : order.status === 'prepared'
                       ? 'border-emerald-500 ring-1 ring-emerald-200'
                       : 'border-orange-400 ring-1 ring-orange-100';
-                  const priorityAddOn = order.is_add_on && group.orders.some((candidate) => (
-                    candidate.order_id !== order.order_id &&
-                    new Date(candidate.created_at).getTime() < new Date(order.created_at).getTime() &&
-                    ['pending', 'accepted'].includes(candidate.status)
-                  ));
+                  const priorityAddOn = order.is_add_on && ['pending', 'accepted'].includes(order.status);
                   return (
                     <div
                       key={order.order_id}
@@ -359,10 +350,9 @@ const enableSound = () => {
                                 : order.status === 'prepared'
                                   ? 'bg-emerald-100 text-emerald-700'
                                   : 'bg-orange-100 text-orange-700'
-                            }`}>
-                              {order.status === 'prepared' ? 'DONE' : `TOKEN #${queueToken || '-'}`}
-                            </div>
-                             <h3 className="truncate text-sm font-semibold">{order.order_id}</h3> 
+                                 }`}>
+	                              {order.status === 'prepared' ? 'DONE' : `TOKEN #${queueToken || '-'}`}
+	                            </div>
                             <Badge className={`rounded-full ${tone.badge}`}>{tone.label}</Badge>
                             {order.is_add_on && (
                               <Badge className={`rounded-full ${priorityAddOn ? 'bg-amber-100 text-amber-800' : 'bg-orange-50 text-orange-700'}`}>
@@ -370,6 +360,7 @@ const enableSound = () => {
                               </Badge>
                             )}
                           </div>
+                          <h3 className="mt-1 truncate text-sm font-semibold">Order {order.order_id}</h3>    
                           <p className="mt-1 truncate text-xs text-muted-foreground">{order.customer_name}</p>
                           <p className="text-xs text-muted-foreground">{new Date(order.created_at).toLocaleString()}</p>
                           {order.add_on_to_order_id && (
@@ -387,9 +378,9 @@ const enableSound = () => {
                         <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
                         {order.items.map((item, index) => (
                           <div key={`${order.order_id}-${index}`} className="rounded-lg bg-accent px-2.5 py-1.5">
-                            <p className="text-xs font-medium">{item.quantity}x {item.name}</p>
+                             <p className="text-lg font-bold leading-tight text-foreground">{item.quantity}x {item.name}</p>
                             {item.instructions && (
-                             <p className="text-xs text-muted-foreground mt-1">{item.instructions}</p>
+                             <p className="mt-1 text-sm font-medium text-muted-foreground">{item.instructions}</p>
                             )}
                           </div>
                         ))}
