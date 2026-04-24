@@ -1004,7 +1004,7 @@ const BillingDashboard = () => {
       </div>
 
       <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card className="rounded-2xl border-border">
             <CardContent className="p-5">
               <p className="text-sm text-muted-foreground">Ready To Bill</p>
@@ -1023,8 +1023,16 @@ const BillingDashboard = () => {
               <p className="mt-2 text-3xl font-bold">{completedBills.length}</p>
             </CardContent>
           </Card>
+        <Card className="rounded-2xl border-border">
+            <CardContent className="p-5">
+              <p className="text-sm text-muted-foreground">Cash Adjustment</p>
+              <p className={`mt-2 text-3xl font-bold ${Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-rose-600'}`}>
+                {formatCurrency(cashAdjustments.total_adjustments)}
+              </p>
+            </CardContent>
+          </Card>        
         </div>
-         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <Card className="rounded-2xl border-border">
             <CardContent className="p-5">
               <p className="text-sm text-muted-foreground">Cash Collected</p>
@@ -1043,17 +1051,9 @@ const BillingDashboard = () => {
               <p className="mt-2 text-3xl font-bold text-violet-600">{formatCurrency(paymentSummary.card)}</p>
             </CardContent>
           </Card>
-          <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">Cash Adjustments</p>
-              <p className={`mt-2 text-3xl font-bold ${Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-rose-600'}`}>
-                {formatCurrency(cashAdjustments.total_adjustments)}
-              </p>
-            </CardContent>
-          </Card>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px,minmax(0,1fr)]">
+        <div className="max-w-[380px]">
           <Card className="rounded-2xl border-border">
             <CardHeader>
               <CardTitle>Cash Adjustment</CardTitle>
@@ -1091,37 +1091,6 @@ const BillingDashboard = () => {
               <div className="rounded-2xl bg-accent/60 p-4 text-sm text-muted-foreground">
                 This updates the daily transaction view only. Use a negative amount for cash-out or shortage, and a positive amount for cash-in correction.
               </div>
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl border-border">
-            <CardHeader>
-              <CardTitle>Adjustment Reasons</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {cashAdjustments.entries?.length ? (
-                <div className="space-y-3">
-                  {cashAdjustments.entries.map((entry) => (
-                    <div key={entry.adjustment_id} className="rounded-2xl border border-border bg-accent/40 p-4">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="font-semibold text-foreground">{entry.reason}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {entry.created_by_name || 'Staff'} • {new Date(entry.created_at).toLocaleString()}
-                          </p>
-                        </div>
-                        <p className={`text-lg font-bold ${Number(entry.amount || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {formatCurrency(entry.amount)}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                  No cash adjustments added today.
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>
