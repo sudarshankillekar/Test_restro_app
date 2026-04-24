@@ -17,6 +17,21 @@ import { Textarea } from '../components/ui/textarea';
 
 const formatCurrency = (value = 0) => `₹${Number(value || 0).toFixed(2)}`;
 
+const createEmptyTransactionSummary = () => ({
+  payment_summary: {
+    cash: 0,
+    upi: 0,
+    card: 0,
+    other: 0,
+    total_collected: 0,
+    payment_count: 0,
+  },
+  cash_adjustments: {
+    total_adjustments: 0,
+    entries: [],
+  },
+});
+
 const formatPaymentMethod = (method) => {
   if (!method) return 'N/A';
   return method.toUpperCase();
@@ -120,16 +135,35 @@ const BillingDashboard = () => {
   const [counterCart, setCounterCart] = useState([]);
   const [counterSearch, setCounterSearch] = useState('');
   const [counterCategory, setCounterCategory] = useState('all');
+  const [transactionSummary, setTransactionSummary] = useState(createEmptyTransactionSummary);
+  const [adjustmentAmount, setAdjustmentAmount] = useState('');
+  const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
 
+  const loadTransactionSummary = async () => {
+    const response = await api.get('/api/analytics/dashboard?period=daily', { withCredentials: true });
+    setTransactionSummary({
+      payment_summary: {
+        ...createEmptyTransactionSummary().payment_summary,
+        ...(response.data?.payment_summary || {}),
+      },
+      cash_adjustments: {
+        ...createEmptyTransactionSummary().cash_adjustments,
+        ...(response.data?.cash_adjustments || {}),
+      },
+    });
+  };
+  
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        const [ordersResponse, tablesResponse, itemsResponse, categoriesResponse, profileResponse] = await Promise.all([
+         const [ordersResponse, tablesResponse, itemsResponse, categoriesResponse, profileResponse, analyticsResponse] = await Promise.all([
           api.get('/api/orders', { withCredentials: true }),
           api.get('/api/tables', { withCredentials: true }),
           api.get('/api/menu/items', { withCredentials: true }),
           api.get('/api/menu/categories', { withCredentials: true }),
           api.get('/api/restaurant/profile', { withCredentials: true }),
+          api.get('/api/analytics/dashboard?period=daily', { withCredentials: true }), 
         ]);
 
         setOrders(ordersResponse.data);
@@ -140,6 +174,16 @@ const BillingDashboard = () => {
           name: profileResponse.data.name || '',
           gst_number: profileResponse.data.gst_number || '',
         });
+      setTransactionSummary({
+          payment_summary: {
+            ...createEmptyTransactionSummary().payment_summary,
+            ...(analyticsResponse.data?.payment_summary || {}),
+          },
+          cash_adjustments: {
+            ...createEmptyTransactionSummary().cash_adjustments,
+            ...(analyticsResponse.data?.cash_adjustments || {}),
+          },
+        });  
       } catch (error) {
         toast.error('Failed to load billing dashboard');
       } finally {
@@ -442,11 +486,40 @@ const BillingDashboard = () => {
         discount: Number(discount) || 0,
       });
 
+      await loadTransactionSummary();
       toast.success('Bill completed successfully.');
       setSelectedGroup(null);
       setDiscount(0);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Payment failed');
+    }
+  };
+
+  const createCashAdjustment = async () => {
+    const parsedAmount = Number(adjustmentAmount);
+    if (!adjustmentReason.trim()) {
+      toast.error('Please enter a reason for the cash adjustment.');
+      return;
+    }
+    if (!adjustmentAmount || Number.isNaN(parsedAmount) || parsedAmount === 0) {
+      toast.error('Please enter a valid adjustment amount.');
+      return;
+    }
+
+    setAdjustmentSubmitting(true);
+    try {
+      await api.post('/api/cash-adjustments', {
+        amount: parsedAmount,
+        reason: adjustmentReason.trim(),
+      }, { withCredentials: true });
+      await loadTransactionSummary();
+      setAdjustmentAmount('');
+      setAdjustmentReason('');
+      toast.success('Cash adjustment saved.');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to save cash adjustment');
+    } finally {
+      setAdjustmentSubmitting(false);
     }
   };
 
@@ -522,6 +595,8 @@ const BillingDashboard = () => {
   const selectedCategoryName = counterCategory === 'all'
     ? 'All Categories'
     : (categories.find((category) => category.category_id === counterCategory)?.name || 'Category');
+  const paymentSummary = transactionSummary.payment_summary || createEmptyTransactionSummary().payment_summary;
+  const cashAdjustments = transactionSummary.cash_adjustments || createEmptyTransactionSummary().cash_adjustments;  
 
   return (
     <div className="min-h-screen" style={{ background: '#F3F4F6' }}>
@@ -949,7 +1024,107 @@ const BillingDashboard = () => {
             </CardContent>
           </Card>
         </div>
+         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Card className="rounded-2xl border-border">
+            <CardContent className="p-5">
+              <p className="text-sm text-muted-foreground">Cash Collected</p>
+              <p className="mt-2 text-3xl font-bold text-emerald-600">{formatCurrency(paymentSummary.cash)}</p>
+            </CardContent>
+          </Card>
+          <Card className="rounded-2xl border-border">
+            <CardContent className="p-5">
+              <p className="text-sm text-muted-foreground">UPI Collected</p>
+              <p className="mt-2 text-3xl font-bold text-sky-600">{formatCurrency(paymentSummary.upi)}</p>
+            </CardContent>
+          </Card>
+          <Card className="rounded-2xl border-border">
+            <CardContent className="p-5">
+              <p className="text-sm text-muted-foreground">Card Collected</p>
+              <p className="mt-2 text-3xl font-bold text-violet-600">{formatCurrency(paymentSummary.card)}</p>
+            </CardContent>
+          </Card>
+          <Card className="rounded-2xl border-border">
+            <CardContent className="p-5">
+              <p className="text-sm text-muted-foreground">Cash Adjustments</p>
+              <p className={`mt-2 text-3xl font-bold ${Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-rose-600'}`}>
+                {formatCurrency(cashAdjustments.total_adjustments)}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
 
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[360px,minmax(0,1fr)]">
+          <Card className="rounded-2xl border-border">
+            <CardHeader>
+              <CardTitle>Cash Adjustment</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="adjustment-amount">Amount</Label>
+                <Input
+                  id="adjustment-amount"
+                  type="number"
+                  value={adjustmentAmount}
+                  onChange={(event) => setAdjustmentAmount(event.target.value)}
+                  placeholder="Use - for deduction, + for addition"
+                  className="rounded-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="adjustment-reason">Reason</Label>
+                <Textarea
+                  id="adjustment-reason"
+                  value={adjustmentReason}
+                  onChange={(event) => setAdjustmentReason(event.target.value)}
+                  placeholder="Explain the cash adjustment"
+                  className="min-h-[96px] rounded-2xl"
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={createCashAdjustment}
+                disabled={adjustmentSubmitting}
+                className="w-full rounded-full bg-primary hover:bg-[#C54E2C]"
+              >
+                {adjustmentSubmitting ? 'Saving...' : 'Save Adjustment'}
+              </Button>
+              <div className="rounded-2xl bg-accent/60 p-4 text-sm text-muted-foreground">
+                This updates the daily transaction view only. Use a negative amount for cash-out or shortage, and a positive amount for cash-in correction.
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border-border">
+            <CardHeader>
+              <CardTitle>Adjustment Reasons</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {cashAdjustments.entries?.length ? (
+                <div className="space-y-3">
+                  {cashAdjustments.entries.map((entry) => (
+                    <div key={entry.adjustment_id} className="rounded-2xl border border-border bg-accent/40 p-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="font-semibold text-foreground">{entry.reason}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {entry.created_by_name || 'Staff'} • {new Date(entry.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <p className={`text-lg font-bold ${Number(entry.amount || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {formatCurrency(entry.amount)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                  No cash adjustments added today.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <div className="space-y-4">
             <h2 className="text-xl font-semibold">Ready To Bill</h2>
