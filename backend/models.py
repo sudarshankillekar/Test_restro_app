@@ -104,8 +104,14 @@ class PaymentCreate(BaseModel):
     payment_method: str  # cash, upi, card
     discount: Optional[float] = 0
 
+class CashAdjustmentCreate(BaseModel):
+    amount: float
+    reason: str
+
 class AnalyticsResponse(BaseModel):
     total_orders: int
     total_revenue: float
     avg_order_value: float
     top_items: List[dict]
+    payment_summary: Optional[dict] = None
+    cash_adjustments: Optional[dict] = None
