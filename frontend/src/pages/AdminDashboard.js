@@ -552,6 +552,45 @@ const AdminDashboard = () => {
               </div>
             )}
 
+             {analytics && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
+                <Card className="border-border rounded-2xl">
+                  <CardHeader>
+                    <CardTitle className="text-sm text-muted-foreground">Cash Collected</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-3xl font-bold font-mono text-emerald-600">₹{(analytics.payment_summary?.cash || 0).toFixed(2)}</p>
+                  </CardContent>
+                </Card>
+                <Card className="border-border rounded-2xl">
+                  <CardHeader>
+                    <CardTitle className="text-sm text-muted-foreground">UPI Collected</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-3xl font-bold font-mono text-sky-600">₹{(analytics.payment_summary?.upi || 0).toFixed(2)}</p>
+                  </CardContent>
+                </Card>
+                <Card className="border-border rounded-2xl">
+                  <CardHeader>
+                    <CardTitle className="text-sm text-muted-foreground">Card Collected</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-3xl font-bold font-mono text-violet-600">₹{(analytics.payment_summary?.card || 0).toFixed(2)}</p>
+                  </CardContent>
+                </Card>
+                <Card className="border-border rounded-2xl">
+                  <CardHeader>
+                    <CardTitle className="text-sm text-muted-foreground">Cash Adjustments</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className={`text-3xl font-bold font-mono ${(analytics.cash_adjustments?.total_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-rose-600'}`}>
+                      ₹{(analytics.cash_adjustments?.total_adjustments || 0).toFixed(2)}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+             
             {analytics?.top_items && analytics.top_items.length > 0 && (
               <Card className="border-border rounded-2xl">
                 <CardHeader>
@@ -572,6 +611,36 @@ const AdminDashboard = () => {
                 </CardContent>
               </Card>
             )}
+          <Card className="border-border rounded-2xl">
+              <CardHeader>
+                <CardTitle>Cash Adjustment Reasons</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {analytics?.cash_adjustments?.entries?.length ? (
+                  <div className="space-y-3">
+                    {analytics.cash_adjustments.entries.map((entry) => (
+                      <div key={entry.adjustment_id} className="rounded-2xl border border-border bg-accent/60 p-4">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="font-semibold">{entry.reason}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {entry.created_by_name || 'Staff'} • {new Date(entry.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <p className={`text-lg font-bold ${(entry.amount || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            ₹{Number(entry.amount || 0).toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                    No cash adjustments found for this period.
+                  </div>
+                )}
+              </CardContent>
+            </Card>    
           </TabsContent>
 
           <TabsContent value="menu" className="space-y-6">
