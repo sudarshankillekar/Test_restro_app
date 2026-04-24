@@ -33,7 +33,7 @@ from subscription import (
 from models import (
     LoginRequest, RegisterRequest, UserResponse, MenuItemCreate, MenuItemUpdate,
     TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, CounterOrderCreate, OrderItemsUpdate, OrderResponse,
-    PaymentCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
+    PaymentCreate, CashAdjustmentCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
 from xlsx_export import build_xlsx_bytes
 import jwt
@@ -167,6 +167,48 @@ def build_date_match(start_date: Optional[str] = None, end_date: Optional[str] =
 
 def to_socket_payload(data):
     return jsonable_encoder(data)
+
+async def build_transaction_summary(restaurant_id: str, created_at_filter: dict):
+    payment_query = {"restaurant_id": restaurant_id, "status": "completed"}
+    if created_at_filter:
+        payment_query["created_at"] = created_at_filter
+
+    payments = await db.payments.find(payment_query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+
+    payment_summary = {
+        "cash": 0.0,
+        "upi": 0.0,
+        "card": 0.0,
+        "other": 0.0,
+        "total_collected": 0.0,
+        "payment_count": len(payments),
+    }
+
+    for payment in payments:
+        amount = round(float(payment.get("total", 0) or 0), 2)
+        method = (payment.get("payment_method") or "").strip().lower()
+        if method not in {"cash", "upi", "card"}:
+            method = "other"
+        payment_summary[method] = round(payment_summary[method] + amount, 2)
+        payment_summary["total_collected"] = round(payment_summary["total_collected"] + amount, 2)
+
+    adjustment_query = {"restaurant_id": restaurant_id}
+    if created_at_filter:
+        adjustment_query["created_at"] = created_at_filter
+
+    adjustments = await db.cash_adjustments.find(adjustment_query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    total_adjustments = round(sum(float(item.get("amount", 0) or 0) for item in adjustments), 2)
+
+    return {
+        "payment_summary": payment_summary,
+        "cash_adjustments": {
+            "total_adjustments": total_adjustments,
+            "entries": adjustments,
+        },
+    }
+
+
+
 def parse_bool_env(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -1874,6 +1916,34 @@ async def create_payment(input: PaymentCreate, request: Request):
     
     return {k: v for k, v in payment_doc.items() if k != "_id"}
 
+@api_router.post("/cash-adjustments")
+async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    if not input.reason.strip():
+        raise HTTPException(status_code=400, detail="Please enter an adjustment reason.")
+    if float(input.amount) == 0:
+        raise HTTPException(status_code=400, detail="Adjustment amount cannot be zero.")
+
+    adjustment_doc = {
+        "adjustment_id": f"ADJ{secrets.token_hex(6).upper()}",
+        "restaurant_id": restaurant_id,
+        "amount": round(float(input.amount), 2),
+        "reason": input.reason.strip(),
+        "created_at": datetime.now(timezone.utc),
+        "created_by": user["_id"],
+        "created_by_name": user.get("name") or user.get("email") or "Staff",
+        "created_by_role": user.get("role"),
+    }
+    await db.cash_adjustments.insert_one(adjustment_doc)
+    return {k: v for k, v in adjustment_doc.items() if k != "_id"}
+
 @api_router.get("/payments/{order_id}")
 async def get_payment(order_id: str, request: Request):
     user = await get_current_user(request, db)
@@ -1896,7 +1966,7 @@ async def get_payment(order_id: str, request: Request):
 @api_router.get("/analytics/dashboard")
 async def get_analytics(request: Request, period: str = "daily"):
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin"]:
+    if user["role"] not in ["admin","billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Get restaurant_id for data isolation
@@ -1914,13 +1984,14 @@ async def get_analytics(request: Request, period: str = "daily"):
         start_date = now - timedelta(days=30)
     else:
         start_date = now - timedelta(days=1)
-    
+        
+    created_at_filter = {"$gte": start_date}
     # CRITICAL: Filter by restaurant_id for data isolation
     # Aggregate data
     pipeline = [
         {"$match": {
             "restaurant_id": restaurant_id,
-            "created_at": {"$gte": start_date},
+            "created_at": created_at_filter,
             "status": "served"
         }},
         {
@@ -1941,6 +2012,7 @@ async def get_analytics(request: Request, period: str = "daily"):
         "status": {"$nin": ["served", "cancelled"]}
     }))
     empty_tables = max(total_tables - occupied_tables, 0)
+    transaction_summary = await build_transaction_summary(restaurant_id, created_at_filter)
     
     if not result:
         return {
@@ -1952,7 +2024,9 @@ async def get_analytics(request: Request, period: str = "daily"):
             "occupied_tables": occupied_tables,
             "empty_tables": empty_tables,
             "recent_sales": [],
-            "best_seller": None
+            "best_seller": None,
+            "payment_summary": transaction_summary["payment_summary"],
+            "cash_adjustments": transaction_summary["cash_adjustments"],
         }
     
     # Top selling items for this restaurant only
@@ -2015,7 +2089,9 @@ async def get_analytics(request: Request, period: str = "daily"):
         "occupied_tables": occupied_tables,
         "empty_tables": empty_tables,
         "recent_sales": recent_sales,
-        "best_seller": best_seller
+        "best_seller": best_seller,
+        "payment_summary": transaction_summary["payment_summary"],
+        "cash_adjustments": transaction_summary["cash_adjustments"],
     }
 
 
@@ -2132,6 +2208,7 @@ async def startup_event():
         await db.orders.create_index([("restaurant_id", 1), ("status", 1), ("created_at", -1)])
         await db.customer_sessions.create_index("session_token", unique=True)
         await db.payments.create_index([("restaurant_id", 1), ("order_id", 1)])
+        await db.cash_adjustments.create_index([("restaurant_id", 1), ("created_at", -1)])
         
         # Run initial subscription check
         await check_and_expire_subscriptions(db)
