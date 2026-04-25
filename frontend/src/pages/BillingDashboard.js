@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, CreditCard, DollarSign, Loader2, LogOut, Pencil, Plus, Printer, Receipt, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react';
+import { CalendarDays, CreditCard, DollarSign, Loader2, LogOut, Menu, Pencil, Plus, Printer, Receipt, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
@@ -153,17 +153,17 @@ const BillingDashboard = () => {
       },
     });
   };
-  
+
   useEffect(() => {
     const bootstrap = async () => {
       try {
-         const [ordersResponse, tablesResponse, itemsResponse, categoriesResponse, profileResponse, analyticsResponse] = await Promise.all([
+        const [ordersResponse, tablesResponse, itemsResponse, categoriesResponse, profileResponse, analyticsResponse] = await Promise.all([
           api.get('/api/orders', { withCredentials: true }),
           api.get('/api/tables', { withCredentials: true }),
           api.get('/api/menu/items', { withCredentials: true }),
           api.get('/api/menu/categories', { withCredentials: true }),
           api.get('/api/restaurant/profile', { withCredentials: true }),
-          api.get('/api/analytics/dashboard?period=daily', { withCredentials: true }), 
+          api.get('/api/analytics/dashboard?period=daily', { withCredentials: true }),
         ]);
 
         setOrders(ordersResponse.data);
@@ -174,7 +174,7 @@ const BillingDashboard = () => {
           name: profileResponse.data.name || '',
           gst_number: profileResponse.data.gst_number || '',
         });
-      setTransactionSummary({
+        setTransactionSummary({
           payment_summary: {
             ...createEmptyTransactionSummary().payment_summary,
             ...(analyticsResponse.data?.payment_summary || {}),
@@ -183,7 +183,7 @@ const BillingDashboard = () => {
             ...createEmptyTransactionSummary().cash_adjustments,
             ...(analyticsResponse.data?.cash_adjustments || {}),
           },
-        });  
+        });
       } catch (error) {
         toast.error('Failed to load billing dashboard');
       } finally {
@@ -596,19 +596,86 @@ const BillingDashboard = () => {
     ? 'All Categories'
     : (categories.find((category) => category.category_id === counterCategory)?.name || 'Category');
   const paymentSummary = transactionSummary.payment_summary || createEmptyTransactionSummary().payment_summary;
-  const cashAdjustments = transactionSummary.cash_adjustments || createEmptyTransactionSummary().cash_adjustments;  
+  const cashAdjustments = transactionSummary.cash_adjustments || createEmptyTransactionSummary().cash_adjustments;
+  const recentAdjustmentEntries = cashAdjustments.entries?.slice(0, 5) || [];
+  const dashboardStats = [
+    {
+      label: 'Ready To Bill',
+      value: activeReadyGroups.length,
+      meta: 'Orders',
+      icon: Receipt,
+      valueClassName: 'text-slate-900',
+      tintClassName: 'bg-blue-50 text-blue-600',
+    },
+    {
+      label: 'Counter Orders',
+      value: activeCounterOrders.length,
+      meta: 'Orders',
+      icon: ShoppingCart,
+      valueClassName: 'text-slate-900',
+      tintClassName: 'bg-emerald-50 text-emerald-600',
+    },
+    {
+      label: 'Completed Bills',
+      value: completedBills.length,
+      meta: 'Bills',
+      icon: CreditCard,
+      valueClassName: 'text-slate-900',
+      tintClassName: 'bg-violet-50 text-violet-600',
+    },
+    {
+      label: 'Cash Collected',
+      value: formatCurrency(paymentSummary.cash),
+      meta: 'Total',
+      icon: Wallet,
+      valueClassName: 'text-emerald-600',
+      tintClassName: 'bg-emerald-50 text-emerald-600',
+    },
+    {
+      label: 'UPI Collected',
+      value: formatCurrency(paymentSummary.upi),
+      meta: 'Total',
+      icon: Receipt,
+      valueClassName: 'text-sky-600',
+      tintClassName: 'bg-blue-50 text-blue-600',
+    },
+    {
+      label: 'Card Collected',
+      value: formatCurrency(paymentSummary.card),
+      meta: 'Total',
+      icon: CreditCard,
+      valueClassName: 'text-violet-600',
+      tintClassName: 'bg-violet-50 text-violet-600',
+    },
+    {
+      label: 'Cash Adjustment',
+      value: formatCurrency(cashAdjustments.total_adjustments),
+      meta: 'Total',
+      icon: Receipt,
+      valueClassName: Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-rose-600',
+      tintClassName: Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600',
+    },
+  ];
 
   return (
-    <div className="min-h-screen" style={{ background: '#F3F4F6' }}>
-      <div className="bg-white border-b border-border sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="min-h-screen bg-[#f4f7fb]">
+      <div className="border-b border-white/70 bg-white/90 shadow-[0_10px_40px_rgba(15,23,42,0.05)] backdrop-blur sticky top-0 z-10">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3 min-w-0">
-            <CreditCard className="w-8 h-8 text-primary" />
+            <Button variant="outline" size="icon" className="h-11 w-11 rounded-2xl border-slate-200 bg-white text-slate-600 shadow-sm">
+              <Menu className="h-5 w-5" />
+            </Button>
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-orange-50 text-primary shadow-sm">
+              <Receipt className="h-5 w-5" />
+            </div>
             <div className="min-w-0">
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Billing Counter</h1>
-              <p className="text-sm text-muted-foreground">Welcome, {user?.name}</p>
+              <h1 className="text-xl sm:text-[2rem] font-bold tracking-tight text-slate-900">Billing Counter</h1>
+              <p className="text-sm text-slate-500">Welcome, {user?.name}</p>
               {user?.restaurant_name && (
-                <p className="text-xs sm:text-sm text-muted-foreground truncate">{user.restaurant_name}</p>
+                <div className="flex items-center gap-2 text-xs sm:text-sm text-slate-500 truncate">
+                  <span className="truncate">{user.restaurant_name}</span>
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                </div>
               )}
             </div>
           </div>
@@ -627,14 +694,14 @@ const BillingDashboard = () => {
               </DialogTrigger>
               <DialogContent className="flex h-[95dvh] max-h-[95dvh] w-[calc(100vw-1rem)] max-w-[1180px] flex-col overflow-hidden rounded-[24px] border-border bg-white p-0 sm:w-[calc(100vw-2rem)] xl:h-[90vh] xl:max-h-[90vh] xl:rounded-[28px]">
                 <DialogHeader>
-                    <div className="shrink-0 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
+                  <div className="shrink-0 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
                     <DialogTitle className="text-xl tracking-tight sm:text-2xl">Create Billing Counter Order</DialogTitle>
                     <p className="mt-1 text-sm text-muted-foreground">
                       Search menu items fast, review the cart on the left, and place large orders without losing the action buttons.
                     </p>
                   </div>
                 </DialogHeader>
-                 <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-y-auto lg:grid-cols-[280px,minmax(0,1fr)] xl:grid-cols-[300px,minmax(0,1fr),310px] xl:overflow-hidden">
+                <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-y-auto lg:grid-cols-[280px,minmax(0,1fr)] xl:grid-cols-[300px,minmax(0,1fr),310px] xl:overflow-hidden">
                   <div className="border-b border-border bg-white lg:border-b-0 lg:border-r">
                     <div className="flex h-full min-h-0 flex-col px-4 py-4 sm:px-5 sm:py-5">
                       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
@@ -718,7 +785,7 @@ const BillingDashboard = () => {
                         </Badge>
                       </div>
 
-                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <div className="relative flex-1">
                           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                           <Input
@@ -787,7 +854,7 @@ const BillingDashboard = () => {
                           </p>
                         </div>
                       ) : (
-                         <div className="grid gap-3 sm:grid-cols-2 xl:gap-4">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:gap-4">
                           {filteredMenuItems.map((item) => {
                             const cartItem = counterCart.find((cartEntry) => cartEntry.item_id === item.item_id);
                             return (
@@ -798,7 +865,7 @@ const BillingDashboard = () => {
                                 <CardContent className="flex h-full flex-col p-4">
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="flex min-w-0 items-center gap-3">
-                                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-2xl bg-accent sm:h-14 sm:w-14">
+                                      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-2xl bg-accent sm:h-14 sm:w-14">
                                         {item.image && (
                                           <img
                                             src={normalizeImageUrl(item.image)}
@@ -858,7 +925,7 @@ const BillingDashboard = () => {
                     </div>
                   </div>
 
-                    <div className="flex min-h-0 flex-col overflow-hidden border-t border-border bg-white lg:col-span-2 xl:col-span-1 xl:border-t-0">
+                  <div className="flex min-h-0 flex-col overflow-hidden border-t border-border bg-white lg:col-span-2 xl:col-span-1 xl:border-t-0">
                     <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5 sm:py-5">
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -894,7 +961,7 @@ const BillingDashboard = () => {
                         )}
 
                         {cartPreviewItems.map((item) => (
-                         <div key={item.item_id} className="rounded-[18px] border border-border bg-white px-4 py-3 shadow-sm">
+                          <div key={item.item_id} className="rounded-[18px] border border-border bg-white px-4 py-3 shadow-sm">
                             <div className="flex items-center gap-3">
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-base font-semibold">{item.name}</p>
@@ -922,7 +989,7 @@ const BillingDashboard = () => {
                                 >
                                   -
                                 </Button>
-                                  <div className="min-w-[2rem] text-center text-sm font-semibold">{item.quantity}</div>
+                                <div className="min-w-[2rem] text-center text-sm font-semibold">{item.quantity}</div>
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -933,7 +1000,7 @@ const BillingDashboard = () => {
                                   +
                                 </Button>
                               </div>
-                               <div className="ml-auto text-lg font-bold text-primary">
+                              <div className="ml-auto text-lg font-bold text-primary">
                                 {formatCurrency(item.quantity * item.price)}
                               </div>
                             </div>
@@ -949,7 +1016,7 @@ const BillingDashboard = () => {
                       </div>
                     </div>
 
-                     <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-4 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] sm:px-5">
+                    <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-4 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] sm:px-5">
                       <div className="mb-4 flex items-center justify-between text-lg font-bold">
                         <span>Total</span>
                         <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
@@ -993,7 +1060,7 @@ const BillingDashboard = () => {
             <Button
               onClick={handleLogout}
               variant="outline"
-              className="rounded-full border-border"
+              className="rounded-2xl border-slate-200 bg-white px-4"
               data-testid="logout-button"
             >
               <LogOut className="w-4 h-4 mr-2" />
@@ -1003,315 +1070,364 @@ const BillingDashboard = () => {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">Ready To Bill</p>
-              <p className="mt-2 text-3xl font-bold">{activeReadyGroups.length}</p>
-            </CardContent>
-          </Card>
-          <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">Counter Orders</p>
-              <p className="mt-2 text-3xl font-bold">{activeCounterOrders.length}</p>
-            </CardContent>
-          </Card>
-          <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">Completed Bills</p>
-              <p className="mt-2 text-3xl font-bold">{completedBills.length}</p>
-            </CardContent>
-          </Card>
-        <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">Cash Adjustment</p>
-              <p className={`mt-2 text-3xl font-bold ${Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-rose-600'}`}>
-                {formatCurrency(cashAdjustments.total_adjustments)}
-              </p>
-            </CardContent>
-          </Card>        
-        </div>
-         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">Cash Collected</p>
-              <p className="mt-2 text-3xl font-bold text-emerald-600">{formatCurrency(paymentSummary.cash)}</p>
-            </CardContent>
-          </Card>
-          <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">UPI Collected</p>
-              <p className="mt-2 text-3xl font-bold text-sky-600">{formatCurrency(paymentSummary.upi)}</p>
-            </CardContent>
-          </Card>
-          <Card className="rounded-2xl border-border">
-            <CardContent className="p-5">
-              <p className="text-sm text-muted-foreground">Card Collected</p>
-              <p className="mt-2 text-3xl font-bold text-violet-600">{formatCurrency(paymentSummary.card)}</p>
-            </CardContent>
-          </Card>
+      <div className="max-w-[1440px] mx-auto p-4 sm:p-6 space-y-6">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+          {dashboardStats.map((stat) => {
+            const Icon = stat.icon;
+            return (
+              <Card key={stat.label} className="rounded-[24px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-500">{stat.label}</p>
+                      <p className={`mt-3 text-[2rem] font-bold leading-none ${stat.valueClassName}`}>{stat.value}</p>
+                      <p className="mt-2 text-sm text-slate-400">{stat.meta}</p>
+                    </div>
+                    <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${stat.tintClassName}`}>
+                      <Icon className="h-5 w-5" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
-        <div className="max-w-[380px]">
-          <Card className="rounded-2xl border-border">
-            <CardHeader>
-              <CardTitle>Cash Adjustment</CardTitle>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[320px,minmax(0,1fr)] xl:items-start">
+          <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                <Receipt className="h-5 w-5 text-primary" />
+                Cash Adjustment
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="adjustment-amount">Amount</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="adjustment-amount" className="text-sm font-medium text-slate-700">Amount</Label>
                 <Input
                   id="adjustment-amount"
                   type="number"
                   value={adjustmentAmount}
                   onChange={(event) => setAdjustmentAmount(event.target.value)}
                   placeholder="Use - for deduction, + for addition"
-                  className="rounded-full"
+                  className="h-11 rounded-xl border-slate-200"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="adjustment-reason">Reason</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="adjustment-reason" className="text-sm font-medium text-slate-700">Reason</Label>
                 <Textarea
                   id="adjustment-reason"
                   value={adjustmentReason}
                   onChange={(event) => setAdjustmentReason(event.target.value)}
                   placeholder="Explain the cash adjustment"
-                  className="min-h-[96px] rounded-2xl"
+                  className="min-h-[104px] rounded-2xl border-slate-200 text-sm"
                 />
               </div>
               <Button
                 type="button"
                 onClick={createCashAdjustment}
                 disabled={adjustmentSubmitting}
-                className="w-full rounded-full bg-primary hover:bg-[#C54E2C]"
+                className="w-full rounded-xl bg-primary py-6 text-base hover:bg-[#C54E2C]"
               >
                 {adjustmentSubmitting ? 'Saving...' : 'Save Adjustment'}
               </Button>
-              <div className="rounded-2xl bg-accent/60 p-4 text-sm text-muted-foreground">
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">
                 This updates the daily transaction view only. Use a negative amount for cash-out or shortage, and a positive amount for cash-in correction.
               </div>
             </CardContent>
           </Card>
-        </div>
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Ready To Bill</h2>
-            {activeReadyGroups.map((group) => {
-              const bill = calculateBill(group);
-              return (
-                <Card key={group.table_id} className="rounded-2xl border-border">
-                  <CardHeader>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <CardTitle className="text-lg">{group.table_label}</CardTitle>
-                        <p className="text-sm text-muted-foreground">{group.customer_name}</p>
+
+          <div className="space-y-6">
+            <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                  <Receipt className="h-5 w-5 text-primary" />
+                  Adjustment History
+                </CardTitle>
+                <Button variant="outline" className="rounded-xl border-slate-200 text-slate-600">
+                  View All
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {recentAdjustmentEntries.length ? (
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[640px]">
+                      <div className="grid grid-cols-[1.6fr,0.8fr,1.1fr,1.2fr] gap-4 border-b border-slate-100 pb-3 text-sm font-medium text-slate-500">
+                        <span>Reason</span>
+                        <span>Amount</span>
+                        <span>By</span>
+                        <span>Time</span>
                       </div>
-                      <Badge className="rounded-full bg-emerald-100 text-emerald-700">
-                        {group.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
-                      </Badge>
+                      <div className="divide-y divide-slate-100">
+                        {recentAdjustmentEntries.map((entry) => (
+                          <div key={entry.adjustment_id} className="grid grid-cols-[1.6fr,0.8fr,1.1fr,1.2fr] gap-4 py-4 text-sm text-slate-700">
+                            <span className="truncate">{entry.reason}</span>
+                            <span className={Number(entry.amount || 0) >= 0 ? 'font-semibold text-emerald-600' : 'font-semibold text-rose-600'}>
+                              {formatCurrency(entry.amount)}
+                            </span>
+                            <span className="truncate">{entry.created_by_name || 'Staff'}</span>
+                            <span>{new Date(entry.created_at).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
+                    No cash adjustments added yet.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <div className="space-y-4">
+                <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-xl text-slate-900">
+                      <Receipt className="h-5 w-5 text-blue-600" />
+                      Ready To Bill
+                    </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {group.orders.map((order) => (
-                      <div key={order.order_id} className="rounded-xl border border-border bg-accent/60 p-3">
+                {activeReadyGroups.map((group) => {
+                  const bill = calculateBill(group);
+                  return (
+                    <Card key={group.table_id} className="rounded-2xl border-slate-200 shadow-none">
+                      <CardHeader>
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <p className="font-medium">{order.order_id}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {order.items.length} item{order.items.length > 1 ? 's' : ''} • {new Date(order.created_at).toLocaleString()}
-                            </p>
+                            <CardTitle className="text-lg">{group.table_label}</CardTitle>
+                            <p className="text-sm text-muted-foreground">{group.customer_name}</p>
                           </div>
-                          <div className="flex gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="rounded-full"
-                              onClick={() => openEditOrder(order)}
-                            >
-                              <Pencil className="mr-1 h-3.5 w-3.5" />
-                              Edit
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="rounded-full"
-                              onClick={() => printOrderTicket(order)}
-                            >
-                              <Printer className="mr-1 h-3.5 w-3.5" />
-                              Print
-                            </Button>
-                          </div>
+                          <Badge className="rounded-full bg-emerald-100 text-emerald-700">
+                            {group.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
+                          </Badge>
                         </div>
-                      </div>
-                    ))}
-
-                    <div className="space-y-2 border-t pt-2">
-                      <div className="flex justify-between">
-                        <span>Subtotal</span>
-                        <span>{formatCurrency(bill.subtotal)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Tax (5%)</span>
-                        <span>{formatCurrency(bill.tax)}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <Label htmlFor={`discount-${group.table_id}`}>Discount</Label>
-                        <Input
-                          id={`discount-${group.table_id}`}
-                          type="number"
-                          value={discount}
-                          onChange={(event) => setDiscount(event.target.value)}
-                          className="w-28 rounded-full"
-                          placeholder="0"
-                        />
-                      </div>
-                      <div className="flex justify-between border-t pt-2 text-lg font-bold">
-                        <span>Total</span>
-                        <span className="text-primary">{formatCurrency(bill.total)}</span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Payment Method</Label>
-                      <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                        <SelectTrigger className="rounded-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="cash">Cash</SelectItem>
-                          <SelectItem value="upi">UPI</SelectItem>
-                          <SelectItem value="card">Card</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button
-                          onClick={() => setSelectedGroup(group)}
-                          className="w-full rounded-full bg-success hover:bg-[#3E6648]"
-                        >
-                          <DollarSign className="mr-2 h-4 w-4" />
-                          Complete Payment
-                        </Button>
-                      </DialogTrigger>
-                      {selectedGroup?.table_id === group.table_id && (
-                        <DialogContent className="rounded-2xl">
-                          <DialogHeader>
-                            <DialogTitle>Confirm Payment - {group.table_label}</DialogTitle>
-                          </DialogHeader>
-                          <div className="space-y-3 py-3">
-                            <p className="text-sm text-muted-foreground">
-                              This will mark {currentSelectedGroup?.orders.length || group.orders.length} order(s) as paid and served.
-                            </p>
-                            <div className="rounded-xl border border-border p-4 space-y-2">
-                              <div className="flex justify-between">
-                                <span>Subtotal</span>
-                                <span>{formatCurrency(calculateBill(currentSelectedGroup || group).subtotal)}</span>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {group.orders.map((order) => (
+                          <div key={order.order_id} className="rounded-xl border border-border bg-accent/60 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium">{order.order_id}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {order.items.length} item{order.items.length > 1 ? 's' : ''} • {new Date(order.created_at).toLocaleString()}
+                                </p>
                               </div>
-                              <div className="flex justify-between">
-                                <span>Tax</span>
-                                <span>{formatCurrency(calculateBill(currentSelectedGroup || group).tax)}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span>Discount</span>
-                                <span>{formatCurrency(calculateBill(currentSelectedGroup || group).discount)}</span>
-                              </div>
-                              <div className="flex justify-between border-t pt-2 font-bold">
-                                <span>Total</span>
-                                <span className="text-primary">{formatCurrency(calculateBill(currentSelectedGroup || group).total)}</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="rounded-full"
+                                  onClick={() => openEditOrder(order)}
+                                >
+                                  <Pencil className="mr-1 h-3.5 w-3.5" />
+                                  Edit
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="rounded-full"
+                                  onClick={() => printOrderTicket(order)}
+                                >
+                                  <Printer className="mr-1 h-3.5 w-3.5" />
+                                  Print
+                                </Button>
                               </div>
                             </div>
-                            <Button onClick={processPayment} className="w-full rounded-full bg-success hover:bg-[#3E6648]">
-                              Confirm Payment
-                            </Button>
                           </div>
-                        </DialogContent>
-                      )}
-                    </Dialog>
+                        ))}
+
+                        <div className="space-y-2 border-t pt-2">
+                          <div className="flex justify-between">
+                            <span>Subtotal</span>
+                            <span>{formatCurrency(bill.subtotal)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Tax (5%)</span>
+                            <span>{formatCurrency(bill.tax)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <Label htmlFor={`discount-${group.table_id}`}>Discount</Label>
+                            <Input
+                              id={`discount-${group.table_id}`}
+                              type="number"
+                              value={discount}
+                              onChange={(event) => setDiscount(event.target.value)}
+                              className="w-28 rounded-full"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="flex justify-between border-t pt-2 text-lg font-bold">
+                            <span>Total</span>
+                            <span className="text-primary">{formatCurrency(bill.total)}</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Payment Method</Label>
+                          <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                            <SelectTrigger className="rounded-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="cash">Cash</SelectItem>
+                              <SelectItem value="upi">UPI</SelectItem>
+                              <SelectItem value="card">Card</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button
+                              onClick={() => setSelectedGroup(group)}
+                              className="w-full rounded-full bg-success hover:bg-[#3E6648]"
+                            >
+                              <DollarSign className="mr-2 h-4 w-4" />
+                              Complete Payment
+                            </Button>
+                          </DialogTrigger>
+                          {selectedGroup?.table_id === group.table_id && (
+                            <DialogContent className="rounded-2xl">
+                              <DialogHeader>
+                                <DialogTitle>Confirm Payment - {group.table_label}</DialogTitle>
+                              </DialogHeader>
+                              <div className="space-y-3 py-3">
+                                <p className="text-sm text-muted-foreground">
+                                  This will mark {currentSelectedGroup?.orders.length || group.orders.length} order(s) as paid and served.
+                                </p>
+                                <div className="rounded-xl border border-border p-4 space-y-2">
+                                  <div className="flex justify-between">
+                                    <span>Subtotal</span>
+                                    <span>{formatCurrency(calculateBill(currentSelectedGroup || group).subtotal)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Tax</span>
+                                    <span>{formatCurrency(calculateBill(currentSelectedGroup || group).tax)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Discount</span>
+                                    <span>{formatCurrency(calculateBill(currentSelectedGroup || group).discount)}</span>
+                                  </div>
+                                  <div className="flex justify-between border-t pt-2 font-bold">
+                                    <span>Total</span>
+                                    <span className="text-primary">{formatCurrency(calculateBill(currentSelectedGroup || group).total)}</span>
+                                  </div>
+                                </div>
+                                <Button onClick={processPayment} className="w-full rounded-full bg-success hover:bg-[#3E6648]">
+                                  Confirm Payment
+                                </Button>
+                              </div>
+                            </DialogContent>
+                          )}
+                        </Dialog>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+                {activeReadyGroups.length === 0 && (
+                  <div className="rounded-[24px] border border-dashed border-blue-200 bg-blue-50/40 p-10 text-center text-slate-500">
+                    <Receipt className="mx-auto h-7 w-7 text-blue-500" />
+                    <div className="mt-3 text-base">
+                      No prepared orders are waiting for payment.
+                    </div>
+                  </div>
+                )}
                   </CardContent>
                 </Card>
-              );
-            })}
-            {activeReadyGroups.length === 0 && (
-              <Card className="rounded-2xl border-border">
-                <CardContent className="p-10 text-center text-muted-foreground">
-                  No prepared orders are waiting for payment.
-                </CardContent>
-              </Card>
-            )}
-          </div>
+              </div>
 
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Counter Orders</h2>
-            {activeCounterOrders.map((order) => (
-              <Card key={order.order_id} className="rounded-2xl border-border">
-                <CardHeader>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <CardTitle className="text-lg">{order.table_label || order.order_id}</CardTitle>
-                      <p className="text-sm text-muted-foreground">{order.customer_name}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge className="rounded-full bg-accent text-foreground">
-                        {order.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
-                      </Badge>
-                      <Badge className="rounded-full bg-slate-100 text-slate-700">
-                        {order.status}
-                      </Badge>
+              <div className="space-y-4">
+                <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-xl text-slate-900">
+                      <ShoppingCart className="h-5 w-5 text-emerald-600" />
+                      Counter Orders
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                {activeCounterOrders.map((order) => (
+                  <Card key={order.order_id} className="rounded-2xl border-border">
+                    <CardHeader>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <CardTitle className="text-lg">{order.table_label || order.order_id}</CardTitle>
+                          <p className="text-sm text-muted-foreground">{order.customer_name}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge className="rounded-full bg-accent text-foreground">
+                            {order.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
+                          </Badge>
+                          <Badge className="rounded-full bg-slate-100 text-slate-700">
+                            {order.status}
+                          </Badge>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {(order.items || []).map((item, index) => (
+                        <div key={`${order.order_id}-${index}`} className="flex items-center justify-between rounded-xl bg-accent/60 p-3 text-sm">
+                          <span>{item.quantity}x {item.name}</span>
+                          <span>{formatCurrency(item.quantity * item.price)}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between border-t pt-3">
+                        <span className="font-medium">Order Total</span>
+                        <span className="font-bold text-primary">{formatCurrency(order.total)}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex-1 rounded-full"
+                          onClick={() => printOrderTicket(order)}
+                        >
+                          <Printer className="mr-2 h-4 w-4" />
+                          Print Order
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex-1 rounded-full"
+                          onClick={() => openEditOrder(order)}
+                        >
+                          <Pencil className="mr-2 h-4 w-4" />
+                          Edit Order
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+                {activeCounterOrders.length === 0 && (
+                  <div className="rounded-[24px] border border-dashed border-emerald-200 bg-emerald-50/40 p-10 text-center text-slate-500">
+                    <ShoppingCart className="mx-auto h-7 w-7 text-emerald-500" />
+                    <div className="mt-3 text-base">
+                      No active counter orders yet.
                     </div>
                   </div>
+                )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                  <CardTitle className="flex items-center gap-2 text-xl text-slate-900">
+                    <CreditCard className="h-5 w-5 text-violet-600" />
+                    Completed Bills
+                  </CardTitle>
+                  <Button variant="outline" className="rounded-xl border-slate-200 text-slate-600">
+                    View All Bills
+                  </Button>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  {(order.items || []).map((item, index) => (
-                    <div key={`${order.order_id}-${index}`} className="flex items-center justify-between rounded-xl bg-accent/60 p-3 text-sm">
-                      <span>{item.quantity}x {item.name}</span>
-                      <span>{formatCurrency(item.quantity * item.price)}</span>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between border-t pt-3">
-                    <span className="font-medium">Order Total</span>
-                    <span className="font-bold text-primary">{formatCurrency(order.total)}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="flex-1 rounded-full"
-                      onClick={() => printOrderTicket(order)}
-                    >
-                      <Printer className="mr-2 h-4 w-4" />
-                      Print Order
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="flex-1 rounded-full"
-                      onClick={() => openEditOrder(order)}
-                    >
-                      <Pencil className="mr-2 h-4 w-4" />
-                      Edit Order
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-            {activeCounterOrders.length === 0 && (
-              <Card className="rounded-2xl border-border">
-                <CardContent className="p-10 text-center text-muted-foreground">
-                  No active counter orders yet.
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <h2 className="text-xl font-semibold">Completed Bills</h2>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <CardContent>
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {completedBills.slice(0, 10).map((bill) => (
               <Card key={bill.bill_id} className="rounded-2xl border-border bg-gray-50">
                 <CardHeader>
@@ -1362,6 +1478,10 @@ const BillingDashboard = () => {
                 </CardContent>
               </Card>
             ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </div>
