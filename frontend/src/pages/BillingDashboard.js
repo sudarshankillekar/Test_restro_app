@@ -1094,83 +1094,74 @@ const BillingDashboard = () => {
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[320px,minmax(0,1fr)] xl:items-start">
-          <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
-                <Receipt className="h-5 w-5 text-primary" />
-                Cash Adjustment
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="adjustment-amount" className="text-sm font-medium text-slate-700">Amount</Label>
-                <Input
-                  id="adjustment-amount"
-                  type="number"
-                  value={adjustmentAmount}
-                  onChange={(event) => setAdjustmentAmount(event.target.value)}
-                  placeholder="Use - for deduction, + for addition"
-                  className="h-11 rounded-xl border-slate-200"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="adjustment-reason" className="text-sm font-medium text-slate-700">Reason</Label>
-                <Textarea
-                  id="adjustment-reason"
-                  value={adjustmentReason}
-                  onChange={(event) => setAdjustmentReason(event.target.value)}
-                  placeholder="Explain the cash adjustment"
-                  className="min-h-[104px] rounded-2xl border-slate-200 text-sm"
-                />
-              </div>
-              <Button
-                type="button"
-                onClick={createCashAdjustment}
-                disabled={adjustmentSubmitting}
-                className="w-full rounded-xl bg-primary py-6 text-base hover:bg-[#C54E2C]"
-              >
-                {adjustmentSubmitting ? 'Saving...' : 'Save Adjustment'}
-              </Button>
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">
-                This updates the daily transaction view only. Use a negative amount for cash-out or shortage, and a positive amount for cash-in correction.
-              </div>
-            </CardContent>
-          </Card>
-
           <div className="space-y-6">
             <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+              <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
                   <Receipt className="h-5 w-5 text-primary" />
-                  Adjustment History
+                  Cash Adjustment
                 </CardTitle>
-                <Button variant="outline" className="rounded-xl border-slate-200 text-slate-600">
-                  View All
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="adjustment-amount" className="text-sm font-medium text-slate-700">Amount</Label>
+                  <Input
+                    id="adjustment-amount"
+                    type="number"
+                    value={adjustmentAmount}
+                    onChange={(event) => setAdjustmentAmount(event.target.value)}
+                    placeholder="Use - for deduction, + for addition"
+                    className="h-11 rounded-xl border-slate-200"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="adjustment-reason" className="text-sm font-medium text-slate-700">Reason</Label>
+                  <Textarea
+                    id="adjustment-reason"
+                    value={adjustmentReason}
+                    onChange={(event) => setAdjustmentReason(event.target.value)}
+                    placeholder="Explain the cash adjustment"
+                    className="min-h-[104px] rounded-2xl border-slate-200 text-sm"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={createCashAdjustment}
+                  disabled={adjustmentSubmitting}
+                  className="w-full rounded-xl bg-primary py-6 text-base hover:bg-[#C54E2C]"
+                >
+                  {adjustmentSubmitting ? 'Saving...' : 'Save Adjustment'}
                 </Button>
+                <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">
+                  This updates the daily transaction view only. Use a negative amount for cash-out or shortage, and a positive amount for cash-in correction.
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
+                  <Receipt className="h-5 w-5 text-primary" />
+                  Cash Adjustment History
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {recentAdjustmentEntries.length ? (
-                  <div className="overflow-x-auto">
-                    <div className="min-w-[640px]">
-                      <div className="grid grid-cols-[1.6fr,0.8fr,1.1fr,1.2fr] gap-4 border-b border-slate-100 pb-3 text-sm font-medium text-slate-500">
-                        <span>Reason</span>
-                        <span>Amount</span>
-                        <span>By</span>
-                        <span>Time</span>
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                        {recentAdjustmentEntries.map((entry) => (
-                          <div key={entry.adjustment_id} className="grid grid-cols-[1.6fr,0.8fr,1.1fr,1.2fr] gap-4 py-4 text-sm text-slate-700">
-                            <span className="truncate">{entry.reason}</span>
-                            <span className={Number(entry.amount || 0) >= 0 ? 'font-semibold text-emerald-600' : 'font-semibold text-rose-600'}>
-                              {formatCurrency(entry.amount)}
-                            </span>
-                            <span className="truncate">{entry.created_by_name || 'Staff'}</span>
-                            <span>{new Date(entry.created_at).toLocaleString()}</span>
+                  <div className="space-y-3">
+                    {recentAdjustmentEntries.map((entry) => (
+                      <div key={entry.adjustment_id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-900">{entry.reason}</p>
+                            <p className="mt-1 text-xs text-slate-500">{entry.created_by_name || 'Staff'}</p>
+                            <p className="mt-1 text-xs text-slate-400">{new Date(entry.created_at).toLocaleString()}</p>
                           </div>
-                        ))}
+                          <p className={Number(entry.amount || 0) >= 0 ? 'text-sm font-semibold text-emerald-600' : 'text-sm font-semibold text-rose-600'}>
+                            {formatCurrency(entry.amount)}
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
@@ -1179,6 +1170,9 @@ const BillingDashboard = () => {
                 )}
               </CardContent>
             </Card>
+          </div>
+
+          <div className="space-y-6">
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <div className="space-y-4">
