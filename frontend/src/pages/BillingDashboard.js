@@ -598,35 +598,32 @@ const BillingDashboard = () => {
   const paymentSummary = transactionSummary.payment_summary || createEmptyTransactionSummary().payment_summary;
   const cashAdjustments = transactionSummary.cash_adjustments || createEmptyTransactionSummary().cash_adjustments;
   const recentAdjustmentEntries = cashAdjustments.entries?.slice(0, 5) || [];
+  const adjustedCashCollected = Number(paymentSummary.cash || 0) + Number(cashAdjustments.total_adjustments || 0);
   const dashboardStats = [
     {
       label: 'Ready To Bill',
       value: activeReadyGroups.length,
-      meta: 'Orders',
       icon: Receipt,
-      valueClassName: 'text-slate-900',
+      valueClassName: 'text-blue-600',
       tintClassName: 'bg-blue-50 text-blue-600',
     },
     {
       label: 'Counter Orders',
       value: activeCounterOrders.length,
-      meta: 'Orders',
       icon: ShoppingCart,
-      valueClassName: 'text-slate-900',
+      valueClassName: 'text-emerald-600',
       tintClassName: 'bg-emerald-50 text-emerald-600',
     },
     {
       label: 'Completed Bills',
       value: completedBills.length,
-      meta: 'Bills',
       icon: CreditCard,
-      valueClassName: 'text-slate-900',
+      valueClassName: 'text-violet-600',
       tintClassName: 'bg-violet-50 text-violet-600',
     },
     {
       label: 'Cash Collected',
-      value: formatCurrency(paymentSummary.cash),
-      meta: 'Total',
+      value: formatCurrency(adjustedCashCollected),
       icon: Wallet,
       valueClassName: 'text-emerald-600',
       tintClassName: 'bg-emerald-50 text-emerald-600',
@@ -634,7 +631,6 @@ const BillingDashboard = () => {
     {
       label: 'UPI Collected',
       value: formatCurrency(paymentSummary.upi),
-      meta: 'Total',
       icon: Receipt,
       valueClassName: 'text-sky-600',
       tintClassName: 'bg-blue-50 text-blue-600',
@@ -642,7 +638,6 @@ const BillingDashboard = () => {
     {
       label: 'Card Collected',
       value: formatCurrency(paymentSummary.card),
-      meta: 'Total',
       icon: CreditCard,
       valueClassName: 'text-violet-600',
       tintClassName: 'bg-violet-50 text-violet-600',
@@ -650,7 +645,6 @@ const BillingDashboard = () => {
     {
       label: 'Cash Adjustment',
       value: formatCurrency(cashAdjustments.total_adjustments),
-      meta: 'Total',
       icon: Receipt,
       valueClassName: Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'text-amber-600' : 'text-rose-600',
       tintClassName: Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600',
@@ -1076,21 +1070,28 @@ const BillingDashboard = () => {
             const Icon = stat.icon;
             return (
               <Card key={stat.label} className="rounded-[24px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-slate-500">{stat.label}</p>
-                      <p className={`mt-3 text-[2rem] font-bold leading-none ${stat.valueClassName}`}>{stat.value}</p>
-                      <p className="mt-2 text-sm text-slate-400">{stat.meta}</p>
-                    </div>
-                    <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${stat.tintClassName}`}>
-                      <Icon className="h-5 w-5" />
-                    </div>
+                <CardContent className="flex items-center gap-4 p-5">
+                  <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${stat.tintClassName}`}>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-semibold text-slate-500">{stat.label}</p>
+                    <p className={`mt-4 text-[2.15rem] font-bold leading-none ${stat.valueClassName}`}>{stat.value}</p>
                   </div>
                 </CardContent>
               </Card>
             );
           })}
+        </div>
+
+        <div className="rounded-[28px] border border-white/70 bg-white/80 px-4 py-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] backdrop-blur">
+          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+            <span>Cash total includes all cash adjustments.</span>
+            <span className="font-medium text-slate-700">Base cash: {formatCurrency(paymentSummary.cash)}</span>
+            <span className={Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'font-medium text-emerald-600' : 'font-medium text-rose-600'}>
+              Adjustment: {formatCurrency(cashAdjustments.total_adjustments)}
+            </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[320px,minmax(0,1fr)] xl:items-start">
