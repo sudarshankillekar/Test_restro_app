@@ -168,6 +168,7 @@ def build_date_match(start_date: Optional[str] = None, end_date: Optional[str] =
 def to_socket_payload(data):
     return jsonable_encoder(data)
 
+
 async def build_transaction_summary(restaurant_id: str, created_at_filter: dict):
     payment_query = {"restaurant_id": restaurant_id, "status": "completed"}
     if created_at_filter:
@@ -206,7 +207,6 @@ async def build_transaction_summary(restaurant_id: str, created_at_filter: dict)
             "entries": adjustments,
         },
     }
-
 
 
 def parse_bool_env(name: str, default: bool) -> bool:
@@ -341,7 +341,6 @@ async def login(input: LoginRequest, request: Request, response: Response):
     cookie_settings = get_cookie_settings(request)
     response.set_cookie(key="access_token", value=access_token, max_age=ACCESS_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
     response.set_cookie(key="refresh_token", value=refresh_token, max_age=REFRESH_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
-    
     
     response_user = await attach_restaurant_context(dict(user), db)
     return {
@@ -759,6 +758,7 @@ async def update_restaurant_profile(input: RestaurantProfileUpdate, request: Req
         raise HTTPException(status_code=400, detail="GST number must be 30 characters or fewer.")
     if google_review_url and not google_review_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Google review link must start with http:// or https://")
+
     await db.restaurants.update_one(
         {"restaurant_id": restaurant_id},
         {"$set": {
@@ -1916,6 +1916,7 @@ async def create_payment(input: PaymentCreate, request: Request):
     
     return {k: v for k, v in payment_doc.items() if k != "_id"}
 
+
 @api_router.post("/cash-adjustments")
 async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
     user = await get_current_user(request, db)
@@ -1966,7 +1967,7 @@ async def get_payment(order_id: str, request: Request):
 @api_router.get("/analytics/dashboard")
 async def get_analytics(request: Request, period: str = "daily"):
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin","billing"]:
+    if user["role"] not in ["admin", "billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Get restaurant_id for data isolation
@@ -1984,8 +1985,9 @@ async def get_analytics(request: Request, period: str = "daily"):
         start_date = now - timedelta(days=30)
     else:
         start_date = now - timedelta(days=1)
-        
+
     created_at_filter = {"$gte": start_date}
+    
     # CRITICAL: Filter by restaurant_id for data isolation
     # Aggregate data
     pipeline = [
@@ -2013,11 +2015,13 @@ async def get_analytics(request: Request, period: str = "daily"):
     }))
     empty_tables = max(total_tables - occupied_tables, 0)
     transaction_summary = await build_transaction_summary(restaurant_id, created_at_filter)
+    adjustment_total = round(transaction_summary["cash_adjustments"].get("total_adjustments", 0), 2)
+    billed_revenue = round(transaction_summary["payment_summary"].get("total_collected", 0), 2)
     
     if not result:
         return {
             "total_orders": 0,
-            "total_revenue": 0,
+            "total_revenue": round(billed_revenue + adjustment_total, 2),
             "avg_order_value": 0,
             "top_items": [],
             "peak_hours": [],
@@ -2033,7 +2037,7 @@ async def get_analytics(request: Request, period: str = "daily"):
     top_items_pipeline = [
         {"$match": {
             "restaurant_id": restaurant_id,
-            "created_at": {"$gte": start_date},
+            "created_at": created_at_filter,
             "status": "served"
         }},
         {"$unwind": "$items"},
@@ -2053,7 +2057,7 @@ async def get_analytics(request: Request, period: str = "daily"):
     recent_sales_pipeline = [
         {"$match": {
             "restaurant_id": restaurant_id,
-            "created_at": {"$gte": start_date},
+            "created_at": created_at_filter,
             "status": "served"
         }},
         {"$unwind": "$items"},
@@ -2079,11 +2083,17 @@ async def get_analytics(request: Request, period: str = "daily"):
             "name": top_items[0]["_id"],
             "quantity": top_items[0]["quantity"]
         }
+
+    adjusted_revenue = round(billed_revenue + adjustment_total, 2)
+    adjusted_avg_order_value = round(
+        adjusted_revenue / result[0]["total_orders"],
+        2,
+    ) if result[0]["total_orders"] else 0
     
     return {
         "total_orders": result[0]["total_orders"],
-        "total_revenue": round(result[0]["total_revenue"], 2),
-        "avg_order_value": round(result[0]["avg_order_value"], 2),
+        "total_revenue": adjusted_revenue,
+        "avg_order_value": adjusted_avg_order_value,
         "top_items": [{"name": item["_id"], "quantity": item["quantity"], "revenue": item["revenue"]} for item in top_items],
         "peak_hours": [],
         "occupied_tables": occupied_tables,
