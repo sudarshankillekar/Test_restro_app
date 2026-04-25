@@ -393,9 +393,16 @@ const BillingDashboard = () => {
     const gstNumber = restaurantProfile.gst_number?.trim();
     const summarizedItems = summarizeBillItems(bill.orders);
     const lineItemsTotal = summarizedItems.reduce((sum, item) => sum + item.amount, 0);
-    const subtotal = payment.subtotal ?? lineItemsTotal;
-    const tax = payment.tax ?? subtotal * 0.05;
-    const total = payment.total ?? (subtotal + tax - (payment.discount || 0));
+    const subtotal = Number(payment.subtotal ?? lineItemsTotal);
+    const discount = Number(payment.discount || 0);
+    const fallbackTax = Number((subtotal * 0.05).toFixed(2));
+    const parsedTax = Number(payment.tax);
+    const tax = Number.isFinite(parsedTax) && parsedTax > 0 ? parsedTax : fallbackTax;
+    const recalculatedTotal = Number((subtotal + tax - discount).toFixed(2));
+    const parsedTotal = Number(payment.total);
+    const total = Number.isFinite(parsedTotal) && parsedTotal > subtotal - discount
+      ? parsedTotal
+      : recalculatedTotal; 
     const itemsHtml = summarizedItems.map((item) => `
       <tr>
         <td>${item.name}</td>
@@ -428,7 +435,7 @@ const BillingDashboard = () => {
       <div class="totals">
         <div><span>Subtotal</span><span>Rs. ${subtotal.toFixed(2)}</span></div>
         <div><span>Tax (5%)</span><span>Rs. ${tax.toFixed(2)}</span></div>
-        <div><span>Discount</span><span>Rs. ${(payment.discount || 0).toFixed(2)}</span></div>
+        <div><span>Discount</span><span>Rs. ${discount.toFixed(2)}</span></div>
         <div class="strong"><span>Total</span><span>Rs. ${total.toFixed(2)}</span></div>
       </div>
     `, `${restaurantName} - ${bill.bill_id}`);
