@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizeImageUrl } from '../lib/utils';
-import { ChefHat, LogOut, Plus, TrendingUp, DollarSign, ShoppingBag, QrCode, Trash2, Download, Settings } from 'lucide-react';
+import { ChefHat, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
@@ -41,7 +41,10 @@ const AdminDashboard = () => {
     description: '',
     image: '',
   });
-  
+   const [categoryImportFile, setCategoryImportFile] = useState(null);
+  const [itemImportFile, setItemImportFile] = useState(null);
+  const [categoryImporting, setCategoryImporting] = useState(false);
+  const [itemImporting, setItemImporting] = useState(false);
   // Tables state
   const [tables, setTables] = useState([]);
   const [newTableNumber, setNewTableNumber] = useState('');
@@ -153,6 +156,75 @@ const AdminDashboard = () => {
     }
   };
 
+  const downloadExcel = async (endpoint, fallbackFilename) => {
+    try {
+      const response = await api.get(endpoint, {
+        withCredentials: true,
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      const disposition = response.headers['content-disposition'] || '';
+      const filenameMatch = disposition.match(/filename="([^"]+)"/);
+      link.href = url;
+      link.download = filenameMatch?.[1] || fallbackFilename;
+      link.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to download Excel file'));
+    }
+  };
+
+  const importCategories = async () => {
+    if (!categoryImportFile) {
+      toast.error('Please choose a categories Excel file.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', categoryImportFile);
+
+    setCategoryImporting(true);
+    try {
+      const response = await api.post('/api/menu/categories/import', formData, {
+        withCredentials: true,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success(`Categories imported. Created: ${response.data.created}, Updated: ${response.data.updated}`);
+      setCategoryImportFile(null);
+      fetchMenu();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to import categories'));
+    } finally {
+      setCategoryImporting(false);
+    }
+  };
+
+  const importMenuItems = async () => {
+    if (!itemImportFile) {
+      toast.error('Please choose a menu items Excel file.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', itemImportFile);
+
+    setItemImporting(true);
+    try {
+      const response = await api.post('/api/menu/items/import', formData, {
+        withCredentials: true,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      toast.success(`Menu items imported. Created: ${response.data.created}, Updated: ${response.data.updated}`);
+      setItemImportFile(null);
+      fetchMenu();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to import menu items'));
+    } finally {
+      setItemImporting(false);
+    }
+  };
+
   const toggleItemAvailability = async (itemId, available) => {
     try {
       await api.put(
@@ -164,6 +236,18 @@ const AdminDashboard = () => {
       toast.error('Failed to update item');
     }
   };
+
+ const categoryNameMap = categories.reduce((accumulator, category) => {
+    accumulator[category.category_id] = category.name;
+    return accumulator;
+  }, {});
+
+  const groupedMenuItems = categories.map((category) => ({
+    ...category,
+    items: menuItems.filter((item) => item.category_id === category.category_id),
+  })).filter((category) => category.items.length > 0);
+
+  const uncategorizedItems = menuItems.filter((item) => !categoryNameMap[item.category_id]);
 
   const deleteMenuItem = async (itemId) => {
     if (!window.confirm('Delete this item?')) return;
@@ -644,6 +728,65 @@ const AdminDashboard = () => {
           </TabsContent>
 
           <TabsContent value="menu" className="space-y-6">
+               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <Card className="border-border rounded-2xl">
+                <CardHeader>
+                  <CardTitle>Import / Export Categories</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Upload Categories Excel</Label>
+                    <Input
+                      type="file"
+                      accept=".xlsx"
+                      onChange={(e) => setCategoryImportFile(e.target.files?.[0] || null)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Excel columns: `Category Name`
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button onClick={importCategories} disabled={categoryImporting} className="rounded-full bg-primary hover:bg-[#C54E2C]">
+                      <Upload className="w-4 h-4 mr-2" />
+                      {categoryImporting ? 'Importing...' : 'Import Categories'}
+                    </Button>
+                    <Button onClick={() => downloadExcel('/api/menu/categories/export', 'menu-categories.xlsx')} variant="outline" className="rounded-full">
+                      <Download className="w-4 h-4 mr-2" />
+                      Export Categories
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border rounded-2xl">
+                <CardHeader>
+                  <CardTitle>Import / Export Menu Items</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Upload Menu Items Excel</Label>
+                    <Input
+                      type="file"
+                      accept=".xlsx"
+                      onChange={(e) => setItemImportFile(e.target.files?.[0] || null)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Excel columns: `Item Name`, `Category Name`, `Price`, `Description`, `Image URL`, `Available`
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button onClick={importMenuItems} disabled={itemImporting} className="rounded-full bg-primary hover:bg-[#C54E2C]">
+                      <Upload className="w-4 h-4 mr-2" />
+                      {itemImporting ? 'Importing...' : 'Import Menu Items'}
+                    </Button>
+                    <Button onClick={() => downloadExcel('/api/menu/items/export', 'menu-items.xlsx')} variant="outline" className="rounded-full">
+                      <Download className="w-4 h-4 mr-2" />
+                      Export Menu Items
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
             <Card className="border-border rounded-2xl">
               <CardHeader>
                 <CardTitle>Add Category</CardTitle>
@@ -738,51 +881,101 @@ const AdminDashboard = () => {
               </CardContent>
             </Card>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-fr">
-              {menuItems.map((item) => (
-                <Card key={item.item_id} className="border-border rounded-2xl h-full" data-testid={`menu-item-card-${item.item_id}`}>
-                  {item.image && (
-                    <div className="h-32 overflow-hidden rounded-t-2xl">
-                      <img
-                        src={normalizeImageUrl(item.image)}
-                        alt={item.name}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
-                        }}
-                      />
-                    </div>
-                  )}
-                  <CardContent className="p-4 space-y-3 h-full flex flex-col">
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-lg break-words">{item.name}</h3>
-                      <p className="text-sm text-muted-foreground break-words min-h-10">{item.description || 'No description added'}</p>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 mt-auto">
-                      <p className="text-xl font-bold text-primary">₹{item.price}</p>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={item.available}
-                          onCheckedChange={() => toggleItemAvailability(item.item_id, item.available)}
-                          data-testid={`toggle-available-${item.item_id}`}
-                        />
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="h-8 w-8 p-0 rounded-full"
-                          onClick={() => deleteMenuItem(item.item_id)}
-                          data-testid={`delete-item-${item.item_id}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
+           <div className="space-y-6">
+              {groupedMenuItems.map((category) => (
+                <Card key={category.category_id} className="border-border rounded-2xl">
+                  <CardHeader>
+                    <CardTitle>{category.name}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-fr">
+                      {category.items.map((item) => (
+                        <Card key={item.item_id} className="border-border rounded-2xl h-full" data-testid={`menu-item-card-${item.item_id}`}>
+                          {item.image && (
+                            <div className="h-32 overflow-hidden rounded-t-2xl">
+                              <img
+                                src={normalizeImageUrl(item.image)}
+                                alt={item.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                }}
+                              />
+                            </div>
+                          )}
+                          <CardContent className="p-4 space-y-3 h-full flex flex-col">
+                            <div className="min-w-0">
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{category.name}</p>
+                              <h3 className="font-semibold text-lg break-words">{item.name}</h3>
+                              <p className="text-sm text-muted-foreground break-words min-h-10">{item.description || 'No description added'}</p>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 mt-auto">
+                              <p className="text-xl font-bold text-primary">₹{item.price}</p>
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={item.available}
+                                  onCheckedChange={() => toggleItemAvailability(item.item_id, item.available)}
+                                  data-testid={`toggle-available-${item.item_id}`}
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="h-8 w-8 p-0 rounded-full"
+                                  onClick={() => deleteMenuItem(item.item_id)}
+                                  data-testid={`delete-item-${item.item_id}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
                     </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
-          </TabsContent>
-
+             </TabsContent>
+            {uncategorizedItems.length > 0 && (
+                <Card className="border-border rounded-2xl">
+                  <CardHeader>
+                    <CardTitle>Uncategorized Items</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-fr">
+                      {uncategorizedItems.map((item) => (
+                        <Card key={item.item_id} className="border-border rounded-2xl h-full">
+                          <CardContent className="p-4 space-y-3 h-full flex flex-col">
+                            <div className="min-w-0">
+                              <h3 className="font-semibold text-lg break-words">{item.name}</h3>
+                              <p className="text-sm text-muted-foreground break-words min-h-10">{item.description || 'No description added'}</p>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 mt-auto">
+                              <p className="text-xl font-bold text-primary">₹{item.price}</p>
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={item.available}
+                                  onCheckedChange={() => toggleItemAvailability(item.item_id, item.available)}
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="h-8 w-8 p-0 rounded-full"
+                                  onClick={() => deleteMenuItem(item.item_id)}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+           
           <TabsContent value="tables" className="space-y-6">
             <Card className="border-border rounded-2xl">
               <CardHeader>

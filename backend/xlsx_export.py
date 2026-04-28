@@ -2,6 +2,7 @@ from datetime import datetime
 from io import BytesIO
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
+import xml.etree.ElementTree as ET
 
 
 def _column_name(index: int) -> str:
@@ -119,3 +120,48 @@ def build_xlsx_bytes(headers: list[str], rows: list[list[object]], sheet_name: s
         workbook.writestr("xl/worksheets/sheet1.xml", worksheet_xml)
 
     return buffer.getvalue()
+
+def parse_xlsx_bytes(content: bytes) -> list[list[str]]:
+    namespace = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+
+    with ZipFile(BytesIO(content), "r") as workbook:
+        shared_strings = []
+        if "xl/sharedStrings.xml" in workbook.namelist():
+            shared_root = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+            for string_item in shared_root.findall("main:si", namespace):
+                text_parts = [node.text or "" for node in string_item.findall(".//main:t", namespace)]
+                shared_strings.append("".join(text_parts))
+
+        if "xl/worksheets/sheet1.xml" not in workbook.namelist():
+            raise ValueError("The uploaded Excel file must contain data in the first sheet.")
+
+        sheet_root = ET.fromstring(workbook.read("xl/worksheets/sheet1.xml"))
+        rows: list[list[str]] = []
+
+        for row in sheet_root.findall(".//main:sheetData/main:row", namespace):
+            parsed_row: list[str] = []
+            cells = row.findall("main:c", namespace)
+            for cell in cells:
+                cell_type = cell.attrib.get("t")
+                value_node = cell.find("main:v", namespace)
+                inline_text_nodes = cell.findall(".//main:t", namespace)
+
+                if cell_type == "s" and value_node is not None:
+                    shared_index = int(value_node.text or 0)
+                    parsed_row.append(shared_strings[shared_index] if shared_index < len(shared_strings) else "")
+                    continue
+
+                if cell_type == "inlineStr" and inline_text_nodes:
+                    parsed_row.append("".join(node.text or "" for node in inline_text_nodes))
+                    continue
+
+                if value_node is not None and value_node.text is not None:
+                    parsed_row.append(value_node.text)
+                    continue
+
+                parsed_row.append("")
+
+            if any(str(value).strip() for value in parsed_row):
+                rows.append(parsed_row)
+
+    return rows

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, UploadFile, File
 from fastapi.encoders import jsonable_encoder
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -35,7 +35,7 @@ from models import (
     TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, CounterOrderCreate, OrderItemsUpdate, OrderResponse,
     PaymentCreate, CashAdjustmentCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
-from xlsx_export import build_xlsx_bytes
+from xlsx_export import build_xlsx_bytes, parse_xlsx_bytes
 import jwt
 import secrets
 
@@ -168,6 +168,25 @@ def build_date_match(start_date: Optional[str] = None, end_date: Optional[str] =
 def to_socket_payload(data):
     return jsonable_encoder(data)
 
+def normalize_excel_headers(row: list[str]) -> list[str]:
+    return [str(value or "").strip().lower().replace(" ", "_") for value in row]
+
+
+def parse_excel_objects(rows: list[list[str]]) -> list[dict]:
+    if not rows:
+        return []
+    headers = normalize_excel_headers(rows[0])
+    objects = []
+    for row in rows[1:]:
+        padded = row + [""] * max(0, len(headers) - len(row))
+        row_obj = {
+            header: str(value).strip()
+            for header, value in zip(headers, padded)
+            if header
+        }
+        if any(value for value in row_obj.values()):
+            objects.append(row_obj)
+    return objects
 
 async def build_transaction_summary(restaurant_id: str, created_at_filter: dict):
     payment_query = {"restaurant_id": restaurant_id, "status": "completed"}
@@ -1052,6 +1071,89 @@ async def create_category(input: CategoryCreate, request: Request):
     await db.menu_categories.insert_one(cat_doc)
     return {k: v for k, v in cat_doc.items() if k != "_id"}
 
+@api_router.get("/menu/categories/export")
+async def export_menu_categories(request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    categories = await db.menu_categories.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0, "name": 1, "order": 1, "created_at": 1}
+    ).sort("order", 1).to_list(1000)
+
+    workbook = build_xlsx_bytes(
+        headers=["Category Name", "Display Order", "Created At"],
+        rows=[
+            [category.get("name", ""), category.get("order", 0), category.get("created_at")]
+            for category in categories
+        ],
+        sheet_name="Categories",
+    )
+
+    return StreamingResponse(
+        BytesIO(workbook),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="menu-categories.xlsx"'},
+    )
+
+
+@api_router.post("/menu/categories/import")
+async def import_menu_categories(request: Request, file: UploadFile = File(...)):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    if not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload an .xlsx file for categories.")
+
+    rows = parse_xlsx_bytes(await file.read())
+    records = parse_excel_objects(rows)
+    if not records:
+        raise HTTPException(status_code=400, detail="The uploaded categories file is empty.")
+
+    existing_categories = await db.menu_categories.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0, "category_id": 1, "name": 1, "order": 1}
+    ).sort("order", 1).to_list(1000)
+    category_map = {category["name"].strip().lower(): category for category in existing_categories}
+    next_order = (max((category.get("order", 0) for category in existing_categories), default=-1) + 1)
+
+    created_count = 0
+    updated_count = 0
+    seen_names = set()
+
+    for record in records:
+        category_name = (record.get("category_name") or record.get("name") or "").strip()
+        if not category_name:
+            continue
+
+        normalized_name = category_name.lower()
+        if normalized_name in seen_names:
+            continue
+        seen_names.add(normalized_name)
+
+        existing = category_map.get(normalized_name)
+        if existing:
+            await db.menu_categories.update_one(
+                {"category_id": existing["category_id"], "restaurant_id": restaurant_id},
+                {"$set": {"name": category_name}}
+            )
+            updated_count += 1
+            continue
+
+        category_doc = {
+            "category_id": f"cat_{secrets.token_hex(6)}",
+            "name": category_name,
+            "order": next_order,
+            "restaurant_id": restaurant_id,
+            "created_at": datetime.now(timezone.utc)
+        }
+        next_order += 1
+        await db.menu_categories.insert_one(category_doc)
+        category_map[normalized_name] = category_doc
+        created_count += 1
+
+    return {
+        "message": "Categories imported successfully.",
+        "created": created_count,
+        "updated": updated_count,
+    }
+
 @api_router.get("/menu/items")
 async def get_menu_items(
     request: Request,
@@ -1114,6 +1216,144 @@ async def create_menu_item(input: MenuItemCreate, request: Request):
     }
     await db.menu_items.insert_one(item_doc)
     return {k: v for k, v in item_doc.items() if k != "_id"}
+
+@api_router.get("/menu/items/export")
+async def export_menu_items(request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    categories = await db.menu_categories.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0, "category_id": 1, "name": 1}
+    ).to_list(1000)
+    category_name_map = {category["category_id"]: category["name"] for category in categories}
+
+    items = await db.menu_items.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0}
+    ).to_list(5000)
+
+    workbook = build_xlsx_bytes(
+        headers=["Item Name", "Category Name", "Price", "Description", "Image URL", "Available"],
+        rows=[
+            [
+                item.get("name", ""),
+                category_name_map.get(item.get("category_id"), ""),
+                item.get("price", 0),
+                item.get("description", ""),
+                item.get("image", ""),
+                "Yes" if item.get("available", True) else "No",
+            ]
+            for item in items
+        ],
+        sheet_name="Menu Items",
+    )
+
+    return StreamingResponse(
+        BytesIO(workbook),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="menu-items.xlsx"'},
+    )
+
+
+@api_router.post("/menu/items/import")
+async def import_menu_items(request: Request, file: UploadFile = File(...)):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    if not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload an .xlsx file for menu items.")
+
+    rows = parse_xlsx_bytes(await file.read())
+    records = parse_excel_objects(rows)
+    if not records:
+        raise HTTPException(status_code=400, detail="The uploaded menu items file is empty.")
+
+    categories = await db.menu_categories.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0, "category_id": 1, "name": 1}
+    ).to_list(1000)
+    category_map = {category["name"].strip().lower(): category for category in categories}
+    if not category_map:
+        raise HTTPException(status_code=400, detail="Please import or create categories before importing menu items.")
+
+    missing_categories = sorted({
+        (record.get("category_name") or record.get("category") or "").strip()
+        for record in records
+        if (record.get("category_name") or record.get("category") or "").strip()
+        and (record.get("category_name") or record.get("category") or "").strip().lower() not in category_map
+    })
+    if missing_categories:
+        raise HTTPException(
+            status_code=400,
+            detail=f"These category names were not found: {', '.join(missing_categories)}"
+        )
+
+    existing_items = await db.menu_items.find(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0, "item_id": 1, "name": 1, "category_id": 1}
+    ).to_list(5000)
+    item_map = {
+        (item["name"].strip().lower(), item.get("category_id")): item
+        for item in existing_items
+    }
+
+    created_count = 0
+    updated_count = 0
+
+    for record in records:
+        item_name = (record.get("item_name") or record.get("name") or "").strip()
+        category_name = (record.get("category_name") or record.get("category") or "").strip()
+        price_raw = (record.get("price") or "").strip()
+        if not item_name or not category_name or not price_raw:
+            continue
+
+        try:
+            price = float(price_raw)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid price for item '{item_name}'.")
+
+        if price <= 0:
+            raise HTTPException(status_code=400, detail=f"Price must be greater than zero for item '{item_name}'.")
+
+        category = category_map[category_name.lower()]
+        description = (record.get("description") or "").strip()
+        image = (record.get("image_url") or record.get("image") or "").strip()
+        available_raw = (record.get("available") or "yes").strip().lower()
+        available = available_raw not in {"no", "false", "0"}
+
+        existing_item = item_map.get((item_name.lower(), category["category_id"]))
+        if existing_item:
+            await db.menu_items.update_one(
+                {"item_id": existing_item["item_id"], "restaurant_id": restaurant_id},
+                {"$set": {
+                    "name": item_name,
+                    "category_id": category["category_id"],
+                    "price": price,
+                    "description": description,
+                    "image": image,
+                    "available": available,
+                }}
+            )
+            updated_count += 1
+            continue
+
+        item_doc = {
+            "item_id": f"item_{secrets.token_hex(8)}",
+            "name": item_name,
+            "category_id": category["category_id"],
+            "price": price,
+            "description": description,
+            "image": image,
+            "available": available,
+            "restaurant_id": restaurant_id,
+            "created_at": datetime.now(timezone.utc)
+        }
+        await db.menu_items.insert_one(item_doc)
+        created_count += 1
+
+    return {
+        "message": "Menu items imported successfully.",
+        "created": created_count,
+        "updated": updated_count,
+    }
+
 
 @api_router.put("/menu/items/{item_id}")
 async def update_menu_item(item_id: str, input: MenuItemUpdate, request: Request):
