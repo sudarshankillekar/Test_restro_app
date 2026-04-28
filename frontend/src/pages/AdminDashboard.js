@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -41,10 +42,13 @@ const AdminDashboard = () => {
     description: '',
     image: '',
   });
-   const [categoryImportFile, setCategoryImportFile] = useState(null);
+  const [categoryImportFile, setCategoryImportFile] = useState(null);
   const [itemImportFile, setItemImportFile] = useState(null);
   const [categoryImporting, setCategoryImporting] = useState(false);
   const [itemImporting, setItemImporting] = useState(false);
+  const [openMenuCategories, setOpenMenuCategories] = useState([]);
+  const [brokenMenuImages, setBrokenMenuImages] = useState({});
+  
   // Tables state
   const [tables, setTables] = useState([]);
   const [newTableNumber, setNewTableNumber] = useState('');
@@ -75,6 +79,12 @@ const AdminDashboard = () => {
   useEffect(() => {
     localStorage.setItem(ADMIN_TAB_KEY, activeTab);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (categories.length) {
+      setOpenMenuCategories(categories.slice(0, 3).map((category) => category.category_id));
+    }
+  }, [categories]);
 
   const fetchAnalytics = async () => {
     try {
@@ -237,18 +247,6 @@ const AdminDashboard = () => {
     }
   };
 
- const categoryNameMap = categories.reduce((accumulator, category) => {
-    accumulator[category.category_id] = category.name;
-    return accumulator;
-  }, {});
-
-  const groupedMenuItems = categories.map((category) => ({
-    ...category,
-    items: menuItems.filter((item) => item.category_id === category.category_id),
-  })).filter((category) => category.items.length > 0);
-
-  const uncategorizedItems = menuItems.filter((item) => !categoryNameMap[item.category_id]);
-
   const deleteMenuItem = async (itemId) => {
     if (!window.confirm('Delete this item?')) return;
     try {
@@ -353,10 +351,10 @@ const AdminDashboard = () => {
     try {
       const response = await api.put(
         `/api/restaurant/profile`,
-          {
+        {
           gst_number: restaurantProfile.gst_number.trim(),
           google_review_url: restaurantProfile.google_review_url.trim(),
-          }
+        }
       );
       setRestaurantProfile({
         name: response.data.name || '',
@@ -389,7 +387,7 @@ const AdminDashboard = () => {
       return;
     }
     try {
-     const response = await api.get(`/api/admin/orders/search`, {
+      const response = await api.get(`/api/admin/orders/search`, {
         params: { order_id: orderSearchId.trim() },
         withCredentials: true,
       });
@@ -405,7 +403,7 @@ const AdminDashboard = () => {
     if (!searchedOrder) return;
     if (!window.confirm(`Delete order ${searchedOrder.order_id}?`)) return;
     try {
-       await api.delete(`/api/admin/orders/${searchedOrder.order_id}`, {
+      await api.delete(`/api/admin/orders/${searchedOrder.order_id}`, {
         withCredentials: true,
       });
       toast.success('Order deleted');
@@ -434,6 +432,22 @@ const AdminDashboard = () => {
     await logout();
     navigate('/login');
   };
+
+  const markMenuImageBroken = (itemId) => {
+    setBrokenMenuImages((prev) => ({ ...prev, [itemId]: true }));
+  };
+
+  const categoryNameMap = categories.reduce((accumulator, category) => {
+    accumulator[category.category_id] = category.name;
+    return accumulator;
+  }, {});
+
+  const groupedMenuItems = categories.map((category) => ({
+    ...category,
+    items: menuItems.filter((item) => item.category_id === category.category_id),
+  })).filter((category) => category.items.length > 0);
+
+  const uncategorizedItems = menuItems.filter((item) => !categoryNameMap[item.category_id]);
 
   const downloadQR = (tableId) => {
     const canvas = document.getElementById(`qr-${tableId}`);
@@ -565,14 +579,14 @@ const AdminDashboard = () => {
                       <span>Payment: {searchedOrder.payment_status}</span>
                       {searchedOrder.payment?.bill_id && <span>Bill: {searchedOrder.payment.bill_id}</span>}
                     </div>
-                      <div className="space-y-2 rounded-xl bg-white p-3">
+                    <div className="space-y-2 rounded-xl bg-white p-3">
                       {(searchedOrder.items || []).map((item, idx) => (
                         <div key={`${searchedOrder.order_id}-${idx}`} className="flex items-center justify-between gap-3 text-sm">
                           <span className="min-w-0 truncate">{item.quantity}x {item.name}</span>
                           <span className="font-medium">₹{(item.quantity * item.price).toFixed(2)}</span>
                         </div>
                       ))}
-                    </div>   
+                    </div>
                     <Button variant="destructive" className="rounded-full" onClick={deleteOrder}>
                       Delete Order
                     </Button>
@@ -636,7 +650,7 @@ const AdminDashboard = () => {
               </div>
             )}
 
-             {analytics && (
+            {analytics && (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
                 <Card className="border-border rounded-2xl">
                   <CardHeader>
@@ -674,7 +688,7 @@ const AdminDashboard = () => {
                 </Card>
               </div>
             )}
-             
+
             {analytics?.top_items && analytics.top_items.length > 0 && (
               <Card className="border-border rounded-2xl">
                 <CardHeader>
@@ -695,7 +709,8 @@ const AdminDashboard = () => {
                 </CardContent>
               </Card>
             )}
-          <Card className="border-border rounded-2xl">
+
+            <Card className="border-border rounded-2xl">
               <CardHeader>
                 <CardTitle>Cash Adjustment Reasons</CardTitle>
               </CardHeader>
@@ -724,11 +739,11 @@ const AdminDashboard = () => {
                   </div>
                 )}
               </CardContent>
-            </Card>    
+            </Card>
           </TabsContent>
 
           <TabsContent value="menu" className="space-y-6">
-               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               <Card className="border-border rounded-2xl">
                 <CardHeader>
                   <CardTitle>Import / Export Categories</CardTitle>
@@ -787,6 +802,7 @@ const AdminDashboard = () => {
                 </CardContent>
               </Card>
             </div>
+
             <Card className="border-border rounded-2xl">
               <CardHeader>
                 <CardTitle>Add Category</CardTitle>
@@ -881,63 +897,75 @@ const AdminDashboard = () => {
               </CardContent>
             </Card>
 
-           <div className="space-y-6">
-              {groupedMenuItems.map((category) => (
-                <Card key={category.category_id} className="border-border rounded-2xl">
-                  <CardHeader>
-                    <CardTitle>{category.name}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-fr">
-                      {category.items.map((item) => (
-                        <Card key={item.item_id} className="border-border rounded-2xl h-full" data-testid={`menu-item-card-${item.item_id}`}>
-                          {item.image && (
-                            <div className="h-32 overflow-hidden rounded-t-2xl">
-                              <img
-                                src={normalizeImageUrl(item.image)}
-                                alt={item.name}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = 'none';
-                                }}
-                              />
-                            </div>
-                          )}
-                          <CardContent className="p-4 space-y-3 h-full flex flex-col">
-                            <div className="min-w-0">
-                              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{category.name}</p>
-                              <h3 className="font-semibold text-lg break-words">{item.name}</h3>
-                              <p className="text-sm text-muted-foreground break-words min-h-10">{item.description || 'No description added'}</p>
-                            </div>
-                            <div className="flex items-center justify-between gap-3 mt-auto">
-                              <p className="text-xl font-bold text-primary">₹{item.price}</p>
-                              <div className="flex items-center gap-2">
-                                <Switch
-                                  checked={item.available}
-                                  onCheckedChange={() => toggleItemAvailability(item.item_id, item.available)}
-                                  data-testid={`toggle-available-${item.item_id}`}
-                                />
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  className="h-8 w-8 p-0 rounded-full"
-                                  onClick={() => deleteMenuItem(item.item_id)}
-                                  data-testid={`delete-item-${item.item_id}`}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-             </TabsContent>
-            {uncategorizedItems.length > 0 && (
+            <div className="space-y-4">
+              <Accordion
+                type="multiple"
+                value={openMenuCategories}
+                onValueChange={setOpenMenuCategories}
+                className="space-y-4"
+              >
+                {groupedMenuItems.map((category) => (
+                  <AccordionItem key={category.category_id} value={category.category_id} className="border-border rounded-2xl border bg-white px-5">
+                    <AccordionTrigger className="py-5 text-left no-underline hover:no-underline">
+                      <div className="flex min-w-0 flex-1 items-center justify-between gap-3 pr-4">
+                        <div>
+                          <p className="text-lg font-semibold">{category.name}</p>
+                          <p className="text-sm text-muted-foreground">{category.items.length} items</p>
+                        </div>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pb-5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-fr">
+                        {category.items.map((item) => {
+                          const showImage = item.image && !brokenMenuImages[item.item_id];
+                          return (
+                            <Card key={item.item_id} className="border-border rounded-2xl h-full" data-testid={`menu-item-card-${item.item_id}`}>
+                              {showImage && (
+                                <div className="h-20 overflow-hidden rounded-t-2xl bg-accent/40">
+                                  <img
+                                    src={normalizeImageUrl(item.image)}
+                                    alt={item.name}
+                                    className="h-full w-full object-cover"
+                                    onError={() => markMenuImageBroken(item.item_id)}
+                                  />
+                                </div>
+                              )}
+                              <CardContent className="p-4 space-y-3 h-full flex flex-col">
+                                <div className="min-w-0">
+                                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{category.name}</p>
+                                  <h3 className="font-semibold text-lg break-words">{item.name}</h3>
+                                  <p className="text-sm text-muted-foreground break-words min-h-10">{item.description || 'No description added'}</p>
+                                </div>
+                                <div className="flex items-center justify-between gap-3 mt-auto">
+                                  <p className="text-xl font-bold text-primary">₹{item.price}</p>
+                                  <div className="flex items-center gap-2">
+                                    <Switch
+                                      checked={item.available}
+                                      onCheckedChange={() => toggleItemAvailability(item.item_id, item.available)}
+                                      data-testid={`toggle-available-${item.item_id}`}
+                                    />
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      className="h-8 w-8 p-0 rounded-full"
+                                      onClick={() => deleteMenuItem(item.item_id)}
+                                      data-testid={`delete-item-${item.item_id}`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+
+              {uncategorizedItems.length > 0 && (
                 <Card className="border-border rounded-2xl">
                   <CardHeader>
                     <CardTitle>Uncategorized Items</CardTitle>
@@ -975,7 +1003,9 @@ const AdminDashboard = () => {
                   </CardContent>
                 </Card>
               )}
-           
+            </div>
+          </TabsContent>
+
           <TabsContent value="tables" className="space-y-6">
             <Card className="border-border rounded-2xl">
               <CardHeader>
@@ -1163,7 +1193,7 @@ const AdminDashboard = () => {
                       Optional. It will print on the bill only when provided.
                     </p>
                   </div>
-                 <div className="space-y-2 sm:col-span-2">
+                  <div className="space-y-2 sm:col-span-2">
                     <Label>Google Review Link</Label>
                     <Input
                       value={restaurantProfile.google_review_url}
@@ -1175,7 +1205,7 @@ const AdminDashboard = () => {
                     <p className="text-xs text-muted-foreground">
                       Customers will see this link after billing is completed.
                     </p>
-                  </div>        
+                  </div>
                 </div>
                 <Button
                   onClick={saveRestaurantProfile}
