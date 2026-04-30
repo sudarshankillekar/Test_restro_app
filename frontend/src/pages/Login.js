@@ -44,7 +44,9 @@ const Login = () => {
         navigate('/kitchen');
       } else if (user.role === 'billing') {
         navigate('/billing');
-      }
+      } else if (user.role === 'waiter') {
+        navigate('/waiter');
+      }  
     } catch (error) {
       const errorMsg = formatApiErrorDetail(error.response?.data?.detail) || error.message;
       toast.error(errorMsg);

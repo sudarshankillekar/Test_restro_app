@@ -17,6 +17,8 @@ import BillingDashboard from './pages/BillingDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import RestaurantRegistration from './pages/RestaurantRegistration';
+import WaiterDashboard from './pages/WaiterDashboard';
+
 
 function AppRouter() {
   const location = useLocation();
@@ -52,6 +54,14 @@ function AppRouter() {
         element={
           <ProtectedRoute allowedRoles={['billing', 'admin']}>
             <BillingDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+       path="/waiter"
+        element={
+          <ProtectedRoute allowedRoles={['waiter', 'admin']}>
+            <WaiterDashboard />
           </ProtectedRoute>
         }
       />

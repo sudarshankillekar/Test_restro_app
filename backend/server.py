@@ -145,7 +145,7 @@ async def get_restaurant_id_from_request(
     try:
         _, resolved_restaurant_id = await resolve_restaurant_access(
             request,
-            ["admin", "kitchen", "billing"],
+            ["admin", "kitchen", "billing", "waiter"],
         )
         return resolved_restaurant_id
     except HTTPException:
@@ -168,6 +168,7 @@ def build_date_match(start_date: Optional[str] = None, end_date: Optional[str] =
 def to_socket_payload(data):
     return jsonable_encoder(data)
 
+
 def normalize_excel_headers(row: list[str]) -> list[str]:
     return [str(value or "").strip().lower().replace(" ", "_") for value in row]
 
@@ -187,6 +188,7 @@ def parse_excel_objects(rows: list[list[str]]) -> list[dict]:
         if any(value for value in row_obj.values()):
             objects.append(row_obj)
     return objects
+
 
 async def build_transaction_summary(restaurant_id: str, created_at_filter: dict):
     payment_query = {"restaurant_id": restaurant_id, "status": "completed"}
@@ -299,16 +301,16 @@ def build_cors_origins() -> list[str]:
 # ============ Auth Endpoints ============
 @api_router.post("/auth/register")
 async def register(input: RegisterRequest, request: Request, response: Response):
-    """Register new staff user - ONLY restaurant admins can create kitchen/billing staff"""
+    """Register new staff user - ONLY restaurant admins can create kitchen/billing/waiter staff"""
     email = input.email.lower()
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Validate role - only kitchen and billing can be registered this way
+    # Validate role - only kitchen, billing, and waiter can be registered this way
     # Restaurant admins are created by super admin through restaurant creation
-    if input.role not in ["kitchen", "billing"]:
-        raise HTTPException(status_code=400, detail="Invalid role. Only kitchen and billing staff can be registered here.")
+    if input.role not in ["kitchen", "billing", "waiter"]:
+        raise HTTPException(status_code=400, detail="Invalid role. Only kitchen, billing, and waiter staff can be registered here.")
     
     hashed = hash_password(input.password)
     user_doc = {
@@ -744,7 +746,7 @@ async def get_my_subscription(request: Request):
 async def get_restaurant_profile(request: Request):
     """Restaurant admin/staff views their restaurant profile details"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing"]:
+    if user["role"] not in ["admin", "kitchen", "billing", "waiter"]:
         raise HTTPException(status_code=403, detail="Restaurant access required")
 
     restaurant_id = user.get("restaurant_id")
@@ -875,7 +877,7 @@ async def get_subscription_plans():
 
 @api_router.post("/admin/staff")
 async def create_staff(input: RegisterRequest, request: Request):
-    """Restaurant admin creates kitchen/billing staff"""
+    """Restaurant admin creates kitchen/billing/waiter staff"""
     user = await get_current_user(request, db)
     if user["role"] not in ["admin"]:
         raise HTTPException(status_code=403, detail="Restaurant admin access required")
@@ -887,9 +889,9 @@ async def create_staff(input: RegisterRequest, request: Request):
     
     await check_restaurant_subscription(db, restaurant_id)
     
-    # Validate role - admin can only create kitchen and billing
-    if input.role not in ["kitchen", "billing"]:
-        raise HTTPException(status_code=400, detail="Can only create kitchen or billing staff")
+    # Validate role - admin can only create kitchen, billing, and waiter
+    if input.role not in ["kitchen", "billing", "waiter"]:
+        raise HTTPException(status_code=400, detail="Can only create kitchen, billing, or waiter staff")
     
     # Check if email exists
     email = input.email.lower()
@@ -927,7 +929,7 @@ async def get_staff(request: Request):
     
     # Get all staff for this restaurant
     staff = await db.users.find(
-        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "billing"]}},
+        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "billing", "waiter"]}},
         {"_id": 0, "password_hash": 0}
     ).to_list(1000)
     
@@ -946,11 +948,11 @@ async def delete_staff(email: str, request: Request):
     
     await check_restaurant_subscription(db, restaurant_id)
     
-    # Delete staff (only kitchen/billing)
+    # Delete staff (only kitchen/billing/waiter)
     result = await db.users.delete_one({
         "email": email.lower(),
         "restaurant_id": restaurant_id,
-        "role": {"$in": ["kitchen", "billing"]}
+        "role": {"$in": ["kitchen", "billing", "waiter"]}
     })
     
     if result.deleted_count == 0:
@@ -1070,6 +1072,7 @@ async def create_category(input: CategoryCreate, request: Request):
     }
     await db.menu_categories.insert_one(cat_doc)
     return {k: v for k, v in cat_doc.items() if k != "_id"}
+
 
 @api_router.get("/menu/categories/export")
 async def export_menu_categories(request: Request):
@@ -1217,6 +1220,7 @@ async def create_menu_item(input: MenuItemCreate, request: Request):
     await db.menu_items.insert_one(item_doc)
     return {k: v for k, v in item_doc.items() if k != "_id"}
 
+
 @api_router.get("/menu/items/export")
 async def export_menu_items(request: Request):
     _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
@@ -1353,7 +1357,6 @@ async def import_menu_items(request: Request, file: UploadFile = File(...)):
         "created": created_count,
         "updated": updated_count,
     }
-
 
 @api_router.put("/menu/items/{item_id}")
 async def update_menu_item(item_id: str, input: MenuItemUpdate, request: Request):
@@ -1706,7 +1709,7 @@ async def create_order(input: OrderCreate):
 async def create_counter_order(input: CounterOrderCreate, request: Request):
     """Create dine-in or takeaway orders directly from the billing counter."""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing"]:
+    if user["role"] not in ["admin", "billing", "waiter"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     restaurant_id = user.get("restaurant_id")
@@ -1791,7 +1794,9 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         "add_on_to_order_id": latest_active_order["order_id"] if latest_active_order else None,
         "priority": "high" if latest_active_order and prioritized_add_on else "normal",
         "order_type": order_type,
-        "order_source": "billing_counter",
+        "order_source": "waiter" if user["role"] == "waiter" else "billing_counter",
+        "created_by_role": user["role"],
+        "created_by_name": user.get("name") or user.get("email"),
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
         "timestamps": {
@@ -1819,7 +1824,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
 async def get_orders(request: Request, status: str = None):
     """Get all orders (kitchen/billing dashboard - requires auth)"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing"]:
+    if user["role"] not in ["admin", "kitchen", "billing", "waiter"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Get restaurant_id for data isolation

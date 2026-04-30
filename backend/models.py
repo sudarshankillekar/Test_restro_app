@@ -10,7 +10,8 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     name: str
-    role: str = "admin"  # admin, kitchen, billing
+    role: str = "admin"  # admin, kitchen, billing, waiter
+
 
 class UserResponse(BaseModel):
     email: str

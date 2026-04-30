@@ -1120,6 +1120,7 @@ const AdminDashboard = () => {
                       <SelectContent>
                         <SelectItem value="kitchen">Kitchen Staff</SelectItem>
                         <SelectItem value="billing">Billing Counter</SelectItem>
+                        <SelectItem value="waiter">Waiter</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1143,7 +1144,11 @@ const AdminDashboard = () => {
                       <h3 className="font-semibold text-lg">{member.name}</h3>
                       <p className="text-sm text-muted-foreground">{member.email}</p>
                       <p className="text-xs text-muted-foreground mt-1 capitalize">
-                        {member.role === 'kitchen' ? 'Kitchen Staff' : 'Billing Counter'}
+                         {member.role === 'kitchen'
+                          ? 'Kitchen Staff'
+                          : member.role === 'billing'
+                            ? 'Billing Counter'
+                            : 'Waiter'}
                       </p>
                     </div>
                     <Button
