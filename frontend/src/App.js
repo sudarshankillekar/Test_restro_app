@@ -17,7 +17,7 @@ import BillingDashboard from './pages/BillingDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import RestaurantRegistration from './pages/RestaurantRegistration';
-import WaiterDashboard from './pages/WaiterDashboard';
+import WaiterDashboard from './pages/WaiterPage';
 
 
 function AppRouter() {
