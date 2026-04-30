@@ -111,12 +111,33 @@ const WaiterDashboard = () => {
   }, [menuItems, search, selectedCategory]);
 
   const groupedItems = useMemo(() => {
-    return categories
+    const grouped = categories
       .map((category) => ({
         ...category,
         items: filteredItems.filter((item) => item.category_id === category.category_id),
       }))
       .filter((category) => category.items.length > 0);
+       const uncategorizedItems = filteredItems.filter((item) => (
+      !categories.some((category) => category.category_id === item.category_id)
+    ));
+
+    if (uncategorizedItems.length > 0) {
+      grouped.push({
+        category_id: 'uncategorized',
+        name: 'More Items',
+        items: uncategorizedItems,
+      });
+    }
+
+    if (grouped.length === 0 && filteredItems.length > 0) {
+      return [{
+        category_id: 'all-items',
+        name: 'All Menu Items',
+        items: filteredItems,
+      }];
+    }
+
+    return grouped;
   }, [categories, filteredItems]);
 
   const activeOrders = useMemo(() => {
