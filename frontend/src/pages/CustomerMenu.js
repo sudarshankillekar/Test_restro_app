@@ -17,6 +17,7 @@ const CustomerMenu = () => {
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [brokenImages, setBrokenImages] = useState({});
 
   useEffect(() => {
     const sessionToken = localStorage.getItem('customer_session');
@@ -118,6 +119,10 @@ const CustomerMenu = () => {
     items: menuItems.filter((item) => item.category_id === category.category_id),
   })).filter((category) => category.items.length > 0);
 
+  const markImageBroken = (itemId) => {
+    setBrokenImages((prev) => ({ ...prev, [itemId]: true }));
+  };
+
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   if (loading) {
@@ -181,43 +186,46 @@ const CustomerMenu = () => {
               <AccordionContent className="pb-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {category.items.map((item) => (
-                    <Card
-                      key={item.item_id}
-                      className="overflow-hidden rounded-[24px] border border-border bg-[#FCFBF8] h-full"
-                      data-testid={`menu-item-${item.item_id}`}
-                    >
-                      {item.image && (
-                        <div className="h-44 overflow-hidden">
-                          <img
-                            src={normalizeImageUrl(item.image)}
-                            alt={item.name}
-                            className="h-full w-full object-cover"
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                            }}
-                          />
-                        </div>
-                      )}
-                      <div className="flex h-full flex-col gap-4 p-4">
-                        <div className="min-w-0">
-                          <h4 className="text-lg font-semibold break-words">{item.name}</h4>
-                          {item.description && (
-                            <p className="mt-1 text-sm text-muted-foreground break-words">{item.description}</p>
+                    (() => {
+                      const showImage = item.image && !brokenImages[item.item_id];
+                      return (
+                        <Card
+                          key={item.item_id}
+                          className="overflow-hidden rounded-[24px] border border-border bg-[#FCFBF8] h-full"
+                          data-testid={`menu-item-${item.item_id}`}
+                        >
+                          {showImage && (
+                            <div className="h-24 overflow-hidden bg-accent/40 sm:h-28">
+                              <img
+                                src={normalizeImageUrl(item.image)}
+                                alt={item.name}
+                                className="h-full w-full object-cover"
+                                onError={() => markImageBroken(item.item_id)}
+                              />
+                            </div>
                           )}
-                        </div>
-                        <div className="mt-auto flex items-center justify-between gap-3">
-                          <p className="text-2xl font-bold text-primary">₹{item.price}</p>
-                          <Button
-                            onClick={() => addToCart(item)}
-                            className="rounded-full bg-primary hover:bg-[#C54E2C] text-white"
-                            data-testid={`add-to-cart-${item.item_id}`}
-                          >
-                            <Plus className="mr-1 h-4 w-4" />
-                            Add
-                          </Button>
-                        </div>
-                      </div>
-                    </Card>
+                          <div className="flex h-full flex-col gap-3 p-4">
+                            <div className="min-w-0">
+                              <h4 className="text-lg font-semibold break-words">{item.name}</h4>
+                              {item.description && (
+                                <p className="mt-1 text-sm text-muted-foreground break-words">{item.description}</p>
+                              )}
+                            </div>
+                            <div className="mt-auto flex items-center justify-between gap-3">
+                              <p className="text-xl font-bold text-primary sm:text-2xl">₹{item.price}</p>
+                              <Button
+                                onClick={() => addToCart(item)}
+                                className="shrink-0 rounded-full bg-primary hover:bg-[#C54E2C] text-white"
+                                data-testid={`add-to-cart-${item.item_id}`}
+                              >
+                                <Plus className="mr-1 h-4 w-4" />
+                                Add
+                              </Button>
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    })()
                   ))}
                 </div>
               </AccordionContent>
