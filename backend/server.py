@@ -59,7 +59,9 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000"
+        "http://localhost:3000",
+        "https://dineflo.in",
+        "https://www.dineflo.in",
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
