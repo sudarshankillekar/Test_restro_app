@@ -200,11 +200,11 @@ const CustomerMenu = () => {
                           data-testid={`menu-item-${item.item_id}`}
                         >
                           {showImage && (
-                            <div className="h-24 overflow-hidden bg-accent/40 sm:h-28">
+                            <div className="flex h-28 items-center justify-center bg-accent/20 p-4 sm:h-32">
                               <img
                                 src={normalizeImageUrl(item.image)}
                                 alt={item.name}
-                                className="h-full w-full object-cover"
+                                className="h-full w-full object-contain"
                                 onError={() => markImageBroken(item.item_id)}
                               />
                             </div>
