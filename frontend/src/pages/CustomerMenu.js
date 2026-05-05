@@ -245,6 +245,43 @@ const CustomerMenu = () => {
                               </div>    
                             </div>
                           )}
+                             {!showImage && (
+                            <div className="flex justify-end px-3.5 pt-3.5">
+                              {getCartItem(item.item_id) ? (
+                                <div className="inline-flex items-center gap-1 rounded-full bg-white p-1 shadow-md">
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                    onClick={() => updateQuantity(item.item_id, -1)}
+                                    data-testid={`decrease-qty-${item.item_id}`}
+                                  >
+                                    <Minus className="h-3.5 w-3.5" />
+                                  </Button>
+                                  <span className="min-w-[1.25rem] text-center text-xs font-semibold text-primary">
+                                    {getCartItem(item.item_id)?.quantity || 0}
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                    onClick={() => addToCart(item)}
+                                    data-testid={`increase-qty-${item.item_id}`}
+                                  >
+                                    <Plus className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button
+                                  onClick={() => addToCart(item)}
+                                  className="h-9 rounded-full bg-primary px-4 text-sm text-white shadow-md hover:bg-[#C54E2C]"
+                                  data-testid={`add-to-cart-${item.item_id}`}
+                                >
+                                  Add
+                                </Button>
+                              )}
+                            </div>
+                          )}
                            <div className="flex flex-col gap-2 p-3.5">
                             <div className="min-w-0">
                               <h4 className="line-clamp-2 break-words text-base font-semibold leading-tight">{item.name}</h4>
