@@ -189,70 +189,70 @@ const CustomerMenu = () => {
                 </div>
               </AccordionTrigger>
               <AccordionContent className="pb-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                 <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
                   {category.items.map((item) => (
                     (() => {
                       const showImage = item.image && !brokenImages[item.item_id];
                       return (
                         <Card
                           key={item.item_id}
-                          className="overflow-hidden rounded-[24px] border border-border bg-[#FCFBF8]"
+                          className="overflow-hidden rounded-[22px] border border-border bg-[#FCFBF8] shadow-[0_8px_24px_rgba(0,0,0,0.05)]"
                           data-testid={`menu-item-${item.item_id}`}
                         >
                           {showImage && (
-                            <div className="flex h-28 items-center justify-center bg-accent/20 p-4 sm:h-32">
+                            <div className="relative h-36 overflow-hidden bg-accent/20 sm:h-40">
                               <img
                                 src={normalizeImageUrl(item.image)}
                                 alt={item.name}
-                                className="h-full w-full object-contain"
+                                className="h-full w-full object-cover"
                                 onError={() => markImageBroken(item.item_id)}
                               />
+                              <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/20 to-transparent" />
+                              <div className="absolute bottom-3 right-3">
+                                {getCartItem(item.item_id) ? (
+                                  <div className="inline-flex items-center gap-1 rounded-full bg-white/95 p-1 shadow-lg">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                      onClick={() => updateQuantity(item.item_id, -1)}
+                                      data-testid={`decrease-qty-${item.item_id}`}
+                                    >
+                                      <Minus className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <span className="min-w-[1.25rem] text-center text-xs font-semibold text-primary">
+                                      {getCartItem(item.item_id)?.quantity || 0}
+                                    </span>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                      onClick={() => addToCart(item)}
+                                      data-testid={`increase-qty-${item.item_id}`}
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <Button
+                                    onClick={() => addToCart(item)}
+                                    className="h-9 rounded-full bg-primary px-4 text-sm text-white shadow-lg hover:bg-[#C54E2C]"
+                                    data-testid={`add-to-cart-${item.item_id}`}
+                                  >
+                                    Add
+                                  </Button>
+                                )}
+                              </div>    
                             </div>
                           )}
-                           <div className="flex flex-col gap-3 p-4">
+                           <div className="flex flex-col gap-2 p-3.5">
                             <div className="min-w-0">
-                              <h4 className="text-lg font-semibold break-words">{item.name}</h4>
+                              <h4 className="line-clamp-2 break-words text-base font-semibold leading-tight">{item.name}</h4>
                               {item.description && (
-                                <p className="mt-1 text-sm text-muted-foreground break-words">{item.description}</p>
+                                <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground sm:text-sm">{item.description}</p>
                               )}
                             </div>
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-xl font-bold text-primary sm:text-2xl">₹{item.price}</p>
-                              {getCartItem(item.item_id) ? (
-                                <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 p-1">
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-8 w-8 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
-                                    onClick={() => updateQuantity(item.item_id, -1)}
-                                    data-testid={`decrease-qty-${item.item_id}`}
-                                  >
-                                    <Minus className="h-4 w-4" />
-                                  </Button>
-                                  <span className="min-w-[1.5rem] text-center text-sm font-semibold text-primary">
-                                    {getCartItem(item.item_id)?.quantity || 0}
-                                  </span>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-8 w-8 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
-                                    onClick={() => addToCart(item)}
-                                    data-testid={`increase-qty-${item.item_id}`}
-                                  >
-                                    <Plus className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              ) : (
-                                <Button
-                                  onClick={() => addToCart(item)}
-                                  className="shrink-0 rounded-full bg-primary hover:bg-[#C54E2C] text-white"
-                                  data-testid={`add-to-cart-${item.item_id}`}
-                                >
-                                  <Plus className="mr-1 h-4 w-4" />
-                                  Add
-                                </Button>
-                              )}
-                            </div>
+                        <p className="text-lg font-bold text-primary sm:text-xl">₹{item.price}</p>
                           </div>
                         </Card>
                       );
