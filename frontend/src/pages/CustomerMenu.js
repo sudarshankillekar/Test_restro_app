@@ -196,7 +196,7 @@ const CustomerMenu = () => {
                       return (
                         <Card
                           key={item.item_id}
-                          className="overflow-hidden rounded-[24px] border border-border bg-[#FCFBF8] h-full"
+                          className="overflow-hidden rounded-[24px] border border-border bg-[#FCFBF8]"
                           data-testid={`menu-item-${item.item_id}`}
                         >
                           {showImage && (
@@ -209,14 +209,14 @@ const CustomerMenu = () => {
                               />
                             </div>
                           )}
-                          <div className="flex h-full flex-col gap-3 p-4">
+                           <div className="flex flex-col gap-3 p-4">
                             <div className="min-w-0">
                               <h4 className="text-lg font-semibold break-words">{item.name}</h4>
                               {item.description && (
                                 <p className="mt-1 text-sm text-muted-foreground break-words">{item.description}</p>
                               )}
                             </div>
-                            <div className="mt-auto flex items-center justify-between gap-3">
+                            <div className="flex items-center justify-between gap-3">
                               <p className="text-xl font-bold text-primary sm:text-2xl">₹{item.price}</p>
                               {getCartItem(item.item_id) ? (
                                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 p-1">
