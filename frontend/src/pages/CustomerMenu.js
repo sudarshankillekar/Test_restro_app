@@ -4,6 +4,7 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
+import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '../components/ui/drawer';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { normalizeImageUrl } from '../lib/utils';
@@ -18,6 +19,7 @@ const CustomerMenu = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [brokenImages, setBrokenImages] = useState({});
+  const [cartOpen, setCartOpen] = useState(false);
 
   useEffect(() => {
     const sessionToken = localStorage.getItem('customer_session');
@@ -105,6 +107,7 @@ const CustomerMenu = () => {
         items: orderItems,
       });
 
+      setCartOpen(false);
       toast.success('Order placed successfully!');
       navigate(`/customer/order/${response.data.order_id}`);
     } catch (error) {
@@ -124,6 +127,8 @@ const CustomerMenu = () => {
   };
 
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const getCartItem = (itemId) => cart.find((item) => item.item_id === itemId);
 
   if (loading) {
     return (
@@ -134,7 +139,7 @@ const CustomerMenu = () => {
   }
 
   return (
-    <div className="min-h-screen pb-32" style={{ background: '#F9F8F6' }}>
+    <div className="min-h-screen pb-28 sm:pb-32" style={{ background: '#F9F8F6' }}>
       {/* Header */}
       <div className="bg-white border-b border-border sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
@@ -213,14 +218,40 @@ const CustomerMenu = () => {
                             </div>
                             <div className="mt-auto flex items-center justify-between gap-3">
                               <p className="text-xl font-bold text-primary sm:text-2xl">₹{item.price}</p>
-                              <Button
-                                onClick={() => addToCart(item)}
-                                className="shrink-0 rounded-full bg-primary hover:bg-[#C54E2C] text-white"
-                                data-testid={`add-to-cart-${item.item_id}`}
-                              >
-                                <Plus className="mr-1 h-4 w-4" />
-                                Add
-                              </Button>
+                              {getCartItem(item.item_id) ? (
+                                <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 p-1">
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-8 w-8 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                    onClick={() => updateQuantity(item.item_id, -1)}
+                                    data-testid={`decrease-qty-${item.item_id}`}
+                                  >
+                                    <Minus className="h-4 w-4" />
+                                  </Button>
+                                  <span className="min-w-[1.5rem] text-center text-sm font-semibold text-primary">
+                                    {getCartItem(item.item_id)?.quantity || 0}
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-8 w-8 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                    onClick={() => addToCart(item)}
+                                    data-testid={`increase-qty-${item.item_id}`}
+                                  >
+                                    <Plus className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button
+                                  onClick={() => addToCart(item)}
+                                  className="shrink-0 rounded-full bg-primary hover:bg-[#C54E2C] text-white"
+                                  data-testid={`add-to-cart-${item.item_id}`}
+                                >
+                                  <Plus className="mr-1 h-4 w-4" />
+                                  Add
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </Card>
@@ -245,60 +276,106 @@ const CustomerMenu = () => {
 
       {/* Sticky Cart */}
       {cart.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white/70 backdrop-blur-xl border-t border-border p-4 z-20">
-          <div className="max-w-6xl mx-auto">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <ShoppingCart className="w-5 h-5 text-primary" />
-                <span className="font-semibold">{cart.length} items</span>
-              </div>
-              <span className="text-2xl font-bold text-primary">₹{cartTotal.toFixed(2)}</span>
-            </div>
-            <div className="space-y-2 mb-4 max-h-32 overflow-y-auto">
-              {cart.map((item) => (
-                <div key={item.item_id} className="flex items-center justify-between bg-white rounded-xl p-2 border border-border">
-                  <span className="text-sm font-medium">{item.name}</span>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 w-7 p-0 rounded-full"
-                      onClick={() => updateQuantity(item.item_id, -1)}
-                      data-testid={`decrease-qty-${item.item_id}`}
-                    >
-                      <Minus className="w-3 h-3" />
-                    </Button>
-                    <span className="w-6 text-center font-semibold">{item.quantity}</span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 w-7 p-0 rounded-full"
-                      onClick={() => updateQuantity(item.item_id, 1)}
-                      data-testid={`increase-qty-${item.item_id}`}
-                    >
-                      <Plus className="w-3 h-3" />
-                    </Button>
+        <>
+          <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-border bg-white/75 p-4 backdrop-blur-xl">
+            <div className="mx-auto max-w-6xl">
+              <button
+                type="button"
+                onClick={() => setCartOpen(true)}
+                className="flex w-full items-center justify-between rounded-[22px] bg-primary px-5 py-4 text-left text-white shadow-[0_16px_40px_rgba(214,103,62,0.28)] transition-transform hover:translate-y-[-1px]"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15">
+                    <ShoppingCart className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-base font-semibold">{cartItemCount} item{cartItemCount === 1 ? '' : 's'} added</p>
+                    <p className="text-sm text-white/80">Tap to review your order</p>
                   </div>
                 </div>
-              ))}
+                <div className="text-right">
+                  <p className="text-lg font-bold">₹{cartTotal.toFixed(2)}</p>
+                  <p className="text-sm font-medium text-white/90">View cart</p>
+                </div>
+              </button>
             </div>
-            <Button
-              onClick={placeOrder}
-              disabled={submitting}
-              className="w-full rounded-full bg-primary hover:bg-[#C54E2C] text-white text-lg py-6"
-              data-testid="place-order-button"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Placing Order...
-                </>
-              ) : (
-                'Place Order'
-              )}
-            </Button>
           </div>
-        </div>
+
+          <Drawer open={cartOpen} onOpenChange={setCartOpen}>
+            <DrawerContent className="mx-auto max-h-[88dvh] max-w-3xl rounded-t-[28px] border-border bg-[#FCFBF8]">
+              <DrawerHeader className="border-b border-border px-5 pb-4 pt-2 text-left">
+                <DrawerTitle className="text-2xl font-bold tracking-tight">Your order</DrawerTitle>
+                <DrawerDescription>
+                  Review items, adjust quantity, and place your order.
+                </DrawerDescription>
+              </DrawerHeader>
+
+              <div className="max-h-[52dvh] space-y-3 overflow-y-auto px-5 py-4">
+                {cart.map((item) => (
+                  <div key={item.item_id} className="rounded-[22px] border border-border bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.04)]">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h4 className="break-words text-base font-semibold">{item.name}</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">₹{item.price} each</p>
+                      </div>
+                      <p className="shrink-0 text-lg font-bold text-primary">
+                        ₹{(item.price * item.quantity).toFixed(2)}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between gap-3">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 p-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                          onClick={() => updateQuantity(item.item_id, -1)}
+                        >
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                        <span className="min-w-[1.75rem] text-center text-sm font-semibold text-primary">{item.quantity}</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                          onClick={() => updateQuantity(item.item_id, 1)}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <DrawerFooter className="border-t border-border bg-white px-5 pb-5 pt-4">
+                <div className="mb-1 flex items-center justify-between text-sm text-muted-foreground">
+                  <span>{cartItemCount} item{cartItemCount === 1 ? '' : 's'}</span>
+                  <span>Total</span>
+                </div>
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="text-2xl font-bold tracking-tight">Order total</span>
+                  <span className="text-2xl font-bold text-primary">₹{cartTotal.toFixed(2)}</span>
+                </div>
+                <Button
+                  onClick={placeOrder}
+                  disabled={submitting}
+                  className="h-12 w-full rounded-full bg-primary text-base text-white hover:bg-[#C54E2C]"
+                  data-testid="place-order-button"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Placing Order...
+                    </>
+                  ) : (
+                    'Place Order'
+                  )}
+                </Button>
+              </DrawerFooter>
+            </DrawerContent>
+          </Drawer>
+        </>
       )}
     </div>
   );
