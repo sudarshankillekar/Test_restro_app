@@ -148,7 +148,7 @@ const WaiterDashboard = () => {
     () => cart.reduce((sum, item) => sum + item.quantity, 0),
     [cart]
   );
-
+  const getCartItem = (itemId) => cart.find((item) => item.item_id === itemId);
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
     [cart]
@@ -421,43 +421,102 @@ const WaiterDashboard = () => {
                     <CardTitle className="text-lg font-bold text-slate-900">{category.name}</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3">
+                     <div className="grid grid-cols-2 gap-4 2xl:grid-cols-3">
                       {category.items.map((item) => {
                         const imageUrl = normalizeImageUrl(item.image);
                         const imageBroken = item.item_id ? brokenImages[item.item_id] : false;
+                        const showImage = imageUrl && !imageBroken;
 
                         return (
                           <div
                             key={item.item_id}
-                            className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]"
+                            className="overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]"
                           >
-                            {imageUrl && !imageBroken && (
-                              <div className="h-24 overflow-hidden border-b border-slate-100 bg-slate-50">
+                             {showImage && (
+                              <div className="relative h-36 overflow-hidden bg-slate-50 sm:h-40">
                                 <img
                                   src={imageUrl}
                                   alt={item.name}
                                   className="h-full w-full object-cover"
                                   onError={() => setBrokenImages((prev) => ({ ...prev, [item.item_id]: true }))}
                                 />
+                                     <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/20 to-transparent" />
+                                <div className="absolute bottom-3 right-3">
+                                  {getCartItem(item.item_id) ? (
+                                    <div className="inline-flex items-center gap-1 rounded-full bg-white/95 p-1 shadow-lg">
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                        onClick={() => changeCartQuantity(item.item_id, -1)}
+                                      >
+                                        <Minus className="h-3.5 w-3.5" />
+                                      </Button>
+                                      <span className="min-w-[1.25rem] text-center text-xs font-semibold text-primary">
+                                        {getCartItem(item.item_id)?.quantity || 0}
+                                      </span>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                        onClick={() => addItemToCart(item)}
+                                      >
+                                        <Plus className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <Button
+                                      onClick={() => addItemToCart(item)}
+                                      className="h-9 rounded-full bg-primary px-4 text-sm text-white shadow-lg hover:bg-[#C54E2C]"
+                                    >
+                                      Add
+                                    </Button>
+                                  )}
+                                </div>
                               </div>
                             )}
-                            <div className="space-y-3 p-4">
+                             {!showImage && (
+                              <div className="flex justify-end px-3.5 pt-3.5">
+                                {getCartItem(item.item_id) ? (
+                                  <div className="inline-flex items-center gap-1 rounded-full bg-white p-1 shadow-md">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                      onClick={() => changeCartQuantity(item.item_id, -1)}
+                                    >
+                                      <Minus className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <span className="min-w-[1.25rem] text-center text-xs font-semibold text-primary">
+                                      {getCartItem(item.item_id)?.quantity || 0}
+                                    </span>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
+                                      onClick={() => addItemToCart(item)}
+                                    >
+                                      <Plus className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <Button
+                                    onClick={() => addItemToCart(item)}
+                                    className="h-9 rounded-full bg-primary px-4 text-sm text-white shadow-md hover:bg-[#C54E2C]"
+                                  >
+                                    Add
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                            <div className="space-y-2 p-3.5">
                               <div className="space-y-1">
-                                <h3 className="text-base font-bold text-slate-900">{item.name}</h3>
-                                <p className="line-clamp-2 min-h-[2.5rem] text-sm text-slate-500">
+                                <h3 className="line-clamp-2 text-base font-bold leading-tight text-slate-900">{item.name}</h3>
+                                <p className="line-clamp-2 min-h-[2.25rem] text-xs text-slate-500 sm:text-sm">
                                   {item.description || 'Freshly prepared for your guests.'}
                                 </p>
                               </div>
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-xl font-black text-primary">{formatCurrency(item.price)}</span>
-                                <Button
-                                  onClick={() => addItemToCart(item)}
-                                  className="h-10 rounded-full bg-primary px-4 font-semibold hover:bg-[#C54E2C]"
-                                >
-                                  <Plus className="mr-1 h-4 w-4" />
-                                  Add
-                                </Button>
-                              </div>
+                              <span className="text-lg font-black text-primary sm:text-xl">{formatCurrency(item.price)}</span>
                             </div>
                           </div>
                         );
