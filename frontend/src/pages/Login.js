@@ -70,7 +70,7 @@ const Login = () => {
               <ChefHat className="w-8 h-8 text-primary" />
             </div>
           </div>
-          <CardTitle className="text-3xl font-bold tracking-tight">Welcome to Dineflow</CardTitle>
+          <CardTitle className="text-3xl font-bold tracking-tight">Welcome to Dineflo</CardTitle>
           <CardDescription className="text-base">Sign in to access your dashboard</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
