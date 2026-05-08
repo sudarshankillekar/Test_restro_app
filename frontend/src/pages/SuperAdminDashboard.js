@@ -33,7 +33,7 @@ const SuperAdminDashboard = () => {
     owner_name: '',
     owner_email: '',
     owner_password: '',
-    plan: 'BASIC'
+    subscription_amount: ''
   });
 
   useEffect(() => {
@@ -71,10 +71,14 @@ const SuperAdminDashboard = () => {
     try {
       await api.post(
         `/api/super-admin/restaurants`,
-        newRestaurant
+        {
+          ...newRestaurant,
+          plan: 'CUSTOM',
+          subscription_amount: Number(newRestaurant.subscription_amount),
+        }
       );
       toast.success('Restaurant created successfully');
-      setNewRestaurant({ name: '', owner_name: '', owner_email: '', owner_password: '', plan: 'BASIC' });
+      setNewRestaurant({ name: '', owner_name: '', owner_email: '', owner_password: '', subscription_amount: '' });
       fetchRestaurants();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to create restaurant');
@@ -147,12 +151,22 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const getPlanColor = (plan) => {
-    switch (plan) {
-      case 'BASIC': return 'bg-blue-500';
-      case 'PRO': return 'bg-purple-500';
-      case 'PREMIUM': return 'bg-primary';
-      default: return 'bg-gray-500';
+  const getSubscriptionAmount = (restaurant) => {
+    if (Number(restaurant.subscription_amount || 0) > 0) {
+      return Number(restaurant.subscription_amount);
+    }
+
+    switch ((restaurant.plan || '').toUpperCase()) {
+      case 'BASIC':
+        return 1999;
+      case 'PRO':
+        return 2599;
+      case 'PREMIUM':
+        return 3000;
+      default:
+        return 0;
+    }
+  };
     }
   };
 
@@ -244,28 +258,7 @@ const SuperAdminDashboard = () => {
 
                 <Card className="border-border rounded-2xl">
                   <CardHeader>
-                    <CardTitle>Plan Distribution</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-                        <p className="text-sm text-muted-foreground">BASIC</p>
-                        <p className="text-3xl font-bold">{analytics.plan_distribution.BASIC}</p>
-                      </div>
-                      <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
-                        <p className="text-sm text-muted-foreground">PRO</p>
-                        <p className="text-3xl font-bold">{analytics.plan_distribution.PRO}</p>
-                      </div>
-                      <div className="p-4 bg-orange-50 rounded-xl border border-orange-200">
-                        <p className="text-sm text-muted-foreground">PREMIUM</p>
-                        <p className="text-3xl font-bold">{analytics.plan_distribution.PREMIUM}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="border-border rounded-2xl">
-                  <CardHeader>
+                   
                     <CardTitle>Export Sales</CardTitle>
                   </CardHeader>
                   <CardContent className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -357,17 +350,17 @@ const SuperAdminDashboard = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Plan</Label>
-                    <Select value={newRestaurant.plan} onValueChange={(val) => setNewRestaurant({ ...newRestaurant, plan: val })}>
-                      <SelectTrigger className="rounded-full" data-testid="plan-select">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="BASIC">BASIC - ₹1999/mo</SelectItem>
-                        <SelectItem value="PRO">PRO - ₹2599/mo</SelectItem>
-                        <SelectItem value="PREMIUM">PREMIUM - ₹3000/mo</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label>Subscription Amount</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="0.01"
+                      value={newRestaurant.subscription_amount}
+                      onChange={(e) => setNewRestaurant({ ...newRestaurant, subscription_amount: e.target.value })}
+                      className="rounded-full"
+                      placeholder="Enter custom monthly amount"
+                      data-testid="subscription-amount-input"
+                    />
                   </div>
                 </div>
                 <Button
@@ -391,8 +384,8 @@ const SuperAdminDashboard = () => {
                           <Badge className={`${getStatusColor(restaurant.status)} text-white rounded-md`}>
                             {restaurant.status}
                           </Badge>
-                          <Badge className={`${getPlanColor(restaurant.plan)} text-white rounded-md`}>
-                            {restaurant.plan}
+                          <Badge className="rounded-md bg-primary text-white">
+                            ₹{getSubscriptionAmount(restaurant).toLocaleString()} / month
                           </Badge>
                           {restaurant.approval_pending && (
                             <Badge className="bg-yellow-500 text-white rounded-md">
