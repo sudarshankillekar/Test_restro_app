@@ -24,12 +24,15 @@ class RestaurantCreate(BaseModel):
     owner_name: str
     owner_email: str
     owner_password: str
-    plan: str = "BASIC"  # BASIC, PRO, PREMIUM
+    plan: Optional[str] = "CUSTOM"
+    subscription_amount: Optional[float] = None
+
 
 class RestaurantUpdate(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None  # ACTIVE, SUSPENDED, EXPIRED
     plan: Optional[str] = None
+    subscription_amount: Optional[float] = None
     gst_number: Optional[str] = None
 
 class RestaurantProfileUpdate(BaseModel):
@@ -37,7 +40,7 @@ class RestaurantProfileUpdate(BaseModel):
     google_review_url: Optional[str] = None
     
 class SubscriptionRenew(BaseModel):
-    plan: str
+    plan: Optional[str] = None
     payment_method: str  # upi, card, cash
 
 class CategoryCreate(BaseModel):
