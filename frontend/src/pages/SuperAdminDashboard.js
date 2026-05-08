@@ -462,6 +462,6 @@ const SuperAdminDashboard = () => {
       </div>
     </div>
   );
-};
+
 
 export default SuperAdminDashboard;
