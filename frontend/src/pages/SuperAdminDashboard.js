@@ -168,7 +168,7 @@ const SuperAdminDashboard = () => {
     }
   };
     }
-  };
+  
 
   return (
     <div className="min-h-screen" style={{ background: '#F3F4F6' }}>
