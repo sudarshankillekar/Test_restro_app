@@ -28,7 +28,7 @@ from subscription import (
     check_restaurant_subscription, get_restaurant_from_user,
     create_subscription_log, create_notification,
     check_and_expire_subscriptions, send_expiry_reminders,
-    SUBSCRIPTION_PLANS
+    SUBSCRIPTION_PLANS, get_subscription_terms
 )
 from models import (
     LoginRequest, RegisterRequest, UserResponse, MenuItemCreate, MenuItemUpdate,
@@ -476,19 +476,23 @@ async def create_restaurant_super(input: RestaurantCreate, request: Request):
     existing = await db.users.find_one({"email": input.owner_email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+    subscription_amount = float(input.subscription_amount or 0)
+    if subscription_amount <= 0:
+        raise HTTPException(status_code=400, detail="Please enter a valid custom subscription amount.")  
     
     # Create restaurant
     restaurant_id = f"rest_{secrets.token_hex(8)}"
-    plan_info = SUBSCRIPTION_PLANS.get(input.plan, SUBSCRIPTION_PLANS["BASIC"])
+    subscription_terms = get_subscription_terms(input.plan, subscription_amount)
     
     restaurant_doc = {
         "restaurant_id": restaurant_id,
         "name": input.name,
         "owner_email": input.owner_email.lower(),
         "status": "ACTIVE",
-        "plan": input.plan,
+        "plan": subscription_terms["name"],
+        "subscription_amount": subscription_terms["price"],
         "subscriptionStart": datetime.now(timezone.utc),
-        "subscriptionEnd": datetime.now(timezone.utc) + timedelta(days=plan_info["duration_days"]),
+        "subscriptionEnd": datetime.now(timezone.utc) + timedelta(days=subscription_terms["duration_days"]),
         "paymentStatus": "PAID",
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc)
@@ -510,7 +514,7 @@ async def create_restaurant_super(input: RestaurantCreate, request: Request):
     # Create subscription log
     await create_subscription_log(
         db, restaurant_id, "RESTAURANT_CREATED",
-        {"plan": input.plan, "created_by": "super_admin"},
+        {"plan": subscription_terms["name"], "subscription_amount": subscription_terms["price"], "created_by": "super_admin"},
         user["_id"]
     )
     
@@ -533,6 +537,7 @@ async def register_restaurant(input: RestaurantCreate):
         "owner_email": input.owner_email.lower(),
         "status": "SUSPENDED",  # Pending approval
         "plan": input.plan,
+        "subscription_amount": get_subscription_terms(input.plan).get("price", 0),
         "subscriptionStart": None,
         "subscriptionEnd": None,
         "paymentStatus": "PENDING",
@@ -593,20 +598,28 @@ async def update_restaurant_super(restaurant_id: str, input: RestaurantUpdate, r
         raise HTTPException(status_code=404, detail="Restaurant not found")
     
     update_data = {k: v for k, v in input.model_dump().items() if v is not None}
+    if "subscription_amount" in update_data:
+        update_data["subscription_amount"] = float(update_data["subscription_amount"] or 0)
+        if update_data["subscription_amount"] <= 0:
+            raise HTTPException(status_code=400, detail="Please enter a valid custom subscription amount.")
+        update_data["plan"] = "CUSTOM"
     update_data["updated_at"] = datetime.now(timezone.utc)
     
     # If activating a pending restaurant
     if update_data.get("status") == "ACTIVE" and restaurant.get("approval_pending"):
-        plan_info = SUBSCRIPTION_PLANS.get(restaurant["plan"], SUBSCRIPTION_PLANS["BASIC"])
+        next_amount = update_data.get("subscription_amount", restaurant.get("subscription_amount"))
+        subscription_terms = get_subscription_terms(update_data.get("plan", restaurant.get("plan")), next_amount)
         update_data["subscriptionStart"] = datetime.now(timezone.utc)
-        update_data["subscriptionEnd"] = datetime.now(timezone.utc) + timedelta(days=plan_info["duration_days"])
+        update_data["subscriptionEnd"] = datetime.now(timezone.utc) + timedelta(days=subscription_terms["duration_days"])
         update_data["paymentStatus"] = "PAID"
         update_data["approval_pending"] = False
+        update_data["plan"] = subscription_terms["name"]
+        update_data["subscription_amount"] = subscription_terms["price"]
         
         # Create notification
         await create_notification(
             db, restaurant_id, "RESTAURANT_APPROVED",
-            f"Your restaurant has been approved! Your {restaurant['plan']} subscription is now active."
+            "Your restaurant has been approved! Your subscription is now active."
         )
     
     await db.restaurants.update_one(
@@ -695,14 +708,10 @@ async def super_admin_analytics(request: Request):
     mrr = 0
     cursor = db.restaurants.find({"status": "ACTIVE"})
     async for rest in cursor:
-        plan_price = SUBSCRIPTION_PLANS.get(rest["plan"], SUBSCRIPTION_PLANS["BASIC"])["price"]
-        mrr += plan_price
+        subscription_terms = get_subscription_terms(rest.get("plan"), rest.get("subscription_amount"))
+        mrr += subscription_terms["price"]
     
-    # Plan distribution
-    plan_distribution = {}
-    for plan in ["BASIC", "PRO", "PREMIUM"]:
-        count = await db.restaurants.count_documents({"plan": plan})
-        plan_distribution[plan] = count
+   
     
     return {
         "total_restaurants": total_restaurants,
@@ -711,8 +720,7 @@ async def super_admin_analytics(request: Request):
         "expired_restaurants": expired_restaurants,
         "pending_approval": pending_approval,
         "total_revenue": total_revenue,
-        "mrr": mrr,
-        "plan_distribution": plan_distribution
+        "mrr": mrr
     }
 
 # ============ Restaurant Owner Subscription Management ============
@@ -741,7 +749,7 @@ async def get_my_subscription(request: Request):
     return {
         "restaurant": restaurant,
         "notifications": notifications,
-        "plan_details": SUBSCRIPTION_PLANS.get(restaurant["plan"])
+        "plan_details": get_subscription_terms(restaurant.get("plan"), restaurant.get("subscription_amount"))
     }
 
 @api_router.get("/restaurant/profile")
@@ -815,20 +823,24 @@ async def renew_subscription(input: SubscriptionRenew, request: Request):
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
     
-    # Get plan details
-    plan_info = SUBSCRIPTION_PLANS.get(input.plan)
-    if not plan_info:
-        raise HTTPException(status_code=400, detail="Invalid plan")
+    selected_plan = (input.plan or restaurant.get("plan") or "").strip().upper()
+    custom_amount = restaurant.get("subscription_amount")
+    if selected_plan in SUBSCRIPTION_PLANS:
+        subscription_terms = get_subscription_terms(selected_plan)
+    else:
+        subscription_terms = get_subscription_terms("CUSTOM", custom_amount)
+        if subscription_terms["price"] <= 0:
+            raise HTTPException(status_code=400, detail="Subscription amount is not configured for this restaurant.")
     
     # Mock payment processing (in production, integrate actual gateway)
     payment_id = f"pay_{secrets.token_hex(8)}"
     payment_doc = {
         "payment_id": payment_id,
         "restaurant_id": restaurant_id,
-        "amount": plan_info["price"],
+        "amount": subscription_terms["price"],
         "payment_type": "SUBSCRIPTION",
         "payment_method": input.payment_method,
-        "plan": input.plan,
+        "plan": subscription_terms["name"],
         "status": "SUCCESS",
         "created_at": datetime.now(timezone.utc)
     }
@@ -836,13 +848,14 @@ async def renew_subscription(input: SubscriptionRenew, request: Request):
     
     # Update subscription
     subscription_start = datetime.now(timezone.utc)
-    subscription_end = subscription_start + timedelta(days=plan_info["duration_days"])
+    subscription_end = subscription_start + timedelta(days=subscription_terms["duration_days"])
     
     await db.restaurants.update_one(
         {"restaurant_id": restaurant_id},
         {"$set": {
             "status": "ACTIVE",
-            "plan": input.plan,
+            "plan": subscription_terms["name"],
+            "subscription_amount": subscription_terms["price"],
             "subscriptionStart": subscription_start,
             "subscriptionEnd": subscription_end,
             "paymentStatus": "PAID",
@@ -853,14 +866,14 @@ async def renew_subscription(input: SubscriptionRenew, request: Request):
     # Create log
     await create_subscription_log(
         db, restaurant_id, "SUBSCRIPTION_RENEWED",
-        {"plan": input.plan, "amount": plan_info["price"], "payment_id": payment_id},
+        {"plan": subscription_terms["name"], "amount": subscription_terms["price"], "payment_id": payment_id},
         user["_id"]
     )
     
     # Create notification
     await create_notification(
         db, restaurant_id, "SUBSCRIPTION_RENEWED",
-        f"Your {input.plan} subscription has been renewed successfully. Valid until {subscription_end.strftime('%Y-%m-%d')}."
+         f"Your subscription has been renewed successfully. Valid until {subscription_end.strftime('%Y-%m-%d')}."
     )
     
     return {
