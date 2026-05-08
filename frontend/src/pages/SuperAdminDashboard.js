@@ -167,8 +167,6 @@ const SuperAdminDashboard = () => {
         return 0;
     }
   };
-    }
-  
 
   return (
     <div className="min-h-screen" style={{ background: '#F3F4F6' }}>
@@ -255,10 +253,8 @@ const SuperAdminDashboard = () => {
                     </CardContent>
                   </Card>
                 </div>
-
                 <Card className="border-border rounded-2xl">
                   <CardHeader>
-                   
                     <CardTitle>Export Sales</CardTitle>
                   </CardHeader>
                   <CardContent className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -462,6 +458,6 @@ const SuperAdminDashboard = () => {
       </div>
     </div>
   );
-
+};
 
 export default SuperAdminDashboard;
