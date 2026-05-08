@@ -22,7 +22,30 @@ SUBSCRIPTION_PLANS = {
         "features": ["All features", "Priority support", "Custom branding", "API access", "Advanced reports"]
     }
 }
+DEFAULT_SUBSCRIPTION_DAYS = 30
 
+
+def get_subscription_terms(plan: str | None = None, custom_amount: float | None = None) -> dict:
+    normalized_plan = (plan or "").strip().upper()
+    if normalized_plan in SUBSCRIPTION_PLANS:
+        plan_info = SUBSCRIPTION_PLANS[normalized_plan]
+        return {
+            "name": normalized_plan,
+            "display_name": plan_info["name"],
+            "price": float(plan_info["price"]),
+            "duration_days": plan_info["duration_days"],
+            "features": plan_info.get("features", []),
+        }
+
+    amount = float(custom_amount or 0)
+    return {
+        "name": "CUSTOM",
+        "display_name": "Custom",
+        "price": amount,
+        "duration_days": DEFAULT_SUBSCRIPTION_DAYS,
+        "features": ["Custom subscription amount set by super admin"],
+    }
+    
 async def check_restaurant_subscription(db, restaurant_id: str) -> dict:
     """Check if restaurant subscription is active"""
     restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
