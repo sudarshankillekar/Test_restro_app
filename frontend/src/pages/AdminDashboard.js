@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizeImageUrl } from '../lib/utils';
-import { ChefHat, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload } from 'lucide-react';
+import { ChefHat, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload, Pencil } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
@@ -48,6 +48,13 @@ const AdminDashboard = () => {
   const [itemImporting, setItemImporting] = useState(false);
   const [openMenuCategories, setOpenMenuCategories] = useState([]);
   const [brokenMenuImages, setBrokenMenuImages] = useState({});
+  const [editingMenuItem, setEditingMenuItem] = useState(null);
+  const [editingMenuItemDraft, setEditingMenuItemDraft] = useState({
+    name: '',
+    price: '',
+    description: '',
+    image: '',
+  });
   
   // Tables state
   const [tables, setTables] = useState([]);
@@ -260,6 +267,43 @@ const AdminDashboard = () => {
     }
   };
 
+  const startEditMenuItem = (item) => {
+    setEditingMenuItem(item);
+    setEditingMenuItemDraft({
+      name: item.name || '',
+      price: String(item.price ?? ''),
+      description: item.description || '',
+      image: item.image || '',
+    });
+  };
+
+  const saveMenuItemEdit = async () => {
+    if (!editingMenuItem) return;
+    if (!editingMenuItemDraft.name.trim()) {
+      toast.error('Please enter an item name.');
+      return;
+    }
+    if (!editingMenuItemDraft.price || Number(editingMenuItemDraft.price) <= 0) {
+      toast.error('Please enter a valid item price.');
+      return;
+    }
+
+    try {
+      await api.put(`/api/menu/items/${editingMenuItem.item_id}`, {
+        name: editingMenuItemDraft.name.trim(),
+        price: parseFloat(editingMenuItemDraft.price),
+        description: editingMenuItemDraft.description,
+        image: editingMenuItemDraft.image,
+      });
+      toast.success('Menu item updated');
+      setEditingMenuItem(null);
+      fetchMenu();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to update menu item'));
+    }
+  };
+
+  
   const createTable = async () => {
     if (!newTableNumber.trim()) {
       toast.error('Please add one table number to create QR code.');
@@ -946,6 +990,15 @@ const AdminDashboard = () => {
                                     />
                                     <Button
                                       size="sm"
+                                       variant="outline"
+                                      className="h-8 w-8 p-0 rounded-full"
+                                      onClick={() => startEditMenuItem(item)}
+                                      data-testid={`edit-item-${item.item_id}`}
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
                                       variant="destructive"
                                       className="h-8 w-8 p-0 rounded-full"
                                       onClick={() => deleteMenuItem(item.item_id)}
@@ -1224,6 +1277,61 @@ const AdminDashboard = () => {
           </TabsContent>
         </Tabs>
       </div>
+        <Dialog open={Boolean(editingMenuItem)} onOpenChange={(open) => {
+        if (!open) {
+          setEditingMenuItem(null);
+        }
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Menu Item</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input
+                value={editingMenuItemDraft.name}
+                onChange={(e) => setEditingMenuItemDraft({ ...editingMenuItemDraft, name: e.target.value })}
+                className="rounded-full"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Price</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={editingMenuItemDraft.price}
+                onChange={(e) => setEditingMenuItemDraft({ ...editingMenuItemDraft, price: e.target.value })}
+                className="rounded-full"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Image URL</Label>
+              <Input
+                value={editingMenuItemDraft.image}
+                onChange={(e) => setEditingMenuItemDraft({ ...editingMenuItemDraft, image: e.target.value })}
+                className="rounded-full"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Input
+                value={editingMenuItemDraft.description}
+                onChange={(e) => setEditingMenuItemDraft({ ...editingMenuItemDraft, description: e.target.value })}
+                className="rounded-full"
+                placeholder="Optional"
+              />
+            </div>
+            <Button
+              onClick={saveMenuItemEdit}
+              className="w-full rounded-full bg-primary hover:bg-[#C54E2C]"
+            >
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>             
     </div>
   );
 };
