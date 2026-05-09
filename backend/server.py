@@ -2416,6 +2416,7 @@ async def export_sales_data(
             order.get("table_number") or "",
             items_summary,
             round(order.get("payment", {}).get("total", order.get("total", 0)), 2),
+            (order.get("payment", {}).get("payment_method") or "").upper(),
             order.get("payment_status", "pending"),
         ])
 
@@ -2427,6 +2428,7 @@ async def export_sales_data(
             "Table Number",
             "Items Ordered",
             "Total Amount",
+            "Payment Mode",
             "Payment Status",
         ],
         rows=rows,
