@@ -73,6 +73,7 @@ const AdminDashboard = () => {
     name: '',
     gst_number: '',
     google_review_url: '',
+    customer_logo_url: '',
   });
 
   useEffect(() => {
@@ -385,6 +386,7 @@ const AdminDashboard = () => {
         name: response.data.name || '',
         gst_number: response.data.gst_number || '',
         google_review_url: response.data.google_review_url || '',
+        customer_logo_url: response.data.customer_logo_url || '',
       });
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to load restaurant settings'));
@@ -398,12 +400,14 @@ const AdminDashboard = () => {
         {
           gst_number: restaurantProfile.gst_number.trim(),
           google_review_url: restaurantProfile.google_review_url.trim(),
+          customer_logo_url: restaurantProfile.customer_logo_url.trim(),
         }
       );
       setRestaurantProfile({
         name: response.data.name || '',
         gst_number: response.data.gst_number || '',
         google_review_url: response.data.google_review_url || '',
+        customer_logo_url: response.data.customer_logo_url || '',
       });
       toast.success('Restaurant settings updated');
     } catch (error) {
@@ -1252,6 +1256,19 @@ const AdminDashboard = () => {
                     </p>
                   </div>
                   <div className="space-y-2 sm:col-span-2">
+                      <Label>Customer Logo URL</Label>
+                    <Input
+                      value={restaurantProfile.customer_logo_url}
+                      onChange={(e) => setRestaurantProfile((prev) => ({ ...prev, customer_logo_url: e.target.value }))}
+                      className="rounded-full"
+                      placeholder="Paste the customer-facing logo URL"
+                      data-testid="restaurant-customer-logo-input"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      This logo will be shown on the QR customer name and phone screen.
+                    </p>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">   
                     <Label>Google Review Link</Label>
                     <Input
                       value={restaurantProfile.google_review_url}
