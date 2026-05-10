@@ -38,6 +38,7 @@ class RestaurantUpdate(BaseModel):
 class RestaurantProfileUpdate(BaseModel):
     gst_number: Optional[str] = None
     google_review_url: Optional[str] = None
+    customer_logo_url: Optional[str] = None
     
 class SubscriptionRenew(BaseModel):
     plan: Optional[str] = None
