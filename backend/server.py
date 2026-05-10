@@ -765,7 +765,7 @@ async def get_restaurant_profile(request: Request):
 
     restaurant = await db.restaurants.find_one(
         {"restaurant_id": restaurant_id},
-        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1}
+        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1, "customer_logo_url": 1}
     )
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -785,29 +785,51 @@ async def update_restaurant_profile(input: RestaurantProfileUpdate, request: Req
 
     gst_number = (input.gst_number or "").strip() or None
     google_review_url = (input.google_review_url or "").strip() or None
+    customer_logo_url = (input.customer_logo_url or "").strip() or None
     if gst_number and len(gst_number) > 30:
         raise HTTPException(status_code=400, detail="GST number must be 30 characters or fewer.")
     if google_review_url and not google_review_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Google review link must start with http:// or https://")
+    if customer_logo_url and not customer_logo_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Customer logo URL must start with http:// or https://")    
 
     await db.restaurants.update_one(
         {"restaurant_id": restaurant_id},
         {"$set": {
             "gst_number": gst_number,
             "google_review_url": google_review_url,
+            "customer_logo_url": customer_logo_url,
             "updated_at": datetime.now(timezone.utc)
         }}
     )
 
     updated_restaurant = await db.restaurants.find_one(
         {"restaurant_id": restaurant_id},
-        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1}
+        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1, "customer_logo_url": 1}
     )
     if not updated_restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
     return updated_restaurant
 
+@api_router.get("/customer/table/{table_id}/branding")
+async def get_customer_table_branding(table_id: str):
+    table = await db.tables.find_one({"table_id": table_id}, {"_id": 0, "restaurant_id": 1})
+    if not table or not table.get("restaurant_id"):
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    restaurant = await db.restaurants.find_one(
+        {"restaurant_id": table["restaurant_id"]},
+        {"_id": 0, "name": 1, "customer_logo_url": 1}
+    )
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    return {
+        "restaurant_name": restaurant.get("name") or "",
+        "customer_logo_url": restaurant.get("customer_logo_url") or "",
+    }
+    
 @api_router.post("/restaurant/subscription/renew")
 async def renew_subscription(input: SubscriptionRenew, request: Request):
     """Restaurant owner renews subscription"""
