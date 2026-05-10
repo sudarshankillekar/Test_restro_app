@@ -20,6 +20,7 @@ const CustomerMenu = () => {
   const [submitting, setSubmitting] = useState(false);
   const [brokenImages, setBrokenImages] = useState({});
   const [cartOpen, setCartOpen] = useState(false);
+  const [expandedDescriptions, setExpandedDescriptions] = useState({});
 
   useEffect(() => {
     const sessionToken = localStorage.getItem('customer_session');
@@ -126,6 +127,9 @@ const CustomerMenu = () => {
     setBrokenImages((prev) => ({ ...prev, [itemId]: true }));
   };
 
+  const toggleDescription = (itemId) => {
+    setExpandedDescriptions((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  };
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const getCartItem = (itemId) => cart.find((item) => item.item_id === itemId);
@@ -193,6 +197,8 @@ const CustomerMenu = () => {
                   {category.items.map((item) => (
                     (() => {
                       const showImage = item.image && !brokenImages[item.item_id];
+                      const hasLongDescription = item.description && item.description.trim().length > 72;
+                      const isDescriptionExpanded = !!expandedDescriptions[item.item_id];
                       return (
                         <Card
                           key={item.item_id}
@@ -286,7 +292,25 @@ const CustomerMenu = () => {
                             <div className="min-w-0">
                               <h4 className="line-clamp-2 break-words text-base font-semibold leading-tight">{item.name}</h4>
                               {item.description && (
-                                <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground sm:text-sm">{item.description}</p>
+                                 <div className="mt-1 space-y-1.5">
+                                  <p
+                                    className={`break-words text-xs leading-5 text-muted-foreground sm:text-sm ${
+                                      isDescriptionExpanded ? '' : 'line-clamp-2'
+                                    }`}
+                                  >
+                                    {item.description}
+                                  </p>
+                                  {hasLongDescription && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleDescription(item.item_id)}
+                                      className="text-xs font-semibold text-primary transition-colors hover:text-[#C54E2C]"
+                                      data-testid={`toggle-description-${item.item_id}`}
+                                    >
+                                      {isDescriptionExpanded ? 'Less' : 'More'}
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
                         <p className="text-lg font-bold text-primary sm:text-xl">₹{item.price}</p>
