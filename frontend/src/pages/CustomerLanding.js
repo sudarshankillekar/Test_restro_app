@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { normalizeImageUrl } from '../lib/utils';
 
 const CustomerLanding = () => {
   const { tableId } = useParams();
@@ -15,6 +16,26 @@ const CustomerLanding = () => {
   const [phone, setPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+   const [branding, setBranding] = useState({
+    restaurant_name: '',
+    customer_logo_url: '',
+  });
+
+  useEffect(() => {
+    const loadBranding = async () => {
+      try {
+        const response = await api.get(`/api/customer/table/${tableId}/branding`);
+        setBranding({
+          restaurant_name: response.data.restaurant_name || '',
+          customer_logo_url: response.data.customer_logo_url || '',
+        });
+      } catch (error) {
+        setBranding({ restaurant_name: '', customer_logo_url: '' });
+      }
+    };
+
+    loadBranding();
+  }, [tableId]);
 
   useEffect(() => {
     const verifyExistingSession = async () => {
@@ -92,13 +113,26 @@ const CustomerLanding = () => {
       <div className="mx-auto max-w-lg">
         <Card className="rounded-[32px] border-border shadow-[0_16px_48px_rgba(0,0,0,0.07)]">
           <CardHeader className="space-y-4 text-center">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-              <QrCode className="h-8 w-8 text-primary" />
-            </div>
+                        {branding.customer_logo_url ? (
+              <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full border-2 border-primary/20 bg-white p-2 shadow-[0_10px_26px_rgba(0,0,0,0.06)]">
+                <img
+                  src={normalizeImageUrl(branding.customer_logo_url)}
+                  alt={branding.restaurant_name || 'Restaurant logo'}
+                  className="h-full w-full rounded-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                <QrCode className="h-8 w-8 text-primary" />
+              </div>
+            )}
+
             <div className="space-y-1">
-              <CardTitle className="text-3xl tracking-tight">Start Your Order</CardTitle>
+              <CardTitle className="text-2xl tracking-tight">
+                 {'Welcome to '+ branding.restaurant_name || 'Start Your Order'}
+              </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Scan successful for <span className="font-medium">Table {tableId}</span>. Enter your details to open the menu.
+                 Scan successful. Enter your details to open the menu.
               </p>
             </div>
           </CardHeader>
