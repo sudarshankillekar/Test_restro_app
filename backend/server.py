@@ -1761,8 +1761,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
 
     customer_name = (input.customer_name or "").strip()
     phone = (input.phone or "").strip()
-    if not customer_name:
-        raise HTTPException(status_code=400, detail="Please enter customer name.")
+    display_customer_name = customer_name or ("Takeaway Customer" if order_type == "takeaway" else "Walk-in Customer")
     if not input.items:
         raise HTTPException(status_code=400, detail="Please add at least one item.")
 
@@ -1782,7 +1781,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         table_label = f"Table {table_number}" if table_number is not None else table_id
     else:
         table_id = f"takeaway_{secrets.token_hex(6)}"
-        table_label = f"Takeaway {customer_name}"
+        table_label = f"Takeaway {display_customer_name}"
 
     existing_active_orders = await db.orders.find({
         "table_id": table_id,
@@ -1821,7 +1820,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         "table_number": table_number,
         "table_label": table_label,
         "restaurant_id": restaurant_id,
-        "customer_name": customer_name,
+        "customer_name": display_customer_name,
         "phone": phone,
         "items": order_items,
         "total": round(total, 2),
@@ -1841,7 +1840,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         }
     }
     await db.orders.insert_one(order_doc)
-    await upsert_customer_record(restaurant_id, customer_name, phone)
+    await upsert_customer_record(restaurant_id, display_customer_name, phone)
 
     created_order = (await enrich_orders([{k: v for k, v in order_doc.items() if k != "_id"}]))[0]
 
