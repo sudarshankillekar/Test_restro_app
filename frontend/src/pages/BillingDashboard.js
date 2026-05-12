@@ -442,10 +442,7 @@ const BillingDashboard = () => {
   };
 
   const submitCounterOrder = async (shouldPrint = false) => {
-    if (!counterCustomerName.trim()) {
-      toast.error('Please enter customer name.');
-      return;
-    }
+    
     if (counterOrderType === 'dine_in' && !counterTableId) {
       toast.error('Please select a table for dine-in order.');
       return;
@@ -748,7 +745,7 @@ const BillingDashboard = () => {
                         )}
 
                         <div className="space-y-2">
-                          <Label htmlFor="counter-customer-name">Customer Name</Label>
+                           <Label htmlFor="counter-customer-name">Customer Name (Optional)</Label>
                           <Input
                             id="counter-customer-name"
                             value={counterCustomerName}
@@ -759,7 +756,7 @@ const BillingDashboard = () => {
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="counter-phone">Phone Number</Label>
+                           <Label htmlFor="counter-phone">Phone Number (Optional)</Label>
                           <Input
                             id="counter-phone"
                             value={counterPhone}
