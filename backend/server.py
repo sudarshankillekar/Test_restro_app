@@ -332,7 +332,14 @@ async def register(input: RegisterRequest, request: Request, response: Response)
     response.set_cookie(key="access_token", value=access_token, max_age=ACCESS_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
     response.set_cookie(key="refresh_token", value=refresh_token, max_age=REFRESH_TOKEN_MAX_AGE_SECONDS, **cookie_settings)
     
-    return {"email": email, "name": input.name, "role": input.role, "_id": user_id}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "email": email,
+        "name": input.name,
+        "role": input.role,
+        "_id": user_id,
+    }
 
 @api_router.post("/auth/login")
 async def login(input: LoginRequest, request: Request, response: Response):
@@ -367,6 +374,8 @@ async def login(input: LoginRequest, request: Request, response: Response):
     
     response_user = await attach_restaurant_context(dict(user), db)
     return {
+        "access_token": access_token,
+        "token_type": "bearer",
         "email": response_user["email"],
         "name": response_user["name"],
         "role": response_user["role"],
@@ -451,9 +460,10 @@ async def google_session(request: Request, response: Response):
     
     user = await db.users.find_one({"_id": result.inserted_id if not user else user["_id"]})
     response_user = await attach_restaurant_context(dict(user), db)
+    access_token = create_access_token(response_user["_id"], response_user["email"])
     return {
-       "access_token": access_token,   # ✅ ADD THIS
-        "token_type": "bearer", 
+        "access_token": access_token,
+        "token_type": "bearer",
         "email": response_user["email"],
         "name": response_user["name"],
         "role": response_user["role"],
