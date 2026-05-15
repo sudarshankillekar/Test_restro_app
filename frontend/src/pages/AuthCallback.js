@@ -32,12 +32,6 @@ const AuthCallback = () => {
           { session_id: sessionId }
         );
 
-        if (response.data.access_token) {
-          localStorage.setItem('token', response.data.access_token);
-        } else {
-          localStorage.removeItem('token');
-        }
-
         setUser(response.data);
         toast.success('Login successful!');
         
