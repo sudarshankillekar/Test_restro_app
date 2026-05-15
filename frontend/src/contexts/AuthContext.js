@@ -45,7 +45,11 @@ const login = async (email, password) => {
   });
 
 
-  localStorage.setItem("token", response.data.access_token);
+  if (response.data.access_token) {
+    localStorage.setItem("token", response.data.access_token);
+  } else {
+    localStorage.removeItem("token");
+  }
 
   setUser(response.data);
 

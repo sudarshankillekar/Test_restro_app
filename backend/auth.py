@@ -58,6 +58,8 @@ async def attach_restaurant_context(user: dict, db) -> dict:
 
 async def get_current_user(request: Request, db) -> dict:
     """Get user from JWT cookie or session_token cookie or Authorization header"""
+    auth_error = None
+
     # Try JWT access_token first
     token = request.cookies.get("access_token")
     if token:
@@ -70,31 +72,31 @@ async def get_current_user(request: Request, db) -> dict:
                 raise HTTPException(status_code=401, detail="User not found")
             return await attach_restaurant_context(user, db)
         except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token expired")
+            auth_error = HTTPException(status_code=401, detail="Token expired")
         except jwt.InvalidTokenError:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            auth_error = HTTPException(status_code=401, detail="Invalid token")
     
     # Try session_token (Google OAuth)
     session_token = request.cookies.get("session_token")
     if session_token:
         session = await db.user_sessions.find_one({"session_token": session_token})
-        if not session:
-            raise HTTPException(status_code=401, detail="Session not found")
-        
-        # Check expiry
-        expires_at = session["expires_at"]
-        if isinstance(expires_at, str):
-            expires_at = datetime.fromisoformat(expires_at)
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        
-        if expires_at < datetime.now(timezone.utc):
-            raise HTTPException(status_code=401, detail="Session expired")
-        
-        user = await db.users.find_one({"_id": ObjectId(session["user_id"])})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        return await attach_restaurant_context(user, db)
+        if session:
+            # Check expiry
+            expires_at = session["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+            if expires_at >= datetime.now(timezone.utc):
+                user = await db.users.find_one({"_id": ObjectId(session["user_id"])})
+                if user:
+                    return await attach_restaurant_context(user, db)
+                auth_error = HTTPException(status_code=401, detail="User not found")
+            else:
+                auth_error = HTTPException(status_code=401, detail="Session expired")
+        else:
+            auth_error = HTTPException(status_code=401, detail="Session not found")
     
     # Try Authorization header
     auth_header = request.headers.get("Authorization", "")
@@ -109,10 +111,12 @@ async def get_current_user(request: Request, db) -> dict:
                 raise HTTPException(status_code=401, detail="User not found")
             return await attach_restaurant_context(user, db)
         except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token expired")
+            auth_error = HTTPException(status_code=401, detail="Token expired")
         except jwt.InvalidTokenError:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            auth_error = HTTPException(status_code=401, detail="Invalid token")
     
+    if auth_error:
+        raise auth_error
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 async def check_brute_force(db, ip: str, email: str):
