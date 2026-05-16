@@ -315,7 +315,9 @@ const BillingDashboard = () => {
 
     const subtotal = group.orders.reduce((sum, order) => sum + order.total, 0);
     const taxPercentage = restaurantProfile.tax_enabled ? Number(restaurantProfile.tax_percentage || 0) : 0;
-    const serviceChargePercentage = restaurantProfile.service_charge_enabled ? Number(restaurantProfile.service_charge_percentage || 0) : 0;
+    const serviceChargePercentage = restaurantProfile.service_charge_enabled && group.order_type !== 'takeaway'
+      ? Number(restaurantProfile.service_charge_percentage || 0)
+      : 0;
     const serviceCharge = subtotal * serviceChargePercentage / 100;
     const parcelCharge = group.order_type === 'takeaway' && restaurantProfile.parcel_charge_enabled
       ? Number(restaurantProfile.parcel_charge || 0)

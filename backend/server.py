@@ -272,7 +272,7 @@ def calculate_bill_amounts(subtotal: float, settings: dict, is_takeaway: bool, d
     tax_percentage = float(settings.get("tax_percentage", 0) or 0) if settings.get("tax_enabled") else 0
     service_charge_percentage = (
         float(settings.get("service_charge_percentage", 0) or 0)
-        if settings.get("service_charge_enabled")
+        if settings.get("service_charge_enabled") and not is_takeaway
         else 0
     )
     service_charge = round(subtotal * service_charge_percentage / 100, 2)
@@ -2426,9 +2426,12 @@ async def get_analytics(request: Request, period: str = "daily"):
     
     result = await db.orders.aggregate(pipeline).to_list(1)
 
-    total_tables = await db.tables.count_documents({"restaurant_id": restaurant_id})
+    restaurant_table_ids = await db.tables.distinct("table_id", {"restaurant_id": restaurant_id})
+    total_tables = len(restaurant_table_ids)
     occupied_tables = len(await db.orders.distinct("table_id", {
         "restaurant_id": restaurant_id,
+        "table_id": {"$in": restaurant_table_ids},
+        "order_type": {"$ne": "takeaway"},
         "status": {"$nin": ["served", "cancelled"]}
     }))
     empty_tables = max(total_tables - occupied_tables, 0)
