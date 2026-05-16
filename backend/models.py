@@ -39,6 +39,12 @@ class RestaurantProfileUpdate(BaseModel):
     gst_number: Optional[str] = None
     google_review_url: Optional[str] = None
     customer_logo_url: Optional[str] = None
+    tax_enabled: Optional[bool] = None
+    tax_percentage: Optional[float] = None
+    service_charge_enabled: Optional[bool] = None
+    service_charge_percentage: Optional[float] = None
+    parcel_charge_enabled: Optional[bool] = None
+    parcel_charge: Optional[float] = None
     
 class SubscriptionRenew(BaseModel):
     plan: Optional[str] = None

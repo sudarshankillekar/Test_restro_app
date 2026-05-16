@@ -232,6 +232,67 @@ async def build_transaction_summary(restaurant_id: str, created_at_filter: dict)
     }
 
 
+def coerce_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def coerce_nonnegative_float(value, default: float = 0) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return max(float(value), 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_billing_settings(restaurant: Optional[dict]) -> dict:
+    restaurant = restaurant or {}
+    tax_enabled = coerce_bool(restaurant.get("tax_enabled"), True)
+    service_charge_enabled = coerce_bool(restaurant.get("service_charge_enabled"), False)
+    parcel_charge_enabled = coerce_bool(restaurant.get("parcel_charge_enabled"), False)
+    return {
+        "tax_enabled": tax_enabled,
+        "tax_percentage": coerce_nonnegative_float(restaurant.get("tax_percentage"), 5 if tax_enabled else 0),
+        "service_charge_enabled": service_charge_enabled,
+        "service_charge_percentage": coerce_nonnegative_float(restaurant.get("service_charge_percentage"), 0),
+        "parcel_charge_enabled": parcel_charge_enabled,
+        "parcel_charge": coerce_nonnegative_float(restaurant.get("parcel_charge"), 0),
+    }
+
+
+def calculate_bill_amounts(subtotal: float, settings: dict, is_takeaway: bool, discount: float = 0) -> dict:
+    subtotal = round(float(subtotal or 0), 2)
+    discount = round(float(discount or 0), 2)
+    tax_percentage = float(settings.get("tax_percentage", 0) or 0) if settings.get("tax_enabled") else 0
+    service_charge_percentage = (
+        float(settings.get("service_charge_percentage", 0) or 0)
+        if settings.get("service_charge_enabled")
+        else 0
+    )
+    service_charge = round(subtotal * service_charge_percentage / 100, 2)
+    parcel_charge = round(float(settings.get("parcel_charge", 0) or 0), 2) if is_takeaway and settings.get("parcel_charge_enabled") else 0
+    taxable_amount = subtotal + service_charge + parcel_charge
+    tax = round(taxable_amount * tax_percentage / 100, 2)
+    total = round(max(taxable_amount + tax - discount, 0), 2)
+
+    return {
+        "subtotal": subtotal,
+        "tax": tax,
+        "tax_percentage": tax_percentage,
+        "service_charge": service_charge,
+        "service_charge_percentage": service_charge_percentage,
+        "parcel_charge": parcel_charge,
+        "discount": discount,
+        "total": total,
+    }
+
+
 def parse_bool_env(name: str, default: bool) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -775,12 +836,25 @@ async def get_restaurant_profile(request: Request):
 
     restaurant = await db.restaurants.find_one(
         {"restaurant_id": restaurant_id},
-        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1, "customer_logo_url": 1}
+        {
+            "_id": 0,
+            "restaurant_id": 1,
+            "name": 1,
+            "gst_number": 1,
+            "google_review_url": 1,
+            "customer_logo_url": 1,
+            "tax_enabled": 1,
+            "tax_percentage": 1,
+            "service_charge_enabled": 1,
+            "service_charge_percentage": 1,
+            "parcel_charge_enabled": 1,
+            "parcel_charge": 1,
+        }
     )
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
-    return restaurant
+    return {**restaurant, **normalize_billing_settings(restaurant)}
 
 @api_router.put("/restaurant/profile")
 async def update_restaurant_profile(input: RestaurantProfileUpdate, request: Request):
@@ -796,12 +870,22 @@ async def update_restaurant_profile(input: RestaurantProfileUpdate, request: Req
     gst_number = (input.gst_number or "").strip() or None
     google_review_url = (input.google_review_url or "").strip() or None
     customer_logo_url = (input.customer_logo_url or "").strip() or None
+    tax_enabled = coerce_bool(input.tax_enabled, True)
+    service_charge_enabled = coerce_bool(input.service_charge_enabled, False)
+    parcel_charge_enabled = coerce_bool(input.parcel_charge_enabled, False)
+    tax_percentage = coerce_nonnegative_float(input.tax_percentage, 5 if tax_enabled else 0)
+    service_charge_percentage = coerce_nonnegative_float(input.service_charge_percentage, 0)
+    parcel_charge = coerce_nonnegative_float(input.parcel_charge, 0)
     if gst_number and len(gst_number) > 30:
         raise HTTPException(status_code=400, detail="GST number must be 30 characters or fewer.")
     if google_review_url and not google_review_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Google review link must start with http:// or https://")
     if customer_logo_url and not customer_logo_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Customer logo URL must start with http:// or https://")    
+    if tax_percentage > 100:
+        raise HTTPException(status_code=400, detail="Tax percentage must be 100 or less.")
+    if service_charge_percentage > 100:
+        raise HTTPException(status_code=400, detail="Service charge percentage must be 100 or less.")
 
     await db.restaurants.update_one(
         {"restaurant_id": restaurant_id},
@@ -809,18 +893,37 @@ async def update_restaurant_profile(input: RestaurantProfileUpdate, request: Req
             "gst_number": gst_number,
             "google_review_url": google_review_url,
             "customer_logo_url": customer_logo_url,
+            "tax_enabled": tax_enabled,
+            "tax_percentage": tax_percentage,
+            "service_charge_enabled": service_charge_enabled,
+            "service_charge_percentage": service_charge_percentage,
+            "parcel_charge_enabled": parcel_charge_enabled,
+            "parcel_charge": parcel_charge,
             "updated_at": datetime.now(timezone.utc)
         }}
     )
 
     updated_restaurant = await db.restaurants.find_one(
         {"restaurant_id": restaurant_id},
-        {"_id": 0, "restaurant_id": 1, "name": 1, "gst_number": 1, "google_review_url": 1, "customer_logo_url": 1}
+        {
+            "_id": 0,
+            "restaurant_id": 1,
+            "name": 1,
+            "gst_number": 1,
+            "google_review_url": 1,
+            "customer_logo_url": 1,
+            "tax_enabled": 1,
+            "tax_percentage": 1,
+            "service_charge_enabled": 1,
+            "service_charge_percentage": 1,
+            "parcel_charge_enabled": 1,
+            "parcel_charge": 1,
+        }
     )
     if not updated_restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
-    return updated_restaurant
+    return {**updated_restaurant, **normalize_billing_settings(updated_restaurant)}
 
 @api_router.get("/customer/table/{table_id}/branding")
 async def get_customer_table_branding(table_id: str):
@@ -2048,19 +2151,34 @@ async def delete_order_admin(order_id: str, request: Request):
         if remaining_order_ids:
             remaining_orders = await db.orders.find(
                 {"order_id": {"$in": remaining_order_ids}, "restaurant_id": restaurant_id},
-                {"_id": 0, "total": 1}
+                {"_id": 0, "total": 1, "order_type": 1}
             ).to_list(len(remaining_order_ids))
             remaining_subtotal = round(sum(item.get("total", 0) for item in remaining_orders), 2)
-            remaining_tax = round(remaining_subtotal * 0.05, 2)
             discount = payment.get("discount", 0) or 0
+            settings = {
+                "tax_enabled": bool(payment.get("tax_percentage", 0)),
+                "tax_percentage": payment.get("tax_percentage", 0),
+                "service_charge_enabled": bool(payment.get("service_charge_percentage", 0)),
+                "service_charge_percentage": payment.get("service_charge_percentage", 0),
+                "parcel_charge_enabled": bool(payment.get("parcel_charge", 0)),
+                "parcel_charge": payment.get("parcel_charge", 0),
+            }
+            remaining_bill = calculate_bill_amounts(
+                remaining_subtotal,
+                settings,
+                any(order.get("order_type") == "takeaway" for order in remaining_orders),
+                discount,
+            )
             await db.payments.update_one(
                 {"payment_id": payment["payment_id"], "restaurant_id": restaurant_id},
                 {"$set": {
                     "order_id": remaining_order_ids[0],
                     "order_ids": remaining_order_ids,
-                    "subtotal": remaining_subtotal,
-                    "tax": remaining_tax,
-                    "total": remaining_subtotal + remaining_tax - discount,
+                    "subtotal": remaining_bill["subtotal"],
+                    "tax": remaining_bill["tax"],
+                    "service_charge": remaining_bill["service_charge"],
+                    "parcel_charge": remaining_bill["parcel_charge"],
+                    "total": remaining_bill["total"],
                     "updated_at": datetime.now(timezone.utc),
                 }}
             )
@@ -2161,10 +2279,15 @@ async def create_payment(input: PaymentCreate, request: Request):
     table_id = orders[0]["table_id"]
     table_number = orders[0].get("table_number")
     
-    # Calculate tax (5% GST)
     subtotal = round(sum(order["total"] for order in orders), 2)
-    tax = round(subtotal * 0.05, 2)
-    total = subtotal + tax
+    restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    billing_settings = normalize_billing_settings(restaurant)
+    bill_amounts = calculate_bill_amounts(
+        subtotal,
+        billing_settings,
+        any(order.get("order_type") == "takeaway" for order in orders),
+        input.discount or 0,
+    )
     bill_id = f"BILL{secrets.token_hex(5).upper()}"
     
     payment_doc = {
@@ -2175,10 +2298,14 @@ async def create_payment(input: PaymentCreate, request: Request):
         "restaurant_id": restaurant_id,
         "table_id": table_id,
         "table_number": table_number,
-        "subtotal": subtotal,
-        "tax": tax,
-        "discount": input.discount or 0,
-        "total": total - (input.discount or 0),
+        "subtotal": bill_amounts["subtotal"],
+        "tax": bill_amounts["tax"],
+        "tax_percentage": bill_amounts["tax_percentage"],
+        "service_charge": bill_amounts["service_charge"],
+        "service_charge_percentage": bill_amounts["service_charge_percentage"],
+        "parcel_charge": bill_amounts["parcel_charge"],
+        "discount": bill_amounts["discount"],
+        "total": bill_amounts["total"],
         "payment_method": input.payment_method,
         "status": "completed",
         "created_at": datetime.now(timezone.utc),

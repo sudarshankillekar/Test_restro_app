@@ -125,7 +125,16 @@ const BillingDashboard = () => {
   const [discount, setDiscount] = useState(0);
   const [editingOrder, setEditingOrder] = useState(null);
   const [editingItems, setEditingItems] = useState([]);
-  const [restaurantProfile, setRestaurantProfile] = useState({ name: '', gst_number: '' });
+  const [restaurantProfile, setRestaurantProfile] = useState({
+    name: '',
+    gst_number: '',
+    tax_enabled: true,
+    tax_percentage: 5,
+    service_charge_enabled: false,
+    service_charge_percentage: 0,
+    parcel_charge_enabled: false,
+    parcel_charge: 0,
+  });
   const [counterDialogOpen, setCounterDialogOpen] = useState(false);
   const [counterSubmitting, setCounterSubmitting] = useState(false);
   const [counterOrderType, setCounterOrderType] = useState('dine_in');
@@ -136,12 +145,13 @@ const BillingDashboard = () => {
   const [counterSearch, setCounterSearch] = useState('');
   const [counterCategory, setCounterCategory] = useState('all');
   const [transactionSummary, setTransactionSummary] = useState(createEmptyTransactionSummary);
+  const [transactionPeriod, setTransactionPeriod] = useState('daily');
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
 
   const loadTransactionSummary = async () => {
-    const response = await api.get('/api/analytics/dashboard?period=daily', { withCredentials: true });
+    const response = await api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true });
     setTransactionSummary({
       payment_summary: {
         ...createEmptyTransactionSummary().payment_summary,
@@ -163,7 +173,7 @@ const BillingDashboard = () => {
           api.get('/api/menu/items', { withCredentials: true }),
           api.get('/api/menu/categories', { withCredentials: true }),
           api.get('/api/restaurant/profile', { withCredentials: true }),
-          api.get('/api/analytics/dashboard?period=daily', { withCredentials: true }),
+          api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true }),
         ]);
 
         setOrders(ordersResponse.data);
@@ -173,6 +183,12 @@ const BillingDashboard = () => {
         setRestaurantProfile({
           name: profileResponse.data.name || '',
           gst_number: profileResponse.data.gst_number || '',
+          tax_enabled: profileResponse.data.tax_enabled ?? true,
+          tax_percentage: profileResponse.data.tax_percentage ?? 5,
+          service_charge_enabled: profileResponse.data.service_charge_enabled ?? false,
+          service_charge_percentage: profileResponse.data.service_charge_percentage ?? 0,
+          parcel_charge_enabled: profileResponse.data.parcel_charge_enabled ?? false,
+          parcel_charge: profileResponse.data.parcel_charge ?? 0,
         });
         setTransactionSummary({
           payment_summary: {
@@ -192,7 +208,7 @@ const BillingDashboard = () => {
     };
 
     bootstrap();
-  }, []);
+  }, [transactionPeriod]);
 
   useEffect(() => {
     if (socket && user?.restaurant_id) {
@@ -294,17 +310,28 @@ const BillingDashboard = () => {
 
   const calculateBill = (group) => {
     if (!group) {
-      return { subtotal: 0, tax: 0, discount: 0, total: 0 };
+      return { subtotal: 0, tax: 0, taxPercentage: 0, serviceCharge: 0, serviceChargePercentage: 0, parcelCharge: 0, discount: 0, total: 0 };
     }
 
     const subtotal = group.orders.reduce((sum, order) => sum + order.total, 0);
-    const tax = subtotal * 0.05;
+    const taxPercentage = restaurantProfile.tax_enabled ? Number(restaurantProfile.tax_percentage || 0) : 0;
+    const serviceChargePercentage = restaurantProfile.service_charge_enabled ? Number(restaurantProfile.service_charge_percentage || 0) : 0;
+    const serviceCharge = subtotal * serviceChargePercentage / 100;
+    const parcelCharge = group.order_type === 'takeaway' && restaurantProfile.parcel_charge_enabled
+      ? Number(restaurantProfile.parcel_charge || 0)
+      : 0;
+    const taxableAmount = subtotal + serviceCharge + parcelCharge;
+    const tax = taxableAmount * taxPercentage / 100;
     const discountAmount = Number(discount) || 0;
     return {
       subtotal,
+      serviceCharge,
+      serviceChargePercentage,
+      parcelCharge,
       tax,
+      taxPercentage,
       discount: discountAmount,
-      total: subtotal + tax - discountAmount,
+      total: Math.max(taxableAmount + tax - discountAmount, 0),
     };
   };
 
@@ -395,10 +422,13 @@ const BillingDashboard = () => {
     const lineItemsTotal = summarizedItems.reduce((sum, item) => sum + item.amount, 0);
     const subtotal = Number(payment.subtotal ?? lineItemsTotal);
     const discount = Number(payment.discount || 0);
-    const fallbackTax = Number((subtotal * 0.05).toFixed(2));
+    const serviceCharge = Number(payment.service_charge || 0);
+    const parcelCharge = Number(payment.parcel_charge || 0);
+    const taxPercentage = Number(payment.tax_percentage ?? restaurantProfile.tax_percentage ?? 5);
+    const fallbackTax = Number(((subtotal + serviceCharge + parcelCharge) * taxPercentage / 100).toFixed(2));
     const parsedTax = Number(payment.tax);
     const tax = Number.isFinite(parsedTax) && parsedTax > 0 ? parsedTax : fallbackTax;
-    const recalculatedTotal = Number((subtotal + tax - discount).toFixed(2));
+    const recalculatedTotal = Number((subtotal + serviceCharge + parcelCharge + tax - discount).toFixed(2));
     const parsedTotal = Number(payment.total);
     const total = Number.isFinite(parsedTotal) && parsedTotal > subtotal - discount
       ? parsedTotal
@@ -434,7 +464,9 @@ const BillingDashboard = () => {
       </table>
       <div class="totals">
         <div><span>Subtotal</span><span>Rs. ${subtotal.toFixed(2)}</span></div>
-        <div><span>Tax (5%)</span><span>Rs. ${tax.toFixed(2)}</span></div>
+        ${serviceCharge > 0 ? `<div><span>Service Charge</span><span>Rs. ${serviceCharge.toFixed(2)}</span></div>` : ''}
+        ${parcelCharge > 0 ? `<div><span>Parcel Charge</span><span>Rs. ${parcelCharge.toFixed(2)}</span></div>` : ''}
+        <div><span>Tax (${taxPercentage.toFixed(2)}%)</span><span>Rs. ${tax.toFixed(2)}</span></div>
         <div><span>Discount</span><span>Rs. ${discount.toFixed(2)}</span></div>
         <div class="strong"><span>Total</span><span>Rs. ${total.toFixed(2)}</span></div>
       </div>
@@ -620,7 +652,7 @@ const BillingDashboard = () => {
     },
     {
       label: 'Completed Bills',
-      value: completedBills.length,
+      value: paymentSummary.payment_count ?? completedBills.length,
       icon: CreditCard,
       valueClassName: 'text-violet-600',
       tintClassName: 'bg-violet-50 text-violet-600',
@@ -1069,6 +1101,24 @@ const BillingDashboard = () => {
       </div>
 
       <div className="max-w-[1440px] mx-auto p-4 sm:p-6 space-y-6">
+        <div className="rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_12px_30px_rgba(15,23,42,0.04)] backdrop-blur">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Transaction Summary</p>
+            </div>
+            <Select value={transactionPeriod} onValueChange={setTransactionPeriod}>
+              <SelectTrigger className="w-full rounded-full border-slate-200 bg-white sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="daily">Daily</SelectItem>
+                <SelectItem value="weekly">Weekly</SelectItem>
+                <SelectItem value="monthly">Monthly</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
           {dashboardStats.map((stat) => {
             const Icon = stat.icon;
@@ -1245,8 +1295,20 @@ const BillingDashboard = () => {
                             <span>Subtotal</span>
                             <span>{formatCurrency(bill.subtotal)}</span>
                           </div>
+                          {bill.serviceCharge > 0 && (
+                            <div className="flex justify-between">
+                              <span>Service Charge ({bill.serviceChargePercentage}%)</span>
+                              <span>{formatCurrency(bill.serviceCharge)}</span>
+                            </div>
+                          )}
+                          {bill.parcelCharge > 0 && (
+                            <div className="flex justify-between">
+                              <span>Parcel Charge</span>
+                              <span>{formatCurrency(bill.parcelCharge)}</span>
+                            </div>
+                          )}
                           <div className="flex justify-between">
-                            <span>Tax (5%)</span>
+                            <span>Tax ({bill.taxPercentage}%)</span>
                             <span>{formatCurrency(bill.tax)}</span>
                           </div>
                           <div className="flex items-center justify-between gap-3">
@@ -1304,8 +1366,20 @@ const BillingDashboard = () => {
                                     <span>Subtotal</span>
                                     <span>{formatCurrency(calculateBill(currentSelectedGroup || group).subtotal)}</span>
                                   </div>
+                                  {calculateBill(currentSelectedGroup || group).serviceCharge > 0 && (
+                                    <div className="flex justify-between">
+                                      <span>Service Charge ({calculateBill(currentSelectedGroup || group).serviceChargePercentage}%)</span>
+                                      <span>{formatCurrency(calculateBill(currentSelectedGroup || group).serviceCharge)}</span>
+                                    </div>
+                                  )}
+                                  {calculateBill(currentSelectedGroup || group).parcelCharge > 0 && (
+                                    <div className="flex justify-between">
+                                      <span>Parcel Charge</span>
+                                      <span>{formatCurrency(calculateBill(currentSelectedGroup || group).parcelCharge)}</span>
+                                    </div>
+                                  )}
                                   <div className="flex justify-between">
-                                    <span>Tax</span>
+                                    <span>Tax ({calculateBill(currentSelectedGroup || group).taxPercentage}%)</span>
                                     <span>{formatCurrency(calculateBill(currentSelectedGroup || group).tax)}</span>
                                   </div>
                                   <div className="flex justify-between">

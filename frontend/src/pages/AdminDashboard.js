@@ -74,6 +74,12 @@ const AdminDashboard = () => {
     gst_number: '',
     google_review_url: '',
     customer_logo_url: '',
+    tax_enabled: true,
+    tax_percentage: 5,
+    service_charge_enabled: false,
+    service_charge_percentage: 0,
+    parcel_charge_enabled: false,
+    parcel_charge: 0,
   });
 
   useEffect(() => {
@@ -387,6 +393,12 @@ const AdminDashboard = () => {
         gst_number: response.data.gst_number || '',
         google_review_url: response.data.google_review_url || '',
         customer_logo_url: response.data.customer_logo_url || '',
+        tax_enabled: response.data.tax_enabled ?? true,
+        tax_percentage: response.data.tax_percentage ?? 5,
+        service_charge_enabled: response.data.service_charge_enabled ?? false,
+        service_charge_percentage: response.data.service_charge_percentage ?? 0,
+        parcel_charge_enabled: response.data.parcel_charge_enabled ?? false,
+        parcel_charge: response.data.parcel_charge ?? 0,
       });
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to load restaurant settings'));
@@ -401,6 +413,12 @@ const AdminDashboard = () => {
           gst_number: restaurantProfile.gst_number.trim(),
           google_review_url: restaurantProfile.google_review_url.trim(),
           customer_logo_url: restaurantProfile.customer_logo_url.trim(),
+          tax_enabled: restaurantProfile.tax_enabled,
+          tax_percentage: Number(restaurantProfile.tax_percentage) || 0,
+          service_charge_enabled: restaurantProfile.service_charge_enabled,
+          service_charge_percentage: Number(restaurantProfile.service_charge_percentage) || 0,
+          parcel_charge_enabled: restaurantProfile.parcel_charge_enabled,
+          parcel_charge: Number(restaurantProfile.parcel_charge) || 0,
         }
       );
       setRestaurantProfile({
@@ -408,6 +426,12 @@ const AdminDashboard = () => {
         gst_number: response.data.gst_number || '',
         google_review_url: response.data.google_review_url || '',
         customer_logo_url: response.data.customer_logo_url || '',
+        tax_enabled: response.data.tax_enabled ?? true,
+        tax_percentage: response.data.tax_percentage ?? 5,
+        service_charge_enabled: response.data.service_charge_enabled ?? false,
+        service_charge_percentage: response.data.service_charge_percentage ?? 0,
+        parcel_charge_enabled: response.data.parcel_charge_enabled ?? false,
+        parcel_charge: response.data.parcel_charge ?? 0,
       });
       toast.success('Restaurant settings updated');
     } catch (error) {
@@ -1280,6 +1304,82 @@ const AdminDashboard = () => {
                     <p className="text-xs text-muted-foreground">
                       Customers will see this link after billing is completed.
                     </p>
+                  </div>
+                  <div className="space-y-4 rounded-2xl border border-border p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <Label htmlFor="tax-enabled">Tax</Label>
+                      <Switch
+                        id="tax-enabled"
+                        checked={restaurantProfile.tax_enabled}
+                        onCheckedChange={(checked) => setRestaurantProfile((prev) => ({
+                          ...prev,
+                          tax_enabled: checked,
+                          tax_percentage: checked && Number(prev.tax_percentage || 0) <= 0 ? 5 : prev.tax_percentage,
+                        }))}
+                        data-testid="restaurant-tax-toggle"
+                      />
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={restaurantProfile.tax_percentage}
+                      onChange={(e) => setRestaurantProfile((prev) => ({ ...prev, tax_percentage: e.target.value }))}
+                      className="rounded-full"
+                      disabled={!restaurantProfile.tax_enabled}
+                      placeholder="Tax percentage"
+                      data-testid="restaurant-tax-percentage-input"
+                    />
+                  </div>
+                  <div className="space-y-4 rounded-2xl border border-border p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <Label htmlFor="service-charge-enabled">Service Charge</Label>
+                      <Switch
+                        id="service-charge-enabled"
+                        checked={restaurantProfile.service_charge_enabled}
+                        onCheckedChange={(checked) => setRestaurantProfile((prev) => ({
+                          ...prev,
+                          service_charge_enabled: checked,
+                          service_charge_percentage: checked && Number(prev.service_charge_percentage || 0) <= 0 ? 10 : prev.service_charge_percentage,
+                        }))}
+                        data-testid="restaurant-service-charge-toggle"
+                      />
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={restaurantProfile.service_charge_percentage}
+                      onChange={(e) => setRestaurantProfile((prev) => ({ ...prev, service_charge_percentage: e.target.value }))}
+                      className="rounded-full"
+                      disabled={!restaurantProfile.service_charge_enabled}
+                      placeholder="Service charge percentage"
+                      data-testid="restaurant-service-charge-input"
+                    />
+                  </div>
+                  <div className="space-y-4 rounded-2xl border border-border p-4 sm:col-span-2">
+                    <div className="flex items-center justify-between gap-4">
+                      <Label htmlFor="parcel-charge-enabled">Parcel Charge</Label>
+                      <Switch
+                        id="parcel-charge-enabled"
+                        checked={restaurantProfile.parcel_charge_enabled}
+                        onCheckedChange={(checked) => setRestaurantProfile((prev) => ({ ...prev, parcel_charge_enabled: checked }))}
+                        data-testid="restaurant-parcel-charge-toggle"
+                      />
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={restaurantProfile.parcel_charge}
+                      onChange={(e) => setRestaurantProfile((prev) => ({ ...prev, parcel_charge: e.target.value }))}
+                      className="rounded-full"
+                      disabled={!restaurantProfile.parcel_charge_enabled}
+                      placeholder="Parcel charge amount"
+                      data-testid="restaurant-parcel-charge-input"
+                    />
                   </div>
                 </div>
                 <Button
