@@ -119,6 +119,8 @@ const BillingDashboard = ({ embedded = false }) => {
   const [tables, setTables] = useState([]);
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
+  const [counterCatalogLoaded, setCounterCatalogLoaded] = useState(false);
+  const [counterCatalogLoading, setCounterCatalogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -151,35 +153,53 @@ const BillingDashboard = ({ embedded = false }) => {
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
 
   const loadTransactionSummary = async () => {
-    const response = await api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true });
-    setTransactionSummary({
-      payment_summary: {
-        ...createEmptyTransactionSummary().payment_summary,
-        ...(response.data?.payment_summary || {}),
-      },
-      cash_adjustments: {
-        ...createEmptyTransactionSummary().cash_adjustments,
-        ...(response.data?.cash_adjustments || {}),
-      },
-    });
+    try {
+      const response = await api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true });
+      setTransactionSummary({
+        payment_summary: {
+          ...createEmptyTransactionSummary().payment_summary,
+          ...(response.data?.payment_summary || {}),
+        },
+        cash_adjustments: {
+          ...createEmptyTransactionSummary().cash_adjustments,
+          ...(response.data?.cash_adjustments || {}),
+        },
+      });
+    } catch (error) {
+      toast.error('Failed to load transaction summary');
+    }
+  };
+
+  const loadCounterCatalog = async () => {
+    if (counterCatalogLoaded || counterCatalogLoading) return;
+
+    setCounterCatalogLoading(true);
+    try {
+      const [itemsResponse, categoriesResponse] = await Promise.all([
+        api.get('/api/menu/items', { withCredentials: true }),
+        api.get('/api/menu/categories', { withCredentials: true }),
+      ]);
+      setMenuItems(itemsResponse.data.filter((item) => item.available));
+      setCategories(categoriesResponse.data);
+      setCounterCatalogLoaded(true);
+    } catch (error) {
+      toast.error('Failed to load counter menu');
+    } finally {
+      setCounterCatalogLoading(false);
+    }
   };
 
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        const [ordersResponse, tablesResponse, itemsResponse, categoriesResponse, profileResponse, analyticsResponse] = await Promise.all([
+        const [ordersResponse, tablesResponse, profileResponse] = await Promise.all([
           api.get('/api/orders', { withCredentials: true }),
           api.get('/api/tables', { withCredentials: true }),
-          api.get('/api/menu/items', { withCredentials: true }),
-          api.get('/api/menu/categories', { withCredentials: true }),
           api.get('/api/restaurant/profile', { withCredentials: true }),
-          api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true }),
         ]);
 
         setOrders(ordersResponse.data);
         setTables(tablesResponse.data);
-        setMenuItems(itemsResponse.data.filter((item) => item.available));
-        setCategories(categoriesResponse.data);
         setRestaurantProfile({
           name: profileResponse.data.name || '',
           gst_number: profileResponse.data.gst_number || '',
@@ -190,16 +210,6 @@ const BillingDashboard = ({ embedded = false }) => {
           parcel_charge_enabled: profileResponse.data.parcel_charge_enabled ?? false,
           parcel_charge: profileResponse.data.parcel_charge ?? 0,
         });
-        setTransactionSummary({
-          payment_summary: {
-            ...createEmptyTransactionSummary().payment_summary,
-            ...(analyticsResponse.data?.payment_summary || {}),
-          },
-          cash_adjustments: {
-            ...createEmptyTransactionSummary().cash_adjustments,
-            ...(analyticsResponse.data?.cash_adjustments || {}),
-          },
-        });
       } catch (error) {
         toast.error('Failed to load billing dashboard');
       } finally {
@@ -208,7 +218,17 @@ const BillingDashboard = ({ embedded = false }) => {
     };
 
     bootstrap();
+  }, []);
+
+  useEffect(() => {
+    loadTransactionSummary();
   }, [transactionPeriod]);
+
+  useEffect(() => {
+    if (counterDialogOpen) {
+      loadCounterCatalog();
+    }
+  }, [counterDialogOpen]);
 
   useEffect(() => {
     if (socket && user?.restaurant_id) {
@@ -878,11 +898,16 @@ const BillingDashboard = ({ embedded = false }) => {
                     </div>
 
                     <div className="max-h-[58dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5 lg:max-h-[62dvh] xl:max-h-none">
-                      {filteredMenuItems.length === 0 ? (
+                      {counterCatalogLoading ? (
+                        <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
+                          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                          <p className="mt-3 text-base font-medium">Loading menu</p>
+                        </div>
+                      ) : filteredMenuItems.length === 0 ? (
                         <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
                           <p className="text-base font-medium">No menu items found</p>
                           <p className="mt-2 text-sm text-muted-foreground">
-                            Try a different search or switch the category filter.
+                            {counterCatalogLoaded ? 'Try a different search or switch the category filter.' : 'Open the counter again to retry loading menu items.'}
                           </p>
                         </div>
                       ) : (
