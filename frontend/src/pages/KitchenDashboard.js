@@ -61,7 +61,7 @@ const statusTone = {
   }
 };
 
-  const KitchenDashboard = () => {
+  const KitchenDashboard = ({ embedded = false }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { socket, joinRoom } = useSocket();
@@ -248,15 +248,17 @@ const enableSound = () => {
               )}
             </div>
           </div>
-          <Button
-            onClick={handleLogout}
-            variant="outline"
-            className="rounded-full border-border"
-            data-testid="logout-button"
-          >
-            <LogOut className="w-4 h-4 mr-2" />
-            Logout
-          </Button>
+          {!embedded && (
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              className="rounded-full border-border"
+              data-testid="logout-button"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Logout
+            </Button>
+          )}
              <Button
             onClick={enableSound}
             className="rounded-full bg-primary hover:bg-[#C54E2C]"

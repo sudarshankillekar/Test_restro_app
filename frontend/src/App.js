@@ -14,6 +14,7 @@ import CustomerMenu from './pages/CustomerMenu';
 import OrderTracking from './pages/OrderTracking';
 import KitchenDashboard from './pages/KitchenDashboard';
 import BillingDashboard from './pages/BillingDashboard';
+import OperationsDashboard from './pages/OperationsDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import RestaurantRegistration from './pages/RestaurantRegistration';
@@ -46,6 +47,14 @@ function AppRouter() {
         element={
           <ProtectedRoute allowedRoles={['kitchen', 'admin']}>
             <KitchenDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/operations"
+        element={
+          <ProtectedRoute allowedRoles={['kitchen_billing']}>
+            <OperationsDashboard />
           </ProtectedRoute>
         }
       />

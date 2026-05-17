@@ -41,6 +41,8 @@ const Login = () => {
         navigate('/super-admin');
       } else if (user.role === 'admin') {
         navigate('/admin');
+      } else if (user.role === 'kitchen_billing') {
+        navigate('/operations');
       } else if (user.role === 'kitchen') {
         navigate('/kitchen');
       } else if (user.role === 'billing') {

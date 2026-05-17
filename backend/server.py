@@ -147,7 +147,7 @@ async def get_restaurant_id_from_request(
     try:
         _, resolved_restaurant_id = await resolve_restaurant_access(
             request,
-            ["admin", "kitchen", "billing", "waiter"],
+            ["admin", "kitchen", "billing", "kitchen_billing", "waiter"],
         )
         return resolved_restaurant_id
     except HTTPException:
@@ -370,10 +370,10 @@ async def register(input: RegisterRequest, request: Request, response: Response)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Validate role - only kitchen, billing, and waiter can be registered this way
+    # Validate role - only restaurant staff roles can be registered this way
     # Restaurant admins are created by super admin through restaurant creation
-    if input.role not in ["kitchen", "billing", "waiter"]:
-        raise HTTPException(status_code=400, detail="Invalid role. Only kitchen, billing, and waiter staff can be registered here.")
+    if input.role not in ["kitchen", "billing", "kitchen_billing", "waiter"]:
+        raise HTTPException(status_code=400, detail="Invalid role. Only kitchen, billing, kitchen+billing, and waiter staff can be registered here.")
     
     hashed = hash_password(input.password)
     user_doc = {
@@ -827,7 +827,7 @@ async def get_my_subscription(request: Request):
 async def get_restaurant_profile(request: Request):
     """Restaurant admin/staff views their restaurant profile details"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing", "waiter"]:
+    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing", "waiter"]:
         raise HTTPException(status_code=403, detail="Restaurant access required")
 
     restaurant_id = user.get("restaurant_id")
@@ -1039,9 +1039,9 @@ async def create_staff(input: RegisterRequest, request: Request):
     
     await check_restaurant_subscription(db, restaurant_id)
     
-    # Validate role - admin can only create kitchen, billing, and waiter
-    if input.role not in ["kitchen", "billing", "waiter"]:
-        raise HTTPException(status_code=400, detail="Can only create kitchen, billing, or waiter staff")
+    # Validate role - admin can only create restaurant staff accounts
+    if input.role not in ["kitchen", "billing", "kitchen_billing", "waiter"]:
+        raise HTTPException(status_code=400, detail="Can only create kitchen, billing, kitchen+billing, or waiter staff")
     
     # Check if email exists
     email = input.email.lower()
@@ -1079,7 +1079,7 @@ async def get_staff(request: Request):
     
     # Get all staff for this restaurant
     staff = await db.users.find(
-        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "billing", "waiter"]}},
+        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter"]}},
         {"_id": 0, "password_hash": 0}
     ).to_list(1000)
     
@@ -1102,7 +1102,7 @@ async def delete_staff(email: str, request: Request):
     result = await db.users.delete_one({
         "email": email.lower(),
         "restaurant_id": restaurant_id,
-        "role": {"$in": ["kitchen", "billing", "waiter"]}
+        "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter"]}
     })
     
     if result.deleted_count == 0:
@@ -1859,7 +1859,7 @@ async def create_order(input: OrderCreate):
 async def create_counter_order(input: CounterOrderCreate, request: Request):
     """Create dine-in or takeaway orders directly from the billing counter."""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing", "waiter"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing", "waiter"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     restaurant_id = user.get("restaurant_id")
@@ -1973,7 +1973,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
 async def get_orders(request: Request, status: str = None):
     """Get all orders (kitchen/billing dashboard - requires auth)"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing", "waiter"]:
+    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing", "waiter"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Get restaurant_id for data isolation
@@ -2060,7 +2060,7 @@ async def search_order(order_id: str, request: Request):
 async def update_order_items(order_id: str, input: OrderItemsUpdate, request: Request):
     """Update order items before billing"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     restaurant_id = user.get("restaurant_id")
@@ -2206,7 +2206,7 @@ async def delete_order_admin(order_id: str, request: Request):
 async def update_order_status(order_id: str, request: Request):
     """Update order status (kitchen/billing - requires auth)"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing"]:
+    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     data = await request.json()
@@ -2253,7 +2253,7 @@ async def update_order_status(order_id: str, request: Request):
 async def create_payment(input: PaymentCreate, request: Request):
     """Create payment (billing/admin - requires auth)"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     restaurant_id = user.get("restaurant_id")
@@ -2338,7 +2338,7 @@ async def create_payment(input: PaymentCreate, request: Request):
 @api_router.post("/cash-adjustments")
 async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     restaurant_id = user.get("restaurant_id")
@@ -2366,7 +2366,7 @@ async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
 @api_router.get("/payments/{order_id}")
 async def get_payment(order_id: str, request: Request):
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing", "super_admin"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing", "super_admin"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     query = {"$or": [{"order_id": order_id}, {"order_ids": order_id}]}
@@ -2385,7 +2385,7 @@ async def get_payment(order_id: str, request: Request):
 @api_router.get("/analytics/dashboard")
 async def get_analytics(request: Request, period: str = "daily"):
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Get restaurant_id for data isolation

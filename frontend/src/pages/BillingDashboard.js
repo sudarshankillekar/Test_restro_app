@@ -110,7 +110,7 @@ const printHtml = (html, title) => {
   popup.document.close();
 };
 
-const BillingDashboard = () => {
+const BillingDashboard = ({ embedded = false }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { socket, joinRoom } = useSocket();
@@ -1089,15 +1089,17 @@ const BillingDashboard = () => {
               </DialogContent>
             </Dialog>
 
-            <Button
-              onClick={handleLogout}
-              variant="outline"
-              className="rounded-2xl border-slate-200 bg-white px-4"
-              data-testid="logout-button"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Logout
-            </Button>
+            {!embedded && (
+              <Button
+                onClick={handleLogout}
+                variant="outline"
+                className="rounded-2xl border-slate-200 bg-white px-4"
+                data-testid="logout-button"
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+              </Button>
+            )}
           </div>
         </div>
       </div>

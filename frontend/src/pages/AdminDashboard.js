@@ -1201,6 +1201,7 @@ const AdminDashboard = () => {
                       <SelectContent>
                         <SelectItem value="kitchen">Kitchen Staff</SelectItem>
                         <SelectItem value="billing">Billing Counter</SelectItem>
+                        <SelectItem value="kitchen_billing">Kitchen + Billing</SelectItem>
                         <SelectItem value="waiter">Waiter</SelectItem>
                       </SelectContent>
                     </Select>
@@ -1229,7 +1230,9 @@ const AdminDashboard = () => {
                           ? 'Kitchen Staff'
                           : member.role === 'billing'
                             ? 'Billing Counter'
-                            : 'Waiter'}
+                            : member.role === 'kitchen_billing'
+                              ? 'Kitchen + Billing'
+                              : 'Waiter'}
                       </p>
                     </div>
                     <Button
