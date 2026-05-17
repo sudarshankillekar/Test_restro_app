@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ChefHat, LogOut, Receipt } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
 import { useAuth } from '../contexts/AuthContext';
 import KitchenDashboard from './KitchenDashboard';
@@ -53,12 +53,12 @@ const OperationsDashboard = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsContent value="kitchen" className="m-0">
+        <div className={activeTab === 'kitchen' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'kitchen'}>
           <KitchenDashboard embedded />
-        </TabsContent>
-        <TabsContent value="billing" className="m-0">
+        </div>
+        <div className={activeTab === 'billing' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'billing'}>
           <BillingDashboard embedded />
-        </TabsContent>
+        </div>
       </Tabs>
     </div>
   );
