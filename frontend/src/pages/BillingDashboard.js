@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
-import { normalizeImageUrl } from '../lib/utils';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -148,13 +147,23 @@ const BillingDashboard = ({ embedded = false }) => {
   const [counterCategory, setCounterCategory] = useState('all');
   const [transactionSummary, setTransactionSummary] = useState(createEmptyTransactionSummary);
   const [transactionPeriod, setTransactionPeriod] = useState('daily');
+  const [completedBillRecords, setCompletedBillRecords] = useState([]);
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
+  const [showAllCompletedBills, setShowAllCompletedBills] = useState(false);
+
+  const refreshOrders = async () => {
+    const response = await api.get('/api/orders', { withCredentials: true });
+    setOrders(response.data);
+  };
 
   const loadTransactionSummary = async () => {
     try {
-      const response = await api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true });
+      const [response, completedBillsResponse] = await Promise.all([
+        api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true }),
+        api.get(`/api/payments/completed?period=${transactionPeriod}`, { withCredentials: true }),
+      ]);
       setTransactionSummary({
         payment_summary: {
           ...createEmptyTransactionSummary().payment_summary,
@@ -165,6 +174,7 @@ const BillingDashboard = ({ embedded = false }) => {
           ...(response.data?.cash_adjustments || {}),
         },
       });
+      setCompletedBillRecords(completedBillsResponse.data || []);
     } catch (error) {
       toast.error('Failed to load transaction summary');
     }
@@ -222,6 +232,7 @@ const BillingDashboard = ({ embedded = false }) => {
 
   useEffect(() => {
     loadTransactionSummary();
+    setShowAllCompletedBills(false);
   }, [transactionPeriod]);
 
   useEffect(() => {
@@ -296,32 +307,7 @@ const BillingDashboard = ({ embedded = false }) => {
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
   ), [orders]);
 
-  const completedBills = useMemo(() => {
-    const completedOrders = orders.filter((order) => order.payment_status === 'completed' || order.status === 'served');
-    const grouped = completedOrders.reduce((accumulator, order) => {
-      const billKey = order.payment?.bill_id || order.payment?.payment_id || order.order_id;
-      if (!accumulator[billKey]) {
-        accumulator[billKey] = {
-          bill_id: billKey,
-          table_label: order.table_label || `Table ${order.table_id}`,
-          customer_name: order.customer_name,
-          payment: order.payment,
-          orders: [],
-        };
-      }
-      accumulator[billKey].orders.push(order);
-      if (order.payment) {
-        accumulator[billKey].payment = order.payment;
-      }
-      return accumulator;
-    }, {});
-
-    return Object.values(grouped).sort((a, b) => {
-      const timeA = new Date(a.payment?.created_at || a.orders[0]?.updated_at || 0).getTime();
-      const timeB = new Date(b.payment?.created_at || b.orders[0]?.updated_at || 0).getTime();
-      return timeB - timeA;
-    });
-  }, [orders]);
+  const completedBills = completedBillRecords;
 
   const currentSelectedGroup = useMemo(() => {
     if (!selectedGroup) return null;
@@ -544,7 +530,10 @@ const BillingDashboard = ({ embedded = false }) => {
         discount: Number(discount) || 0,
       });
 
-      await loadTransactionSummary();
+      await Promise.all([
+        loadTransactionSummary(),
+        refreshOrders(),
+      ]);
       toast.success('Bill completed successfully.');
       setSelectedGroup(null);
       setDiscount(0);
@@ -708,6 +697,7 @@ const BillingDashboard = ({ embedded = false }) => {
       tintClassName: Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600',
     },
   ];
+  const visibleCompletedBills = showAllCompletedBills ? completedBills : completedBills.slice(0, 10);
 
   return (
     <div className="min-h-screen bg-[#f4f7fb]">
@@ -744,62 +734,88 @@ const BillingDashboard = ({ embedded = false }) => {
                   Take Counter Order
                 </Button>
               </DialogTrigger>
-              <DialogContent className="flex h-[95dvh] max-h-[95dvh] w-[calc(100vw-1rem)] max-w-[1180px] flex-col overflow-hidden rounded-[24px] border-border bg-white p-0 sm:w-[calc(100vw-2rem)] xl:h-[90vh] xl:max-h-[90vh] xl:rounded-[28px]">
+              <DialogContent className="flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none border-border bg-[#fbfcfe] p-0 sm:h-[92dvh] sm:max-h-[92dvh] sm:w-[calc(100vw-1rem)] sm:rounded-[24px]">
                 <DialogHeader>
-                  <div className="shrink-0 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
-                    <DialogTitle className="text-xl tracking-tight sm:text-2xl">Create Billing Counter Order</DialogTitle>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Search menu items fast, review the cart on the left, and place large orders without losing the action buttons.
-                    </p>
+                  <div className="flex shrink-0 items-center gap-3 border-b border-border bg-white px-4 py-3 sm:px-6">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-orange-50 text-primary">
+                      <Receipt className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <DialogTitle className="text-xl tracking-tight sm:text-2xl">Create Billing Counter Order</DialogTitle>
+                      <p className="mt-0.5 text-sm text-muted-foreground sm:text-base">Fast order creation. Less clicks. More speed.</p>
+                    </div>
                   </div>
                 </DialogHeader>
-                <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-y-auto lg:grid-cols-[280px,minmax(0,1fr)] xl:grid-cols-[300px,minmax(0,1fr),310px] xl:overflow-hidden">
-                  <div className="border-b border-border bg-white lg:border-b-0 lg:border-r">
-                    <div className="flex h-full min-h-0 flex-col px-4 py-4 sm:px-5 sm:py-5">
-                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                        <div className="space-y-2 sm:col-span-2 lg:col-span-1">
-                          <Label>Order Type</Label>
-                          <Select value={counterOrderType} onValueChange={(value) => {
-                            setCounterOrderType(value);
-                            if (value !== 'dine_in') {
-                              setCounterTableId('');
-                            }
-                          }}>
-                            <SelectTrigger className="rounded-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="dine_in">Dine-In</SelectItem>
-                              <SelectItem value="takeaway">Takeaway</SelectItem>
-                            </SelectContent>
-                          </Select>
+                <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-y-auto md:grid-cols-[240px,minmax(0,1fr)] xl:grid-cols-[240px,minmax(0,1fr),290px] xl:overflow-hidden 2xl:grid-cols-[270px,minmax(0,1fr),310px]">
+                  <div className="border-b border-border bg-white md:border-b-0 md:border-r">
+                    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4">
+                      <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
+                        <div className="mb-3 flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">1</span>
+                          <h3 className="text-base font-bold">Order Type</h3>
                         </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setCounterOrderType('dine_in')}
+                            className={`rounded-xl border p-3 text-center transition-colors ${counterOrderType === 'dine_in' ? 'border-primary bg-orange-50 text-primary shadow-sm' : 'border-border bg-white text-slate-800 hover:bg-slate-50'}`}
+                          >
+                            <ShoppingCart className="mx-auto h-6 w-6" />
+                            <span className="mt-1.5 block font-bold">Dine-In</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCounterOrderType('takeaway');
+                              setCounterTableId('');
+                            }}
+                            className={`rounded-xl border p-3 text-center transition-colors ${counterOrderType === 'takeaway' ? 'border-primary bg-orange-50 text-primary shadow-sm' : 'border-border bg-white text-slate-800 hover:bg-slate-50'}`}
+                          >
+                            <Wallet className="mx-auto h-6 w-6" />
+                            <span className="mt-1.5 block font-bold">Takeaway</span>
+                          </button>
+                        </div>
+                      </div>
 
-                        {counterOrderType === 'dine_in' && (
-                          <div className="space-y-2">
-                            <Label>Table</Label>
-                            <div className="flex gap-2">
-                              <Select value={counterTableId} onValueChange={setCounterTableId}>
-                                <SelectTrigger className="rounded-full">
-                                  <SelectValue placeholder="Choose a table" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {tables.map((table) => (
-                                    <SelectItem key={table.table_id} value={table.table_id}>
-                                      Table {table.table_number}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <Button type="button" variant="outline" className="rounded-xl px-3">
-                                <CalendarDays className="h-4 w-4" />
-                              </Button>
-                            </div>
+                      {counterOrderType === 'dine_in' && (
+                        <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
+                          <div className="mb-3 flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">2</span>
+                            <h3 className="text-base font-bold">Select Table</h3>
                           </div>
-                        )}
+                          <div className="grid grid-cols-4 gap-2">
+                            {tables.slice(0, 12).map((table) => (
+                              <button
+                                key={table.table_id}
+                                type="button"
+                                onClick={() => setCounterTableId(table.table_id)}
+                                className={`h-10 rounded-xl border text-sm font-bold transition-colors ${counterTableId === table.table_id ? 'border-primary bg-primary text-white shadow-sm' : 'border-border bg-white text-slate-900 hover:bg-slate-50'}`}
+                              >
+                                T{table.table_number}
+                              </button>
+                            ))}
+                          </div>
+                          {tables.length > 12 && (
+                            <Select value={counterTableId} onValueChange={setCounterTableId}>
+                              <SelectTrigger className="mt-3 rounded-xl">
+                                <SelectValue placeholder="+ More Tables" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {tables.map((table) => (
+                                  <SelectItem key={table.table_id} value={table.table_id}>
+                                    Table {table.table_number}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
+                      )}
 
-                        <div className="space-y-2">
-                           <Label htmlFor="counter-customer-name">Customer Name (Optional)</Label>
+                      <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
+                        <div className="grid gap-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="counter-customer-name">Customer Name (Optional)</Label>
                           <Input
                             id="counter-customer-name"
                             value={counterCustomerName}
@@ -807,10 +823,10 @@ const BillingDashboard = ({ embedded = false }) => {
                             placeholder="Enter customer name"
                             className="rounded-full"
                           />
-                        </div>
+                          </div>
 
-                        <div className="space-y-2">
-                           <Label htmlFor="counter-phone">Phone Number (Optional)</Label>
+                          <div className="space-y-2">
+                            <Label htmlFor="counter-phone">Phone Number (Optional)</Label>
                           <Input
                             id="counter-phone"
                             value={counterPhone}
@@ -818,33 +834,44 @@ const BillingDashboard = ({ embedded = false }) => {
                             placeholder="Enter phone number"
                             className="rounded-full"
                           />
+                          </div>
                         </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
+                        <h3 className="text-base font-bold">Selected</h3>
+                        <div className="mt-3 space-y-2 text-sm">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground">Order Type</span>
+                            <span className="font-bold text-primary">{counterOrderType === 'takeaway' ? 'Takeaway' : 'Dine-In'}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground">Table</span>
+                            <span className="font-bold text-primary">
+                              {counterOrderType === 'takeaway'
+                                ? 'Takeaway'
+                                : (tables.find((table) => table.table_id === counterTableId)?.table_number ? `T${tables.find((table) => table.table_id === counterTableId)?.table_number}` : 'Not selected')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700">
+                        Tip: Tap any item card to add instantly. Use + for repeat items.
                       </div>
                     </div>
                   </div>
 
                   <div className="flex min-h-0 flex-col bg-white xl:border-r">
                     <div className="shrink-0 space-y-3 border-b border-border px-4 py-3 sm:px-5">
-                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                          <h3 className="text-xl font-semibold">Available Menu Items</h3>
-                          <p className="text-sm text-muted-foreground">
-                            {filteredMenuItems.length} showing out of {menuItems.length} items
-                          </p>
-                        </div>
-                        <Badge className="w-fit rounded-full bg-accent text-foreground">
-                          {cartItemCount} items selected
-                        </Badge>
-                      </div>
-
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <div className="relative flex-1">
                           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                           <Input
                             value={counterSearch}
                             onChange={(event) => setCounterSearch(event.target.value)}
-                            placeholder="Search by item name or description"
-                            className="rounded-full pl-11 pr-11"
+                            placeholder="Search items (e.g. Pizza, Burger, Coke...)"
+                            className="h-11 rounded-xl pl-11 pr-11 text-base"
                           />
                           {counterSearch && (
                             <button
@@ -858,8 +885,8 @@ const BillingDashboard = ({ embedded = false }) => {
                         </div>
 
                         <Select value={counterCategory} onValueChange={setCounterCategory}>
-                          <SelectTrigger className="w-full rounded-full border-primary/40 sm:w-[220px]">
-                            <SelectValue placeholder={`View by: ${selectedCategoryName}`} />
+                          <SelectTrigger className="h-11 w-full rounded-xl border-slate-200 bg-white sm:w-44">
+                            <SelectValue placeholder="Filter" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">View by: All Categories</SelectItem>
@@ -871,9 +898,35 @@ const BillingDashboard = ({ embedded = false }) => {
                           </SelectContent>
                         </Select>
                       </div>
+
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        <Button
+                          type="button"
+                          variant={counterCategory === 'all' ? 'default' : 'outline'}
+                          className="shrink-0 rounded-xl px-6"
+                          onClick={() => setCounterCategory('all')}
+                        >
+                          All
+                        </Button>
+                        {categories.slice(0, 6).map((category) => (
+                          <Button
+                            key={category.category_id}
+                            type="button"
+                            variant={counterCategory === category.category_id ? 'default' : 'outline'}
+                            className="shrink-0 rounded-xl px-4"
+                            onClick={() => setCounterCategory(category.category_id)}
+                          >
+                            {category.name}
+                          </Button>
+                        ))}
+                      </div>
+
+                      <p className="text-sm text-muted-foreground">
+                        {filteredMenuItems.length} items {counterCategory !== 'all' ? `in ${selectedCategoryName}` : ''}
+                      </p>
                     </div>
 
-                    <div className="max-h-[68dvh] min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4 lg:max-h-[70dvh] xl:max-h-none">
+                    <div className="max-h-[68dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 lg:max-h-[70dvh] 2xl:max-h-none">
                       {counterCatalogLoading ? (
                         <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
                           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
@@ -887,67 +940,34 @@ const BillingDashboard = ({ embedded = false }) => {
                           </p>
                         </div>
                       ) : (
-                        <div className="grid gap-3 sm:grid-cols-2 xl:gap-4">
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-4">
                           {filteredMenuItems.map((item) => {
                             const cartItem = counterCart.find((cartEntry) => cartEntry.item_id === item.item_id);
                             return (
                               <Card
                                 key={item.item_id}
-                                className={`overflow-hidden rounded-[24px] border-border transition-colors ${cartItem ? 'border-primary/30 bg-[#FFF8F4]' : 'bg-white'}`}
+                                className={`overflow-hidden rounded-2xl border-border transition-colors ${cartItem ? 'border-primary/40 bg-[#FFF8F4]' : 'bg-white'}`}
                               >
-                                <CardContent className="flex h-full flex-col p-4">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="flex min-w-0 items-center gap-3">
-                                      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-2xl bg-accent sm:h-14 sm:w-14">
-                                        {item.image && (
-                                          <img
-                                            src={normalizeImageUrl(item.image)}
-                                            alt={item.name}
-                                            className="h-full w-full object-cover"
-                                            onError={(event) => {
-                                              event.currentTarget.style.display = 'none';
-                                            }}
-                                          />
-                                        )}
-                                      </div>
-                                      <div className="min-w-0">
-                                        <p className="truncate text-lg font-semibold">{item.name}</p>
-                                      </div>
-                                    </div>
-                                  </div>
+                                <CardContent className="flex h-full flex-col p-3">
+                                  <button type="button" className="min-w-0 text-left" onClick={() => addCounterItem(item)}>
+                                    <p className="min-h-[2.6rem] overflow-hidden text-base font-semibold leading-snug text-slate-950">{item.name}</p>
+                                  </button>
 
-                                  <div className="mt-4 flex items-center justify-between gap-3">
-                                    <span className="text-lg font-bold text-primary sm:text-xl">{formatCurrency(item.price)}</span>
-                                    <div className="flex items-center gap-2 rounded-full border border-border bg-accent/60 px-1 py-1">
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-8 w-8 rounded-full p-0"
-                                        onClick={() => updateCounterQuantity(item.item_id, Math.max((cartItem?.quantity || 0) - 1, 0))}
-                                      >
-                                        -
-                                      </Button>
-                                      <span className="min-w-[1.5rem] text-center font-semibold">{cartItem?.quantity || 0}</span>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-8 w-8 rounded-full p-0"
-                                        onClick={() => cartItem ? updateCounterQuantity(item.item_id, cartItem.quantity + 1) : addCounterItem(item)}
-                                      >
-                                        +
-                                      </Button>
-                                    </div>
+                                  <div className="mt-3 flex items-center justify-between gap-3">
+                                    <span className="text-lg font-bold text-primary">{formatCurrency(item.price)}</span>
+                                    {cartItem && (
+                                      <Badge className="rounded-full bg-emerald-100 text-emerald-700">{cartItem.quantity}</Badge>
+                                    )}
                                   </div>
 
                                   <Button
                                     type="button"
-                                    variant="outline"
                                     onClick={() => addCounterItem(item)}
-                                    className="mt-4 w-full rounded-xl border-border bg-white text-base font-medium hover:bg-accent"
+                                    variant="outline"
+                                    className="mt-3 h-10 w-full rounded-xl border-orange-100 bg-orange-50 text-base font-bold text-primary hover:bg-orange-100"
                                   >
-                                    Add to Order
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    Add
                                   </Button>
                                 </CardContent>
                               </Card>
@@ -958,47 +978,47 @@ const BillingDashboard = ({ embedded = false }) => {
                     </div>
                   </div>
 
-                  <div className="flex min-h-0 flex-col overflow-hidden border-t border-border bg-white lg:col-span-2 xl:col-span-1 xl:border-t-0">
-                    <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5 sm:py-5">
+                  <div className="flex min-h-0 flex-col overflow-hidden border-t border-border bg-white md:col-span-2 xl:col-span-1 xl:border-t-0">
+                    <div className="shrink-0 border-b border-border px-4 py-3 sm:px-5">
                       <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="text-2xl font-semibold tracking-tight">Order Summary</h3>
-                          <p className="text-sm text-muted-foreground">
-                            {cartItemCount} item{cartItemCount !== 1 ? 's' : ''} in cart
-                          </p>
+                        <div className="flex items-center gap-3">
+                          <ShoppingCart className="h-5 w-5" />
+                          <h3 className="text-lg font-bold tracking-tight">Your Order ({cartItemCount})</h3>
                         </div>
                         {counterCart.length > 0 && (
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
-                            className="rounded-full text-muted-foreground"
+                            className="rounded-xl border-red-100 text-red-600 hover:bg-red-50"
                             onClick={() => setCounterCart([])}
                           >
-                            Clear
+                            Clear All
                           </Button>
                         )}
                       </div>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {cartItemCount} item{cartItemCount !== 1 ? 's' : ''} in cart
+                      </p>
                     </div>
 
                     <div className="max-h-[42dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 lg:max-h-[34dvh] xl:max-h-none">
-                      <div className="space-y-3">
+                      <div className="space-y-4">
                         {counterCart.length === 0 && (
-                          <div className="rounded-[24px] border border-dashed border-border bg-white p-6 text-center">
+                          <div className="rounded-2xl border border-dashed border-border bg-white p-5 text-center">
                             <ShoppingCart className="mx-auto h-10 w-10 text-muted-foreground" />
                             <p className="mt-3 text-sm font-medium text-foreground">No items added yet</p>
-                            <p className="mt-1 text-sm text-muted-foreground">
+                          <p className="text-sm text-muted-foreground">
                               Choose items from the center panel to start this counter order.
-                            </p>
+                          </p>
                           </div>
                         )}
 
                         {cartPreviewItems.map((item) => (
-                          <div key={item.item_id} className="rounded-[18px] border border-border bg-white px-4 py-3 shadow-sm">
+                          <div key={item.item_id} className="border-b border-border pb-4">
                             <div className="flex items-center gap-3">
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-base font-semibold">{item.name}</p>
-                                <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
                               </div>
                               <Button
                                 type="button"
@@ -1012,22 +1032,22 @@ const BillingDashboard = ({ embedded = false }) => {
                             </div>
 
                             <div className="mt-3 flex items-center gap-3">
-                              <div className="flex items-center rounded-full border border-border bg-accent/60 px-1 py-1">
+                              <div className="flex items-center overflow-hidden rounded-xl border border-border bg-white">
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full p-0"
+                                  className="h-9 w-10 rounded-none p-0"
                                   onClick={() => updateCounterQuantity(item.item_id, item.quantity - 1)}
                                 >
                                   -
                                 </Button>
-                                <div className="min-w-[2rem] text-center text-sm font-semibold">{item.quantity}</div>
+                                <div className="min-w-[2.5rem] border-x border-border text-center text-sm font-semibold">{item.quantity}</div>
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full p-0"
+                                  className="h-9 w-10 rounded-none p-0"
                                   onClick={() => updateCounterQuantity(item.item_id, item.quantity + 1)}
                                 >
                                   +
@@ -1042,48 +1062,36 @@ const BillingDashboard = ({ embedded = false }) => {
                               value={item.instructions}
                               onChange={(event) => updateCounterInstructions(item.item_id, event.target.value)}
                               placeholder="Special instructions"
-                              className="mt-3 min-h-[44px] rounded-2xl text-sm"
+                              className="mt-3 min-h-[40px] rounded-xl text-sm"
                             />
                           </div>
                         ))}
                       </div>
                     </div>
 
-                    <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-4 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] sm:px-5">
-                      <div className="mb-4 flex items-center justify-between text-lg font-bold">
+                    <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] sm:px-5">
+                      <div className="mb-3 flex items-center justify-between text-lg font-bold">
                         <span>Total</span>
                         <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={counterSubmitting || counterCart.length === 0}
-                          onClick={() => submitCounterOrder(true)}
-                          className="rounded-xl py-6 text-base"
-                        >
-                          <Printer className="mr-2 h-4 w-4" />
-                          Print
-                        </Button>
-                        <Button
-                          type="button"
-                          disabled={counterSubmitting || counterCart.length === 0}
-                          onClick={() => submitCounterOrder(false)}
-                          className="rounded-xl bg-[#2D8DA7] py-6 text-base hover:bg-[#24778d]"
-                        >
-                          {counterSubmitting ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Ordering...
-                            </>
-                          ) : (
-                            <>
-                              <ShoppingCart className="mr-2 h-4 w-4" />
-                              Order
-                            </>
-                          )}
-                        </Button>
-                      </div>
+                      <Button
+                        type="button"
+                        disabled={counterSubmitting || counterCart.length === 0}
+                        onClick={() => submitCounterOrder(false)}
+                        className="h-12 w-full rounded-xl bg-primary text-base font-bold hover:bg-[#C54E2C]"
+                      >
+                        {counterSubmitting ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Ordering...
+                          </>
+                        ) : (
+                          <>
+                            Place Order
+                            <span className="ml-2">→</span>
+                          </>
+                        )}
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -1500,13 +1508,19 @@ const BillingDashboard = ({ embedded = false }) => {
                     <CreditCard className="h-5 w-5 text-violet-600" />
                     Completed Bills
                   </CardTitle>
-                  <Button variant="outline" className="rounded-xl border-slate-200 text-slate-600">
-                    View All Bills
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-xl border-slate-200 text-slate-600"
+                    disabled={completedBills.length <= 10}
+                    onClick={() => setShowAllCompletedBills((current) => !current)}
+                  >
+                    {showAllCompletedBills ? 'Show Recent Bills' : 'View All Bills'}
                   </Button>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {completedBills.slice(0, 10).map((bill) => (
+            {visibleCompletedBills.map((bill) => (
               <Card key={bill.bill_id} className="rounded-2xl border-border bg-gray-50">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
@@ -1556,6 +1570,14 @@ const BillingDashboard = ({ embedded = false }) => {
                 </CardContent>
               </Card>
             ))}
+                    {completedBills.length === 0 && (
+                      <div className="col-span-full rounded-[24px] border border-dashed border-violet-200 bg-violet-50/40 p-10 text-center text-slate-500">
+                        <CreditCard className="mx-auto h-7 w-7 text-violet-500" />
+                        <div className="mt-3 text-base">
+                          No completed bills found for {transactionPeriod}.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>

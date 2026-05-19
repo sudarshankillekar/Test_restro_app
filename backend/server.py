@@ -39,6 +39,7 @@ from xlsx_export import build_xlsx_bytes, parse_xlsx_bytes
 import jwt
 import secrets
 
+BUSINESS_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -103,10 +104,28 @@ def parse_date_value(value: Optional[str], end_of_day: bool = False):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=BUSINESS_TIMEZONE)
     if end_of_day:
         parsed = parsed + timedelta(days=1)
-    return parsed
+    return parsed.astimezone(timezone.utc)
+
+
+def build_period_date_match(period: str = "daily"):
+    now = datetime.now(BUSINESS_TIMEZONE)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if period == "weekly":
+        start_date = today_start - timedelta(days=6)
+    elif period == "monthly":
+        start_date = today_start.replace(day=1)
+    else:
+        start_date = today_start
+
+    end_date = today_start + timedelta(days=1)
+    return {
+        "$gte": start_date.astimezone(timezone.utc),
+        "$lt": end_date.astimezone(timezone.utc),
+    }
 
 
 async def resolve_restaurant_access(request: Request, allowed_roles: list[str], restaurant_id: Optional[str] = None, allow_super_admin_filter: bool = False):
@@ -2363,6 +2382,54 @@ async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
     await db.cash_adjustments.insert_one(adjustment_doc)
     return {k: v for k, v in adjustment_doc.items() if k != "_id"}
 
+@api_router.get("/payments/completed")
+async def get_completed_payments(request: Request, period: str = "daily"):
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    payment_query = {
+        "restaurant_id": restaurant_id,
+        "status": "completed",
+        "created_at": build_period_date_match(period),
+    }
+    payments = await db.payments.find(payment_query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    linked_order_ids = sorted({
+        order_id
+        for payment in payments
+        for order_id in (payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else []))
+        if order_id
+    })
+
+    order_map = {}
+    if linked_order_ids:
+        orders = await db.orders.find(
+            {"restaurant_id": restaurant_id, "order_id": {"$in": linked_order_ids}},
+            {"_id": 0}
+        ).to_list(len(linked_order_ids))
+        enriched_orders = await enrich_orders(orders)
+        order_map = {order["order_id"]: order for order in enriched_orders}
+
+    completed_bills = []
+    for payment in payments:
+        payment_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+        payment_orders = [order_map[order_id] for order_id in payment_order_ids if order_id in order_map]
+        first_order = payment_orders[0] if payment_orders else {}
+        completed_bills.append({
+            "bill_id": payment.get("bill_id") or payment.get("payment_id"),
+            "table_label": first_order.get("table_label") or payment.get("table_id") or "",
+            "customer_name": first_order.get("customer_name") or "",
+            "payment": payment,
+            "orders": payment_orders,
+        })
+
+    return completed_bills
+
+
 @api_router.get("/payments/{order_id}")
 async def get_payment(order_id: str, request: Request):
     user = await get_current_user(request, db)
@@ -2393,18 +2460,7 @@ async def get_analytics(request: Request, period: str = "daily"):
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
     
-    # Calculate date range
-    now = datetime.now(timezone.utc)
-    if period == "daily":
-        start_date = now - timedelta(days=1)
-    elif period == "weekly":
-        start_date = now - timedelta(days=7)
-    elif period == "monthly":
-        start_date = now - timedelta(days=30)
-    else:
-        start_date = now - timedelta(days=1)
-
-    created_at_filter = {"$gte": start_date}
+    created_at_filter = build_period_date_match(period)
     
     # CRITICAL: Filter by restaurant_id for data isolation
     # Aggregate data
@@ -2545,49 +2601,87 @@ async def export_sales_data(
             raise HTTPException(status_code=400, detail="User not associated with any restaurant")
 
     created_at_filter = build_date_match(start_date, end_date)
-    order_query = {"status": "served"}
+    payment_query = {"status": "completed"}
     if scoped_restaurant_id:
-        order_query["restaurant_id"] = scoped_restaurant_id
+        payment_query["restaurant_id"] = scoped_restaurant_id
     if created_at_filter:
-        order_query["updated_at"] = created_at_filter
+        payment_query["created_at"] = created_at_filter
 
-    orders = await db.orders.find(order_query, {"_id": 0}).sort("updated_at", -1).to_list(5000)
-    orders = await enrich_orders(orders)
+    payments = await db.payments.find(payment_query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    linked_order_ids = sorted({
+        order_id
+        for payment in payments
+        for order_id in (payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else []))
+        if order_id
+    })
+    order_map = {}
+    if linked_order_ids:
+        linked_orders = await db.orders.find(
+            {"order_id": {"$in": linked_order_ids}},
+            {"_id": 0}
+        ).to_list(len(linked_order_ids))
+        order_map = {order["order_id"]: order for order in linked_orders}
 
     restaurant_names = {}
-    if user["role"] == "super_admin":
-        restaurant_ids = list({order.get("restaurant_id") for order in orders if order.get("restaurant_id")})
-        if restaurant_ids:
-            restaurants = await db.restaurants.find(
-                {"restaurant_id": {"$in": restaurant_ids}},
-                {"_id": 0, "restaurant_id": 1, "name": 1}
-            ).to_list(len(restaurant_ids))
-            restaurant_names = {restaurant["restaurant_id"]: restaurant["name"] for restaurant in restaurants}
+    restaurant_ids = list({payment.get("restaurant_id") for payment in payments if payment.get("restaurant_id")})
+    if restaurant_ids:
+        restaurants = await db.restaurants.find(
+            {"restaurant_id": {"$in": restaurant_ids}},
+            {"_id": 0, "restaurant_id": 1, "name": 1}
+        ).to_list(len(restaurant_ids))
+        restaurant_names = {restaurant["restaurant_id"]: restaurant["name"] for restaurant in restaurants}
 
     rows = []
-    for order in orders:
+    for payment in payments:
+        payment_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+        payment_orders = [order_map[order_id] for order_id in payment_order_ids if order_id in order_map]
+        table_numbers = sorted({
+            str(order.get("table_number") or order.get("table_label") or order.get("table_id") or "")
+            for order in payment_orders
+            if order.get("table_number") or order.get("table_label") or order.get("table_id")
+        })
+        customer_names = sorted({
+            str(order.get("customer_name") or "")
+            for order in payment_orders
+            if order.get("customer_name")
+        })
         items_summary = ", ".join(
             f"{item['name']} x{item['quantity']}"
+            for order in payment_orders
             for item in order.get("items", [])
         )
         rows.append([
-            restaurant_names.get(order.get("restaurant_id"), order.get("restaurant_name", "")),
-            order["order_id"],
-            order.get("updated_at") or order.get("created_at"),
-            order.get("table_number") or "",
+            restaurant_names.get(payment.get("restaurant_id"), payment.get("restaurant_name", "")),
+            payment.get("bill_id") or payment.get("payment_id"),
+            ", ".join(payment_order_ids),
+            payment.get("created_at"),
+            ", ".join(table_numbers),
+            ", ".join(customer_names),
             items_summary,
-            round(order.get("payment", {}).get("total", order.get("total", 0)), 2),
-            (order.get("payment", {}).get("payment_method") or "").upper(),
-            order.get("payment_status", "pending"),
+            round(float(payment.get("subtotal", 0) or 0), 2),
+            round(float(payment.get("service_charge", 0) or 0), 2),
+            round(float(payment.get("parcel_charge", 0) or 0), 2),
+            round(float(payment.get("tax", 0) or 0), 2),
+            round(float(payment.get("discount", 0) or 0), 2),
+            round(float(payment.get("total", 0) or 0), 2),
+            (payment.get("payment_method") or "").upper(),
+            payment.get("status", "completed"),
         ])
 
     workbook = build_xlsx_bytes(
         headers=[
             "Restaurant",
-            "Order ID",
+            "Bill Number",
+            "Linked Order IDs",
             "Date & Time",
             "Table Number",
+            "Customer",
             "Items Ordered",
+            "Subtotal",
+            "Service Charge",
+            "Parcel Charge",
+            "Tax",
+            "Discount",
             "Total Amount",
             "Payment Mode",
             "Payment Status",
