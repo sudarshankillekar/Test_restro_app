@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -77,6 +77,90 @@ const groupItemsByCategory = (items = []) => (
     return groups;
   }, {})
 );
+
+const KitchenOrderCard = memo(({
+  order,
+  meta,
+  selected,
+  onSelect,
+}) => {
+  const tone = statusTone[order.status] || statusTone.pending;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(order.order_id)}
+      className={`w-full rounded-xl border p-3 text-left transition-colors duration-150 ${
+        selected
+          ? 'border-emerald-600 bg-emerald-50 shadow-[0_8px_18px_rgba(22,163,74,0.12)]'
+          : `bg-white shadow-sm hover:bg-slate-50 ${tone.border}`
+      }`}
+      data-testid={`order-card-${order.order_id}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 gap-3">
+          <div className="w-16 shrink-0 border-r border-slate-200 pr-3">
+            <p className={`text-2xl font-black ${order.status === 'accepted' ? 'text-orange-600' : order.status === 'prepared' ? 'text-slate-700' : 'text-emerald-700'}`}>
+              #{meta.queueToken || '-'}
+            </p>
+            <h3 className="mt-2 truncate text-base font-black text-slate-950">{meta.label}</h3>
+            <p className="mt-1 text-sm font-medium text-slate-500">{meta.time}</p>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className={`rounded-full ${tone.badge}`}>{tone.label}</Badge>
+              {order.is_add_on && (
+                <Badge className="rounded-full bg-emerald-100 text-emerald-800">
+                  <Sparkles className="mr-1 h-3 w-3" />
+                  Add-on Order
+                </Badge>
+              )}
+            </div>
+            <div className="mt-2 flex items-center gap-2 text-sm font-black text-slate-950">
+              <Timer className="h-4 w-4" />
+              {meta.itemCount} Items
+            </div>
+            <div className="mt-1 space-y-0.5">
+              {meta.firstItems.map((item, index) => (
+                <div key={`${order.order_id}-preview-${index}`} className="truncate text-sm font-medium text-slate-950">
+                  • {item.quantity}x {item.name}
+                </div>
+              ))}
+              {meta.remainingItems > 0 && (
+                <p className={`text-sm font-black ${order.status === 'accepted' ? 'text-orange-600' : 'text-emerald-700'}`}>+ {meta.remainingItems} more item{meta.remainingItems !== 1 ? 's' : ''}</p>
+              )}
+              {order.add_on_to_order_id && (
+                <p className="inline-flex rounded-lg bg-emerald-100 px-2 py-1 text-xs font-black text-emerald-800">
+                  Added to Order {order.add_on_to_order_id}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="w-32 shrink-0">
+          <div className="text-right text-base font-black">
+            <span className={order.status === 'accepted' ? 'text-orange-600' : order.status === 'prepared' ? 'text-slate-700' : 'text-emerald-700'}>{meta.progress.ready}/{meta.progress.total}</span>
+            <span className="text-slate-500"> Ready</span>
+          </div>
+          <div className="mt-2 flex gap-1">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <span
+                key={index}
+                className={`h-2 flex-1 rounded-full ${
+                  index < Math.round(meta.progressPercent / 20)
+                    ? order.status === 'accepted'
+                      ? 'bg-orange-500'
+                      : 'bg-emerald-500'
+                    : 'bg-slate-200'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+});
 
   const playKitchenAlert = () => {
   if (typeof window === 'undefined') return;
@@ -257,14 +341,19 @@ const toggleSound = () => {
     activeOrders.find((order) => order.order_id === selectedOrderId) || activeOrders[0] || null
   ), [activeOrders, selectedOrderId]);
 
-  const getOrderProgress = (order) => {
+  const getOrderProgress = useCallback((order) => {
+    if (!order) return { ready: 0, total: 0 };
     const total = getItemCount(order);
     const checkedForOrder = checkedItems[order.order_id] || {};
     const ready = (order.items || []).reduce((count, item, index) => (
       count + (checkedForOrder[index] ? Number(item.quantity || 0) : 0)
     ), 0);
     return { ready, total };
-  };
+  }, [checkedItems]);
+
+  const handleSelectOrder = useCallback((orderId) => {
+    setSelectedOrderId(orderId);
+  }, []);
 
   const toggleItemChecked = (orderId, itemIndex) => {
     setCheckedItems((prev) => ({
@@ -380,6 +469,24 @@ const toggleSound = () => {
       return tokens;
     }, {});
   }, [orders]);
+
+  const orderMetaMap = useMemo(() => (
+    activeOrders.reduce((metaMap, order) => {
+      const progress = getOrderProgress(order);
+      const firstItems = (order.items || []).slice(0, 2);
+      metaMap[order.order_id] = {
+        queueToken: queueTokenMap[order.order_id],
+        label: getKitchenOrderLabel(order),
+        time: formatOrderTime(order.created_at),
+        itemCount: getItemCount(order),
+        firstItems,
+        remainingItems: Math.max((order.items || []).length - firstItems.length, 0),
+        progress,
+        progressPercent: progress.total ? Math.min((progress.ready / progress.total) * 100, 100) : 0,
+      };
+      return metaMap;
+    }, {})
+  ), [activeOrders, checkedItems, getOrderProgress, queueTokenMap]);
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: '#F3F4F6' }}>
@@ -390,6 +497,7 @@ const toggleSound = () => {
 
   const selectedProgress = selectedOrder ? getOrderProgress(selectedOrder) : { ready: 0, total: 0 };
   const selectedCategories = selectedOrder ? groupItemsByCategory(selectedOrder.items || []) : {};
+  const selectedCategoryEntries = Object.entries(selectedCategories);
   const selectedTone = selectedOrder ? (statusTone[selectedOrder.status] || statusTone.pending) : statusTone.pending;
 
   return (
@@ -479,88 +587,14 @@ const toggleSound = () => {
 
           <div className="grid gap-3">
             {activeOrders.map((order) => {
-              const tone = statusTone[order.status] || statusTone.pending;
-              const queueToken = queueTokenMap[order.order_id];
-              const progress = getOrderProgress(order);
-              const firstItems = (order.items || []).slice(0, 2);
-              const remainingItems = Math.max((order.items || []).length - firstItems.length, 0);
-              const selected = selectedOrder?.order_id === order.order_id;
-              const progressPercent = progress.total ? Math.min((progress.ready / progress.total) * 100, 100) : 0;
-
               return (
-                <button
+                <KitchenOrderCard
                   key={order.order_id}
-                  type="button"
-                  onClick={() => setSelectedOrderId(order.order_id)}
-                  className={`w-full rounded-2xl border p-4 text-left transition-all duration-200 ${
-                    selected
-                      ? 'border-emerald-600 bg-emerald-50 shadow-[0_12px_28px_rgba(22,163,74,0.16)]'
-                      : `bg-white shadow-sm hover:bg-slate-50 ${tone.border}`
-                  }`}
-                  data-testid={`order-card-${order.order_id}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 flex-1 gap-4">
-                      <div className="w-20 shrink-0 border-r border-slate-200 pr-3">
-                        <p className={`text-3xl font-black ${order.status === 'accepted' ? 'text-orange-600' : order.status === 'prepared' ? 'text-slate-700' : 'text-emerald-700'}`}>
-                          #{queueToken || '-'}
-                        </p>
-                        <h3 className="mt-3 truncate text-lg font-black text-slate-950">{getKitchenOrderLabel(order)}</h3>
-                        <p className="mt-2 text-sm font-medium text-slate-500">{formatOrderTime(order.created_at)}</p>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge className={`rounded-full ${tone.badge}`}>{tone.label}</Badge>
-                          {order.is_add_on && (
-                            <Badge className="rounded-full bg-emerald-100 text-emerald-800">
-                              <Sparkles className="mr-1 h-3 w-3" />
-                              Add-on Order
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="mt-3 flex items-center gap-2 text-sm font-black text-slate-950">
-                          <Timer className="h-4 w-4" />
-                          {getItemCount(order)} Items
-                        </div>
-                        <div className="mt-2 space-y-1">
-                          {firstItems.map((item, index) => (
-                            <div key={`${order.order_id}-preview-${index}`} className="truncate text-sm font-medium text-slate-950">
-                              • {item.quantity}x {item.name}
-                            </div>
-                          ))}
-                          {remainingItems > 0 && (
-                            <p className={`text-sm font-black ${order.status === 'accepted' ? 'text-orange-600' : 'text-emerald-700'}`}>+ {remainingItems} more item{remainingItems !== 1 ? 's' : ''}</p>
-                          )}
-                          {order.add_on_to_order_id && (
-                            <p className="inline-flex rounded-lg bg-emerald-100 px-2 py-1 text-xs font-black text-emerald-800">
-                              Added to Order {order.add_on_to_order_id}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="w-36 shrink-0">
-                      <div className="text-right text-lg font-black">
-                        <span className={order.status === 'accepted' ? 'text-orange-600' : order.status === 'prepared' ? 'text-slate-700' : 'text-emerald-700'}>{progress.ready}/{progress.total}</span>
-                        <span className="text-slate-500"> Ready</span>
-                      </div>
-                      <div className="mt-3 flex gap-1">
-                        {Array.from({ length: 5 }).map((_, index) => (
-                          <span
-                            key={index}
-                            className={`h-2 flex-1 rounded-full ${
-                              index < Math.round(progressPercent / 20)
-                                ? order.status === 'accepted'
-                                  ? 'bg-orange-500'
-                                  : 'bg-emerald-500'
-                                : 'bg-slate-200'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </button>
+                  order={order}
+                  meta={orderMetaMap[order.order_id]}
+                  selected={selectedOrderId === order.order_id}
+                  onSelect={handleSelectOrder}
+                />
               );
             })}
           </div>
@@ -624,24 +658,24 @@ const toggleSound = () => {
                 </div>
               </div>
 
-              <div className="flex-1 space-y-5 p-5 pb-28 sm:p-8 sm:pb-28">
-                {Object.entries(selectedCategories).map(([category, items]) => {
+              <div className={`flex-1 p-4 pb-24 sm:p-5 sm:pb-24 ${selectedCategoryEntries.length > 2 ? 'grid auto-rows-start gap-3 xl:grid-cols-2' : 'space-y-3'}`}>
+                {selectedCategoryEntries.map(([category, items]) => {
                   const collapseKey = `${selectedOrder.order_id}-${category}`;
                   const collapsed = collapsedCategories[collapseKey];
                   return (
-                    <section key={category} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <section key={category} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
                       <button
                         type="button"
                         onClick={() => toggleCategory(selectedOrder.order_id, category)}
-                        className="flex w-full items-center justify-between border-b border-slate-100 px-5 py-4 text-left transition-colors hover:bg-slate-50"
+                        className="flex w-full items-center justify-between border-b border-slate-100 px-4 py-2.5 text-left transition-colors hover:bg-slate-50"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                            <UtensilsCrossed className="h-5 w-5" />
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                            <UtensilsCrossed className="h-4 w-4" />
                           </div>
-                          <h3 className="text-lg font-black uppercase tracking-wide text-slate-950">{category} <span className="text-slate-500">({items.length})</span></h3>
+                          <h3 className="text-base font-black uppercase tracking-wide text-slate-950">{category} <span className="text-slate-500">({items.length})</span></h3>
                         </div>
-                        {collapsed ? <ChevronRight className="h-6 w-6 text-slate-950" /> : <ChevronDown className="h-6 w-6 text-slate-950" />}
+                        {collapsed ? <ChevronRight className="h-5 w-5 text-slate-950" /> : <ChevronDown className="h-5 w-5 text-slate-950" />}
                       </button>
 
                       {!collapsed && (
@@ -651,7 +685,7 @@ const toggleSound = () => {
                             return (
                               <label
                                 key={`${selectedOrder.order_id}-${item.itemIndex}`}
-                                className={`flex cursor-pointer items-start gap-4 px-5 py-4 transition-all duration-200 ${
+                                className={`flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-all duration-150 ${
                                   checked
                                     ? 'border-l-4 border-emerald-500 bg-emerald-50 text-emerald-900'
                                     : 'text-slate-950 hover:bg-slate-50'
@@ -661,22 +695,22 @@ const toggleSound = () => {
                                   type="checkbox"
                                   checked={checked}
                                   onChange={() => toggleItemChecked(selectedOrder.order_id, item.itemIndex)}
-                                  className="mt-1 h-7 w-7 rounded-lg border-slate-300 accent-emerald-600"
+                                  className="mt-0.5 h-6 w-6 rounded-lg border-slate-300 accent-emerald-600"
                                 />
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-3">
-                                    <span className="text-xl font-medium text-slate-950">{item.quantity}x</span>
-                                    <p className={`text-xl font-medium leading-tight ${checked ? 'text-slate-600 line-through opacity-70' : 'text-slate-950'}`}>
+                                    <span className="text-lg font-medium text-slate-950">{item.quantity}x</span>
+                                    <p className={`text-lg font-medium leading-tight ${checked ? 'text-slate-600 line-through opacity-70' : 'text-slate-950'}`}>
                                       {item.name}
                                     </p>
                                   </div>
                                   {item.instructions && (
-                                    <p className={`mt-2 text-base font-bold ${checked ? 'text-slate-500 line-through' : 'text-orange-600'}`}>
+                                    <p className={`mt-1 text-sm font-bold ${checked ? 'text-slate-500 line-through' : 'text-orange-600'}`}>
                                       {item.instructions}
                                     </p>
                                   )}
                                 </div>
-                                {checked && <CheckCircle2 className="mt-1 h-7 w-7 shrink-0 text-emerald-600" />}
+                                {checked && <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-600" />}
                               </label>
                             );
                           })}

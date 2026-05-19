@@ -824,8 +824,8 @@ const BillingDashboard = ({ embedded = false }) => {
                   </div>
 
                   <div className="flex min-h-0 flex-col bg-white xl:border-r">
-                    <div className="shrink-0 space-y-4 border-b border-border px-4 py-4 sm:px-5 sm:py-5">
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="shrink-0 space-y-3 border-b border-border px-4 py-3 sm:px-5">
+                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                         <div>
                           <h3 className="text-xl font-semibold">Available Menu Items</h3>
                           <p className="text-sm text-muted-foreground">
@@ -837,7 +837,7 @@ const BillingDashboard = ({ embedded = false }) => {
                         </Badge>
                       </div>
 
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <div className="relative flex-1">
                           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                           <Input
@@ -871,33 +871,9 @@ const BillingDashboard = ({ embedded = false }) => {
                           </SelectContent>
                         </Select>
                       </div>
-
-                      {categories.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            variant={counterCategory === 'all' ? 'default' : 'outline'}
-                            className="rounded-full"
-                            onClick={() => setCounterCategory('all')}
-                          >
-                            All
-                          </Button>
-                          {categories.map((category) => (
-                            <Button
-                              key={category.category_id}
-                              type="button"
-                              variant={counterCategory === category.category_id ? 'default' : 'outline'}
-                              className="rounded-full whitespace-nowrap"
-                              onClick={() => setCounterCategory(category.category_id)}
-                            >
-                              {category.name}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
                     </div>
 
-                    <div className="max-h-[58dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5 lg:max-h-[62dvh] xl:max-h-none">
+                    <div className="max-h-[68dvh] min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4 lg:max-h-[70dvh] xl:max-h-none">
                       {counterCatalogLoading ? (
                         <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
                           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
