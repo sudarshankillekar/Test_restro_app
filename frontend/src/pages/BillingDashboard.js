@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -1268,40 +1269,66 @@ const BillingDashboard = ({ embedded = false }) => {
                         </div>
                       </CardHeader>
                       <CardContent className="space-y-4">
-                        {group.orders.map((order) => (
-                          <div key={order.order_id} className="rounded-xl border border-border bg-accent/60 p-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="font-medium">{order.order_id}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {order.items.length} item{order.items.length > 1 ? 's' : ''} • {new Date(order.created_at).toLocaleString()}
-                                </p>
+                        <Accordion type="single" collapsible className="space-y-2">
+                          {group.orders.map((order) => (
+                            <AccordionItem
+                              key={order.order_id}
+                              value={order.order_id}
+                              className="overflow-hidden rounded-xl border border-border bg-accent/60 px-0"
+                            >
+                              <div className="space-y-3 p-3">
+                                <div className="flex flex-wrap gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-10 rounded-full px-4 text-sm font-semibold shadow-sm"
+                                    onClick={() => openEditOrder(order)}
+                                  >
+                                    <Pencil className="mr-1 h-3.5 w-3.5" />
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-10 rounded-full px-4 text-sm font-semibold shadow-sm"
+                                    onClick={() => printOrderTicket(order)}
+                                  >
+                                    <Printer className="mr-1 h-3.5 w-3.5" />
+                                    Print
+                                  </Button>
+                                  <AccordionTrigger className="h-10 flex-none rounded-full border border-input bg-background px-4 py-0 text-sm font-semibold text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground hover:no-underline [&>svg]:ml-2 [&>svg]:h-5 [&>svg]:w-5">
+                                    Details
+                                  </AccordionTrigger>
+                                </div>
+                                <div className="min-w-0 rounded-lg bg-white/70 px-3 py-2">
+                                  <p className="break-all font-medium">{order.order_id}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {order.items.length} item{order.items.length > 1 ? 's' : ''} • {new Date(order.created_at).toLocaleString()}
+                                  </p>
+                                </div>
                               </div>
-                              <div className="flex gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="rounded-full"
-                                  onClick={() => openEditOrder(order)}
-                                >
-                                  <Pencil className="mr-1 h-3.5 w-3.5" />
-                                  Edit
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="rounded-full"
-                                  onClick={() => printOrderTicket(order)}
-                                >
-                                  <Printer className="mr-1 h-3.5 w-3.5" />
-                                  Print
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                              <AccordionContent className="px-3 pb-3 pt-0">
+                                <div className="space-y-2">
+                                  {(order.items || []).map((item, index) => (
+                                    <div
+                                      key={`${order.order_id}-bill-item-${index}`}
+                                      className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm"
+                                    >
+                                      <span className="min-w-0 truncate">
+                                        {item.quantity}x {item.name}
+                                      </span>
+                                      <span className="shrink-0 font-medium">
+                                        {formatCurrency(Number(item.price || 0) * Number(item.quantity || 0))}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
+                          ))}
+                        </Accordion>
 
                         <div className="space-y-2 border-t pt-2">
                           <div className="flex justify-between">
@@ -1343,16 +1370,33 @@ const BillingDashboard = ({ embedded = false }) => {
 
                         <div className="space-y-2">
                           <Label>Payment Method</Label>
-                          <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                            <SelectTrigger className="rounded-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="cash">Cash</SelectItem>
-                              <SelectItem value="upi">UPI</SelectItem>
-                              <SelectItem value="card">Card</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Payment Method">
+                            {[
+                              { value: 'cash', label: 'Cash' },
+                              { value: 'upi', label: 'UPI' },
+                              { value: 'card', label: 'Card' },
+                            ].map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                role="radio"
+                                aria-checked={paymentMethod === option.value}
+                                onClick={() => setPaymentMethod(option.value)}
+                                className={`rounded-full border px-3 py-3 text-sm font-semibold transition-colors ${
+                                  paymentMethod === option.value
+                                    ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-sm'
+                                    : 'border-border bg-white text-slate-700 hover:bg-slate-50'
+                                }`}
+                              >
+                                <span className="mr-2 inline-flex h-3 w-3 rounded-full border border-current align-middle">
+                                  {paymentMethod === option.value && (
+                                    <span className="m-auto h-1.5 w-1.5 rounded-full bg-current" />
+                                  )}
+                                </span>
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
 
                         <Dialog>
