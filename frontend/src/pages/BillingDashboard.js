@@ -123,7 +123,8 @@ const BillingDashboard = ({ embedded = false }) => {
   const [counterCatalogLoading, setCounterCatalogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedGroup, setSelectedGroup] = useState(null);
-  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentMethod, setPaymentMethod] = useState('');
+  const [paymentMethodError, setPaymentMethodError] = useState('');
   const [discount, setDiscount] = useState(0);
   const [editingOrder, setEditingOrder] = useState(null);
   const [editingItems, setEditingItems] = useState([]);
@@ -523,6 +524,11 @@ const BillingDashboard = ({ embedded = false }) => {
 
   const processPayment = async () => {
     if (!currentSelectedGroup) return;
+    if (!paymentMethod) {
+      setPaymentMethodError('Please select a payment method before completing payment.');
+      toast.error('Please select a payment method.');
+      return;
+    }
 
     try {
       await api.post('/api/payments', {
@@ -537,6 +543,8 @@ const BillingDashboard = ({ embedded = false }) => {
       ]);
       toast.success('Bill completed successfully.');
       setSelectedGroup(null);
+      setPaymentMethod('');
+      setPaymentMethodError('');
       setDiscount(0);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Payment failed');
@@ -1370,7 +1378,7 @@ const BillingDashboard = ({ embedded = false }) => {
 
                         <div className="space-y-2">
                           <Label>Payment Method</Label>
-                          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Payment Method">
+                          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Payment Method" aria-invalid={Boolean(paymentMethodError)}>
                             {[
                               { value: 'cash', label: 'Cash' },
                               { value: 'upi', label: 'UPI' },
@@ -1381,7 +1389,10 @@ const BillingDashboard = ({ embedded = false }) => {
                                 type="button"
                                 role="radio"
                                 aria-checked={paymentMethod === option.value}
-                                onClick={() => setPaymentMethod(option.value)}
+                                onClick={() => {
+                                  setPaymentMethod(option.value);
+                                  setPaymentMethodError('');
+                                }}
                                 className={`rounded-full border px-3 py-3 text-sm font-semibold transition-colors ${
                                   paymentMethod === option.value
                                     ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-sm'
@@ -1397,12 +1408,22 @@ const BillingDashboard = ({ embedded = false }) => {
                               </button>
                             ))}
                           </div>
+                          {paymentMethodError && (
+                            <p className="text-sm font-medium text-destructive">{paymentMethodError}</p>
+                          )}
                         </div>
 
                         <Dialog>
                           <DialogTrigger asChild>
                             <Button
-                              onClick={() => setSelectedGroup(group)}
+                              onClick={(event) => {
+                                if (!paymentMethod) {
+                                  event.preventDefault();
+                                  setPaymentMethodError('Please select a payment method before completing payment.');
+                                  return;
+                                }
+                                setSelectedGroup(group);
+                              }}
                               className="w-full rounded-full bg-success hover:bg-[#3E6648]"
                             >
                               <DollarSign className="mr-2 h-4 w-4" />
