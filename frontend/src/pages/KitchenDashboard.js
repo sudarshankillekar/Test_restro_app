@@ -203,6 +203,7 @@ const KitchenOrderCard = memo(({
   const [checkedItems, setCheckedItems] = useState({});
   const [collapsedCategories, setCollapsedCategories] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [statusUpdating, setStatusUpdating] = useState({});
  
 
   useEffect(() => {
@@ -283,6 +284,25 @@ const KitchenOrderCard = memo(({
   };
 
   const updateStatus = async (orderId, status) => {
+    if (statusUpdating[orderId]) return;
+
+    const changedAt = new Date().toISOString();
+    let previousOrder = null;
+    setStatusUpdating((current) => ({ ...current, [orderId]: true }));
+    setOrders((prev) => prev.map((order) => {
+      if (order.order_id !== orderId) return order;
+      previousOrder = order;
+      return {
+        ...order,
+        status,
+        updated_at: changedAt,
+        timestamps: {
+          ...(order.timestamps || {}),
+          [status]: changedAt,
+        },
+      };
+    }));
+
     try {
      const response = await api.put(
         `/api/orders/${orderId}/status`,
@@ -293,7 +313,18 @@ const KitchenOrderCard = memo(({
       )));
       toast.success(`Order marked as ${status}`);
     } catch (error) {
+      if (previousOrder) {
+        setOrders((prev) => prev.map((order) => (
+          order.order_id === orderId ? previousOrder : order
+        )));
+      }
       toast.error(error.response?.data?.detail || 'Failed to update status');
+    } finally {
+      setStatusUpdating((current) => {
+        const next = { ...current };
+        delete next[orderId];
+        return next;
+      });
     }
   };
 
@@ -735,19 +766,21 @@ const toggleSound = () => {
                   {selectedOrder.status === 'pending' && (
                     <Button
                       onClick={() => updateStatus(selectedOrder.order_id, 'accepted')}
+                      disabled={Boolean(statusUpdating[selectedOrder.order_id])}
                       className={`h-14 rounded-lg text-xl font-black ${selectedTone.button}`}
                       data-testid={`accept-order-${selectedOrder.order_id}`}
                     >
-                      Accept
+                      {statusUpdating[selectedOrder.order_id] ? 'Accepting...' : 'Accept'}
                     </Button>
                   )}
                   {selectedOrder.status === 'accepted' && (
                     <Button
                       onClick={() => updateStatus(selectedOrder.order_id, 'prepared')}
+                      disabled={Boolean(statusUpdating[selectedOrder.order_id])}
                       className={`h-14 rounded-lg text-xl font-black ${selectedTone.button}`}
                       data-testid={`mark-prepared-${selectedOrder.order_id}`}
                     >
-                      Mark Prepared
+                      {statusUpdating[selectedOrder.order_id] ? 'Saving...' : 'Mark Prepared'}
                     </Button>
                   )}
                   {selectedOrder.status === 'prepared' && (

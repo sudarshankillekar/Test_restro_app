@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from typing import Optional
 from urllib.parse import urlparse
+import asyncio
 import socketio
 import uvicorn
 
@@ -40,6 +41,53 @@ import jwt
 import secrets
 
 BUSINESS_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+
+def schedule_background_task(coro):
+    task = asyncio.create_task(coro)
+
+    def log_background_error(done_task):
+        try:
+            done_task.result()
+        except Exception as exc:
+            logging.warning("Background task failed: %s", exc)
+
+    task.add_done_callback(log_background_error)
+    return task
+
+async def emit_order_event(event_name: str, payload: dict, restaurant_id: str, order_id: Optional[str] = None):
+    emits = [sio.emit(event_name, payload, room=f'restaurant_{restaurant_id}')]
+    if order_id:
+        emits.append(sio.emit(event_name, payload, room=f'order_{order_id}'))
+    await asyncio.gather(*emits)
+
+async def build_order_items_from_input(items, restaurant_id: str):
+    requested_item_ids = list(dict.fromkeys(item.item_id for item in items))
+    menu_items = await db.menu_items.find({
+        "item_id": {"$in": requested_item_ids},
+        "restaurant_id": restaurant_id
+    }, {"_id": 0}).to_list(len(requested_item_ids))
+    menu_item_map = {menu_item["item_id"]: menu_item for menu_item in menu_items}
+
+    total = 0
+    order_items = []
+    for item in items:
+        menu_item = menu_item_map.get(item.item_id)
+        if not menu_item:
+            raise HTTPException(status_code=404, detail=f"Item {item.item_id} not found")
+        if not menu_item["available"]:
+            raise HTTPException(status_code=400, detail=f"{menu_item['name']} is not available")
+
+        item_total = menu_item["price"] * item.quantity
+        total += item_total
+        order_items.append({
+            "item_id": item.item_id,
+            "name": menu_item["name"],
+            "quantity": item.quantity,
+            "price": menu_item["price"],
+            "instructions": item.instructions or ""
+        })
+
+    return round(total, 2), order_items
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -1807,35 +1855,15 @@ async def create_order(input: OrderCreate):
         "status": {"$nin": ["served", "cancelled"]}
     }, {"_id": 0, "order_id": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
     
-    # Calculate total
-    total = 0
-    order_items = []
-    for item in input.items:
-        menu_item = await db.menu_items.find_one({
-            "item_id": item.item_id,
-            "restaurant_id": restaurant_id
-        }, {"_id": 0})
-        if not menu_item:
-            raise HTTPException(status_code=404, detail=f"Item {item.item_id} not found")
-        if not menu_item["available"]:
-            raise HTTPException(status_code=400, detail=f"{menu_item['name']} is not available")
-        
-        item_total = menu_item["price"] * item.quantity
-        total += item_total
-        order_items.append({
-            "item_id": item.item_id,
-            "name": menu_item["name"],
-            "quantity": item.quantity,
-            "price": menu_item["price"],
-            "instructions": item.instructions or ""
-        })
+    # Calculate total with one menu lookup instead of one DB call per cart item.
+    total, order_items = await build_order_items_from_input(input.items, restaurant_id)
     
     latest_active_order = existing_active_orders[0] if existing_active_orders else None
     prioritized_add_on = any(order["status"] in ["pending", "accepted"] for order in existing_active_orders)
 
     order_id = f"ORD{secrets.token_hex(6).upper()}"
     
-    await upsert_customer_record(restaurant_id, session["customer_name"], session["phone"])
+    schedule_background_task(upsert_customer_record(restaurant_id, session["customer_name"], session["phone"]))
     
     order_doc = {
         "order_id": order_id,
@@ -1861,15 +1889,15 @@ async def create_order(input: OrderCreate):
 
     created_order = (await enrich_orders([{k: v for k, v in order_doc.items() if k != "_id"}]))[0]
 
-    await sio.emit('new_order', to_socket_payload(created_order), room=f'restaurant_{restaurant_id}')
+    schedule_background_task(emit_order_event('new_order', to_socket_payload(created_order), restaurant_id))
     if created_order.get("is_add_on"):
-        await sio.emit('kitchen_notification', {
+        schedule_background_task(sio.emit('kitchen_notification', {
             "type": "add_on",
             "order_id": created_order["order_id"],
             "table_id": created_order["table_id"],
             "table_label": created_order.get("table_label"),
             "message": f"Add-on order received for {created_order.get('table_label') or created_order['table_id']}"
-        }, room=f'restaurant_{restaurant_id}')
+        }, room=f'restaurant_{restaurant_id}'))
     
     return created_order
 
@@ -1921,27 +1949,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         "status": {"$nin": ["served", "cancelled"]}
     }, {"_id": 0, "order_id": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
 
-    total = 0
-    order_items = []
-    for item in input.items:
-        menu_item = await db.menu_items.find_one({
-            "item_id": item.item_id,
-            "restaurant_id": restaurant_id
-        }, {"_id": 0})
-        if not menu_item:
-            raise HTTPException(status_code=404, detail=f"Item {item.item_id} not found")
-        if not menu_item["available"]:
-            raise HTTPException(status_code=400, detail=f"{menu_item['name']} is not available")
-
-        item_total = menu_item["price"] * item.quantity
-        total += item_total
-        order_items.append({
-            "item_id": item.item_id,
-            "name": menu_item["name"],
-            "quantity": item.quantity,
-            "price": menu_item["price"],
-            "instructions": item.instructions or ""
-        })
+    total, order_items = await build_order_items_from_input(input.items, restaurant_id)
 
     latest_active_order = existing_active_orders[0] if existing_active_orders else None
     prioritized_add_on = any(order["status"] in ["pending", "accepted"] for order in existing_active_orders)
@@ -1955,7 +1963,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         "customer_name": display_customer_name,
         "phone": phone,
         "items": order_items,
-        "total": round(total, 2),
+        "total": total,
         "status": "pending",
         "payment_status": "pending",
         "is_add_on": bool(latest_active_order),
@@ -1972,19 +1980,19 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         }
     }
     await db.orders.insert_one(order_doc)
-    await upsert_customer_record(restaurant_id, display_customer_name, phone)
+    schedule_background_task(upsert_customer_record(restaurant_id, display_customer_name, phone))
 
     created_order = (await enrich_orders([{k: v for k, v in order_doc.items() if k != "_id"}]))[0]
 
-    await sio.emit('new_order', to_socket_payload(created_order), room=f'restaurant_{restaurant_id}')
+    schedule_background_task(emit_order_event('new_order', to_socket_payload(created_order), restaurant_id))
     if created_order.get("is_add_on"):
-        await sio.emit('kitchen_notification', {
+        schedule_background_task(sio.emit('kitchen_notification', {
             "type": "add_on",
             "order_id": created_order["order_id"],
             "table_id": created_order["table_id"],
             "table_label": created_order.get("table_label"),
             "message": f"Add-on order received for {created_order.get('table_label') or created_order['table_id']}"
-        }, room=f'restaurant_{restaurant_id}')
+        }, room=f'restaurant_{restaurant_id}'))
 
     return created_order
 
@@ -2133,8 +2141,9 @@ async def update_order_items(order_id: str, input: OrderItemsUpdate, request: Re
 
     updated_order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id}, {"_id": 0})
     enriched = await enrich_orders([updated_order])
-    await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'restaurant_{restaurant_id}')
-    await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'order_{order_id}')
+    schedule_background_task(
+        emit_order_event('order_status_updated', to_socket_payload(enriched[0]), restaurant_id, order_id)
+    )
     return enriched[0]
     
 @api_router.delete("/admin/orders/{order_id}")
@@ -2260,8 +2269,9 @@ async def update_order_status(order_id: str, request: Request):
     updated_order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id}, {"_id": 0})
     enriched = await enrich_orders([updated_order])
     
-    await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'restaurant_{restaurant_id}')
-    await sio.emit('order_status_updated', to_socket_payload(enriched[0]), room=f'order_{order_id}')
+    schedule_background_task(
+        emit_order_event('order_status_updated', to_socket_payload(enriched[0]), restaurant_id, order_id)
+    )
     
     return enriched[0]
 
@@ -2395,8 +2405,14 @@ async def create_payment(input: PaymentCreate, request: Request):
     }, {"_id": 0}).to_list(len(target_order_ids))
     enriched_orders = await enrich_orders(updated_orders)
     for enriched_order in enriched_orders:
-        await sio.emit('order_status_updated', to_socket_payload(enriched_order), room=f'restaurant_{restaurant_id}')
-        await sio.emit('order_status_updated', to_socket_payload(enriched_order), room=f'order_{enriched_order["order_id"]}')
+        schedule_background_task(
+            emit_order_event(
+                'order_status_updated',
+                to_socket_payload(enriched_order),
+                restaurant_id,
+                enriched_order["order_id"]
+            )
+        )
     
     return {k: v for k, v in payment_doc.items() if k != "_id"}
 
