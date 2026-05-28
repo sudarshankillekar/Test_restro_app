@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarDays, CreditCard, DollarSign, Loader2, LogOut, Menu, Pencil, Plus, Printer, Receipt, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -125,6 +125,9 @@ const BillingDashboard = ({ embedded = false }) => {
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('');
   const [paymentMethodError, setPaymentMethodError] = useState('');
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const completedPaymentKeysRef = useRef(new Set());
+  const paymentInFlightRef = useRef(false);
   const [discount, setDiscount] = useState(0);
   const [editingOrder, setEditingOrder] = useState(null);
   const [editingItems, setEditingItems] = useState([]);
@@ -530,6 +533,19 @@ const BillingDashboard = ({ embedded = false }) => {
       return;
     }
 
+    const paymentKey = currentSelectedGroup.orders
+      .map((order) => order.order_id)
+      .sort()
+      .join('|');
+
+    if (paymentInFlightRef.current || completedPaymentKeysRef.current.has(paymentKey)) {
+      toast.error('Bill generated already.');
+      return;
+    }
+
+    paymentInFlightRef.current = true;
+    setPaymentSubmitting(true);
+
     try {
       await api.post('/api/payments', {
         order_ids: currentSelectedGroup.orders.map((order) => order.order_id),
@@ -537,6 +553,7 @@ const BillingDashboard = ({ embedded = false }) => {
         discount: Number(discount) || 0,
       });
 
+      completedPaymentKeysRef.current.add(paymentKey);
       await Promise.all([
         loadTransactionSummary(),
         refreshOrders(),
@@ -548,6 +565,9 @@ const BillingDashboard = ({ embedded = false }) => {
       setDiscount(0);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Payment failed');
+    } finally {
+      paymentInFlightRef.current = false;
+      setPaymentSubmitting(false);
     }
   };
 
@@ -1469,8 +1489,12 @@ const BillingDashboard = ({ embedded = false }) => {
                                     <span className="text-primary">{formatCurrency(calculateBill(currentSelectedGroup || group).total)}</span>
                                   </div>
                                 </div>
-                                <Button onClick={processPayment} className="w-full rounded-full bg-success hover:bg-[#3E6648]">
-                                  Confirm Payment
+                                <Button
+                                  onClick={processPayment}
+                                  disabled={paymentSubmitting}
+                                  className="w-full rounded-full bg-success hover:bg-[#3E6648]"
+                                >
+                                  {paymentSubmitting ? 'Generating Bill...' : 'Confirm Payment'}
                                 </Button>
                               </div>
                             </DialogContent>

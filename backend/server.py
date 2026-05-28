@@ -2280,6 +2280,7 @@ async def create_payment(input: PaymentCreate, request: Request):
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
 
     target_order_ids = input.order_ids or ([input.order_id] if input.order_id else [])
+    target_order_ids = list(dict.fromkeys(target_order_ids))
     if not target_order_ids:
         raise HTTPException(status_code=400, detail="Please select at least one order to bill.")
 
@@ -2289,14 +2290,46 @@ async def create_payment(input: PaymentCreate, request: Request):
     }, {"_id": 0}).to_list(len(target_order_ids))
     if len(orders) != len(target_order_ids):
         raise HTTPException(status_code=404, detail="One or more orders were not found")
+    existing_payment = await db.payments.find_one({
+        "restaurant_id": restaurant_id,
+        "status": "completed",
+        "$or": [
+            {"order_id": {"$in": target_order_ids}},
+            {"order_ids": {"$in": target_order_ids}},
+        ],
+    }, {"_id": 0})
+    if existing_payment:
+        raise HTTPException(status_code=409, detail="Bill generated already.")
     if any(order["status"] != "prepared" for order in orders):
         raise HTTPException(status_code=400, detail="Only prepared orders can be billed.")
+    if any(order.get("payment_status") in ["completed", "processing"] for order in orders):
+        raise HTTPException(status_code=409, detail="Bill generated already.")
 
     table_ids = {order["table_id"] for order in orders}
     if len(table_ids) != 1:
         raise HTTPException(status_code=400, detail="Orders must belong to the same table to create one bill.")
     table_id = orders[0]["table_id"]
     table_number = orders[0].get("table_number")
+    billing_lock_id = f"LOCK{secrets.token_hex(6).upper()}"
+
+    lock_result = await db.orders.update_many(
+        {
+            "order_id": {"$in": target_order_ids},
+            "restaurant_id": restaurant_id,
+            "status": "prepared",
+            "$or": [
+                {"payment_status": {"$exists": False}},
+                {"payment_status": {"$nin": ["completed", "processing"]}},
+            ],
+        },
+        {"$set": {
+            "payment_status": "processing",
+            "billing_lock_id": billing_lock_id,
+            "updated_at": datetime.now(timezone.utc),
+        }}
+    )
+    if lock_result.modified_count != len(target_order_ids):
+        raise HTTPException(status_code=409, detail="Bill generated already.")
     
     subtotal = round(sum(order["total"] for order in orders), 2)
     restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
@@ -2330,17 +2363,31 @@ async def create_payment(input: PaymentCreate, request: Request):
         "created_at": datetime.now(timezone.utc),
         "created_by": user["_id"]
     }
-    await db.payments.insert_one(payment_doc)
-    
-    await db.orders.update_many(
-        {"order_id": {"$in": target_order_ids}, "restaurant_id": restaurant_id},
-        {"$set": {
-            "status": "served",
-            "payment_status": "completed",
-            "updated_at": datetime.now(timezone.utc),
-            "timestamps.served": datetime.now(timezone.utc).isoformat()
-        }}
-    )
+    try:
+        await db.payments.insert_one(payment_doc)
+        
+        await db.orders.update_many(
+            {"order_id": {"$in": target_order_ids}, "restaurant_id": restaurant_id, "billing_lock_id": billing_lock_id},
+            {"$set": {
+                "status": "served",
+                "payment_status": "completed",
+                "updated_at": datetime.now(timezone.utc),
+                "timestamps.served": datetime.now(timezone.utc).isoformat()
+            }, "$unset": {
+                "billing_lock_id": ""
+            }}
+        )
+    except Exception:
+        await db.orders.update_many(
+            {"order_id": {"$in": target_order_ids}, "restaurant_id": restaurant_id, "billing_lock_id": billing_lock_id},
+            {"$set": {
+                "payment_status": "pending",
+                "updated_at": datetime.now(timezone.utc),
+            }, "$unset": {
+                "billing_lock_id": ""
+            }}
+        )
+        raise
 
     updated_orders = await db.orders.find({
         "order_id": {"$in": target_order_ids},
