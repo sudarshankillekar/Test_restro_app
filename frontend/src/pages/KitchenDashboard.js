@@ -530,10 +530,11 @@ const toggleSound = () => {
   const selectedCategories = selectedOrder ? groupItemsByCategory(selectedOrder.items || []) : {};
   const selectedCategoryEntries = Object.entries(selectedCategories);
   const selectedTone = selectedOrder ? (statusTone[selectedOrder.status] || statusTone.pending) : statusTone.pending;
-  const tvShellHeightClass = embedded ? 'min-[1800px]:h-[calc(100vh-74px)]' : 'min-[1800px]:h-screen';
+  const tvMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tv') === '1';
+  const tvShellHeightClass = embedded ? 'h-[calc(100vh-74px)]' : 'h-screen';
 
   return (
-    <div className={`min-h-screen bg-[#F7F9FC] text-slate-950 min-[1800px]:overflow-hidden ${tvShellHeightClass}`}>
+    <div className={`min-h-screen bg-[#F7F9FC] text-slate-950 ${tvMode ? `overflow-hidden ${tvShellHeightClass}` : ''}`}>
       <div className="sticky top-0 z-10 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 text-slate-950 shadow-sm">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-5 py-4 sm:px-7 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-4 min-w-0">
@@ -575,8 +576,8 @@ const toggleSound = () => {
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-[1600px] gap-0 lg:grid-cols-[46%,54%] min-[1800px]:h-[calc(100%-73px)] min-[1800px]:overflow-hidden">
-        <aside className="min-h-[calc(100vh-73px)] space-y-4 border-r border-slate-200 bg-white p-5 sm:p-7 min-[1800px]:min-h-0 min-[1800px]:overflow-y-auto">
+      <div className={`mx-auto grid max-w-[1600px] gap-0 lg:grid-cols-[46%,54%] ${tvMode ? 'h-[calc(100%-73px)] overflow-hidden' : ''}`}>
+        <aside className={`min-h-[calc(100vh-73px)] space-y-4 border-r border-slate-200 bg-white p-5 sm:p-7 ${tvMode ? 'min-h-0 overflow-y-auto' : ''}`}>
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm">
               <div className="flex items-center justify-between gap-2">
@@ -632,10 +633,10 @@ const toggleSound = () => {
           </div>
         </aside>
 
-        <main className="min-h-[calc(100vh-73px)] bg-white min-[1800px]:min-h-0 min-[1800px]:overflow-hidden">
+        <main className={`min-h-[calc(100vh-73px)] bg-white ${tvMode ? 'min-h-0 overflow-hidden' : ''}`}>
           {selectedOrder ? (
-            <div className="flex min-h-[calc(100vh-73px)] flex-col min-[1800px]:h-full min-[1800px]:min-h-0">
-              <div className="border-b border-slate-200 p-4 sm:p-5 min-[1800px]:shrink-0 min-[1800px]:p-4">
+            <div className={`flex min-h-[calc(100vh-73px)] flex-col ${tvMode ? 'h-full min-h-0' : ''}`}>
+              <div className={`border-b border-slate-200 p-4 sm:p-5 ${tvMode ? 'shrink-0 p-4' : ''}`}>
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -644,9 +645,9 @@ const toggleSound = () => {
                       )}
                       <button type="button" className="ml-auto rounded-full text-slate-950 lg:hidden">×</button>
                     </div>
-                    <div className="mt-2 grid gap-4 lg:grid-cols-[minmax(220px,330px),minmax(280px,520px)] lg:items-start min-[1800px]:gap-3">
+                    <div className={`mt-2 grid gap-4 lg:grid-cols-[minmax(220px,330px),minmax(280px,520px)] lg:items-start ${tvMode ? 'gap-3' : ''}`}>
                       <div className="min-w-0">
-                        <div className="flex min-h-[62px] w-full items-center rounded-xl border border-emerald-200 bg-emerald-50 px-4 shadow-sm shadow-emerald-100 min-[1800px]:min-h-[52px]">
+                        <div className={`flex min-h-[62px] w-full items-center rounded-xl border border-emerald-200 bg-emerald-50 px-4 shadow-sm shadow-emerald-100 ${tvMode ? 'min-h-[52px]' : ''}`}>
                           <span className="truncate text-2xl font-black tracking-wide text-emerald-700 sm:text-3xl">
                             ORDER #{queueTokenMap[selectedOrder.order_id] || '-'}
                           </span>
@@ -657,7 +658,7 @@ const toggleSound = () => {
                           <span>{formatOrderTime(selectedOrder.created_at)}</span>
                         </div>
                       </div>
-                      <div className="min-h-[62px] rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm min-[1800px]:min-h-[52px] min-[1800px]:py-2.5">
+                      <div className={`min-h-[62px] rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm ${tvMode ? 'min-h-[52px] py-2.5' : ''}`}>
                         <p className="flex items-baseline gap-2 text-2xl font-black text-emerald-700 sm:text-3xl">
                           <span>{selectedProgress.ready}/{selectedProgress.total}</span>
                           <span className="text-xl font-bold text-slate-500 sm:text-2xl">Ready</span>
@@ -681,7 +682,7 @@ const toggleSound = () => {
                       <span className="flex items-center gap-1 text-sm font-bold text-slate-500"><ListChecks className="h-4 w-4" />{getItemCount(selectedOrder)} items</span>
                     </div>
                     {selectedOrder.add_on_to_order_id && (
-                      <p className="mt-5 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-lg font-black text-emerald-800 min-[1800px]:mt-3 min-[1800px]:py-3">
+                      <p className={`mt-5 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-lg font-black text-emerald-800 ${tvMode ? 'mt-3 py-3' : ''}`}>
                         <Sparkles className="h-6 w-6" />
                         Added to Order {selectedOrder.add_on_to_order_id}
                       </p>
@@ -690,7 +691,7 @@ const toggleSound = () => {
                 </div>
               </div>
 
-              <div className={`flex-1 p-4 pb-24 sm:p-5 sm:pb-24 min-[1800px]:min-h-0 min-[1800px]:overflow-y-auto min-[1800px]:pb-5 ${selectedCategoryEntries.length > 2 ? 'grid auto-rows-start gap-3 xl:grid-cols-2' : 'space-y-3'}`}>
+              <div className={`flex-1 p-4 pb-24 sm:p-5 sm:pb-24 ${tvMode ? 'min-h-0 overflow-y-auto pb-5' : ''} ${selectedCategoryEntries.length > 2 ? 'grid auto-rows-start gap-3 xl:grid-cols-2' : 'space-y-3'}`}>
                 {selectedCategoryEntries.map(([category, items]) => {
                   const collapseKey = `${selectedOrder.order_id}-${category}`;
                   const collapsed = collapsedCategories[collapseKey];
@@ -753,7 +754,7 @@ const toggleSound = () => {
                 })}
               </div>
 
-              <div className="sticky bottom-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur sm:px-7 min-[1800px]:static min-[1800px]:shrink-0">
+              <div className={`sticky bottom-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur sm:px-7 ${tvMode ? 'static shrink-0' : ''}`}>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Button
                     type="button"
