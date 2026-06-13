@@ -119,6 +119,9 @@ class CashAdjustmentCreate(BaseModel):
     amount: float
     reason: str
 
+class CashDrawerOpeningCreate(BaseModel):
+    opening_balance: float
+
 class AnalyticsResponse(BaseModel):
     total_orders: int
     total_revenue: float
@@ -126,3 +129,4 @@ class AnalyticsResponse(BaseModel):
     top_items: List[dict]
     payment_summary: Optional[dict] = None
     cash_adjustments: Optional[dict] = None
+    cash_drawer: Optional[dict] = None

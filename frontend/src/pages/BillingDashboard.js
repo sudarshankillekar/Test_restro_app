@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarDays, CreditCard, DollarSign, Loader2, LogOut, Menu, Pencil, Plus, Printer, Receipt, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -15,7 +15,12 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 
-const formatCurrency = (value = 0) => `₹${Number(value || 0).toFixed(2)}`;
+const formatCurrency = (value = 0) => new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+}).format(Number(value || 0));
 
 const createEmptyTransactionSummary = () => ({
   payment_summary: {
@@ -29,6 +34,18 @@ const createEmptyTransactionSummary = () => ({
   cash_adjustments: {
     total_adjustments: 0,
     entries: [],
+  },
+  cash_drawer: {
+    opening_balance: 0,
+    closing_balance: 0,
+    cash_payments: 0,
+    cash_adjustments: 0,
+    cash_refunds: 0,
+    net_cash_activity: 0,
+    opening_source: 'previous_day',
+    manual_opening_id: null,
+    period_start: null,
+    period_end: null,
   },
 });
 
@@ -156,6 +173,9 @@ const BillingDashboard = ({ embedded = false }) => {
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
+  const [openingBalanceInput, setOpeningBalanceInput] = useState('');
+  const [openingBalanceEditing, setOpeningBalanceEditing] = useState(false);
+  const [openingBalanceSubmitting, setOpeningBalanceSubmitting] = useState(false);
   const [showAllCompletedBills, setShowAllCompletedBills] = useState(false);
 
   const refreshOrders = async () => {
@@ -163,7 +183,7 @@ const BillingDashboard = ({ embedded = false }) => {
     setOrders(response.data);
   };
 
-  const loadTransactionSummary = async () => {
+  const loadTransactionSummary = useCallback(async () => {
     try {
       const [response, completedBillsResponse] = await Promise.all([
         api.get(`/api/analytics/dashboard?period=${transactionPeriod}`, { withCredentials: true }),
@@ -178,12 +198,16 @@ const BillingDashboard = ({ embedded = false }) => {
           ...createEmptyTransactionSummary().cash_adjustments,
           ...(response.data?.cash_adjustments || {}),
         },
+        cash_drawer: {
+          ...createEmptyTransactionSummary().cash_drawer,
+          ...(response.data?.cash_drawer || {}),
+        },
       });
       setCompletedBillRecords(completedBillsResponse.data || []);
     } catch (error) {
       toast.error('Failed to load transaction summary');
     }
-  };
+  }, [transactionPeriod]);
 
   const loadCounterCatalog = async () => {
     if (counterCatalogLoaded || counterCatalogLoading) return;
@@ -238,7 +262,7 @@ const BillingDashboard = ({ embedded = false }) => {
   useEffect(() => {
     loadTransactionSummary();
     setShowAllCompletedBills(false);
-  }, [transactionPeriod]);
+  }, [loadTransactionSummary]);
 
   useEffect(() => {
     if (counterDialogOpen) {
@@ -270,13 +294,15 @@ const BillingDashboard = ({ embedded = false }) => {
     socket.on('order_deleted', (payload) => {
       setOrders((prev) => prev.filter((order) => order.order_id !== payload.order_id));
     });
+    socket.on('cash_drawer_updated', loadTransactionSummary);
 
     return () => {
       socket.off('new_order', upsertOrder);
       socket.off('order_status_updated', upsertOrder);
       socket.off('order_deleted');
+      socket.off('cash_drawer_updated', loadTransactionSummary);
     };
-  }, [socket]);
+  }, [socket, loadTransactionSummary]);
 
   const handleLogout = async () => {
     await logout();
@@ -581,6 +607,11 @@ const BillingDashboard = ({ embedded = false }) => {
       toast.error('Please enter a valid adjustment amount.');
       return;
     }
+    const availableCash = Math.max(Number(transactionSummary.cash_drawer?.closing_balance || 0), 0);
+    if (parsedAmount < 0 && Math.abs(parsedAmount) > availableCash) {
+      toast.error(`Cannot withdraw ${formatCurrency(Math.abs(parsedAmount))}; only ${formatCurrency(availableCash)} cash is available.`);
+      return;
+    }
 
     setAdjustmentSubmitting(true);
     try {
@@ -596,6 +627,33 @@ const BillingDashboard = ({ embedded = false }) => {
       toast.error(error.response?.data?.detail || 'Failed to save cash adjustment');
     } finally {
       setAdjustmentSubmitting(false);
+    }
+  };
+
+  const openOpeningBalanceEditor = () => {
+    setOpeningBalanceInput(String(Math.max(Number(transactionSummary.cash_drawer?.opening_balance || 0), 0)));
+    setOpeningBalanceEditing(true);
+  };
+
+  const saveOpeningBalance = async () => {
+    const parsedAmount = Number(openingBalanceInput);
+    if (openingBalanceInput === '' || Number.isNaN(parsedAmount) || parsedAmount < 0) {
+      toast.error('Please enter a valid opening balance.');
+      return;
+    }
+
+    setOpeningBalanceSubmitting(true);
+    try {
+      await api.post('/api/cash-drawer/opening', {
+        opening_balance: parsedAmount,
+      }, { withCredentials: true });
+      await loadTransactionSummary();
+      setOpeningBalanceEditing(false);
+      toast.success('Opening balance updated.');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to update opening balance');
+    } finally {
+      setOpeningBalanceSubmitting(false);
     }
   };
 
@@ -673,8 +731,11 @@ const BillingDashboard = ({ embedded = false }) => {
     : (categories.find((category) => category.category_id === counterCategory)?.name || 'Category');
   const paymentSummary = transactionSummary.payment_summary || createEmptyTransactionSummary().payment_summary;
   const cashAdjustments = transactionSummary.cash_adjustments || createEmptyTransactionSummary().cash_adjustments;
+  const cashDrawer = transactionSummary.cash_drawer || createEmptyTransactionSummary().cash_drawer;
   const recentAdjustmentEntries = cashAdjustments.entries?.slice(0, 5) || [];
-  const adjustedCashCollected = Number(paymentSummary.cash || 0) + Number(cashAdjustments.total_adjustments || 0);
+  const adjustedCashCollected = Math.max(Number(paymentSummary.cash || 0) + Number(cashAdjustments.total_adjustments || 0), 0);
+  const openingBalance = Math.max(Number(cashDrawer.opening_balance || 0), 0);
+  const closingBalance = Math.max(Number(cashDrawer.closing_balance || 0), 0);
   const dashboardStats = [
     {
       label: 'Ready To Bill',
@@ -731,7 +792,7 @@ const BillingDashboard = ({ embedded = false }) => {
   return (
     <div className="min-h-screen bg-[#f4f7fb]">
       <div className="border-b border-white/70 bg-white/90 shadow-[0_10px_40px_rgba(15,23,42,0.05)] backdrop-blur sticky top-0 z-10">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-3 min-w-0">
             <Button variant="outline" size="icon" className="h-11 w-11 rounded-2xl border-slate-200 bg-white text-slate-600 shadow-sm">
               <Menu className="h-5 w-5" />
@@ -750,7 +811,57 @@ const BillingDashboard = ({ embedded = false }) => {
               )}
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex w-full min-w-0 flex-col gap-2 rounded-2xl border border-slate-100 bg-white/85 px-3 py-2 shadow-sm sm:w-auto sm:flex-row sm:items-center sm:gap-4">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                <Wallet className="h-4 w-4" />
+              </div>
+              {openingBalanceEditing ? (
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 text-sm font-bold text-slate-700">Opening</span>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={openingBalanceInput}
+                    onChange={(event) => setOpeningBalanceInput(event.target.value)}
+                    className="h-9 w-28 rounded-xl border-slate-200 text-sm"
+                    aria-label="Opening balance"
+                  />
+                  <Button
+                    type="button"
+                    onClick={saveOpeningBalance}
+                    disabled={openingBalanceSubmitting}
+                    className="h-9 rounded-xl px-3 text-xs font-bold"
+                  >
+                    {openingBalanceSubmitting ? 'Saving' : 'Set'}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex min-w-0 items-baseline gap-3">
+                  <span className="shrink-0 text-sm font-bold text-slate-700">Opening</span>
+                  <span className="truncate text-base font-black text-emerald-600">{formatCurrency(openingBalance)}</span>
+                  <button
+                    type="button"
+                    onClick={openOpeningBalanceEditor}
+                    className="shrink-0 rounded-lg px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="hidden h-9 w-px bg-slate-200 sm:block" />
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+                <CreditCard className="h-4 w-4" />
+              </div>
+              <div className="flex min-w-0 items-baseline gap-3">
+                <span className="shrink-0 text-sm font-bold text-slate-700">Closing (Expected)</span>
+                <span className="truncate text-base font-black text-violet-600">{formatCurrency(closingBalance)}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 xl:justify-end">
             <Dialog open={counterDialogOpen} onOpenChange={(open) => {
               setCounterDialogOpen(open);
               if (!open) {
@@ -1182,11 +1293,13 @@ const BillingDashboard = ({ embedded = false }) => {
 
         <div className="rounded-[28px] border border-white/70 bg-white/80 px-4 py-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] backdrop-blur">
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
-            <span>Cash total includes all cash adjustments.</span>
+            <span>Drawer balance uses cash only. UPI and card payments are excluded.</span>
+            <span className="font-medium text-slate-700">Opening: {formatCurrency(openingBalance)}</span>
             <span className="font-medium text-slate-700">Base cash: {formatCurrency(paymentSummary.cash)}</span>
             <span className={Number(cashAdjustments.total_adjustments || 0) >= 0 ? 'font-medium text-emerald-600' : 'font-medium text-rose-600'}>
               Adjustment: {formatCurrency(cashAdjustments.total_adjustments)}
             </span>
+            <span className="font-semibold text-slate-900">Closing: {formatCurrency(closingBalance)}</span>
           </div>
         </div>
 
@@ -1230,7 +1343,7 @@ const BillingDashboard = ({ embedded = false }) => {
                   {adjustmentSubmitting ? 'Saving...' : 'Save Adjustment'}
                 </Button>
                 <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">
-                  This updates the daily transaction view only. Use a negative amount for cash-out or shortage, and a positive amount for cash-in correction.
+                  This updates the cash drawer balance for the current restaurant day. Use a negative amount for cash-out or shortage, and a positive amount for cash-in correction.
                 </div>
               </CardContent>
             </Card>

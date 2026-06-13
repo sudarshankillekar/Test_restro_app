@@ -34,7 +34,7 @@ from subscription import (
 from models import (
     LoginRequest, RegisterRequest, UserResponse, MenuItemCreate, MenuItemUpdate,
     TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, CounterOrderCreate, OrderItemsUpdate, OrderResponse,
-    PaymentCreate, CashAdjustmentCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
+    PaymentCreate, CashAdjustmentCreate, CashDrawerOpeningCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
 from xlsx_export import build_xlsx_bytes, parse_xlsx_bytes
 import jwt
@@ -289,6 +289,7 @@ async def build_transaction_summary(restaurant_id: str, created_at_filter: dict)
 
     adjustments = await db.cash_adjustments.find(adjustment_query, {"_id": 0}).sort("created_at", -1).to_list(5000)
     total_adjustments = round(sum(float(item.get("amount", 0) or 0) for item in adjustments), 2)
+    cash_drawer = await build_cash_drawer_summary(restaurant_id, build_period_date_match("daily"))
 
     return {
         "payment_summary": payment_summary,
@@ -296,6 +297,106 @@ async def build_transaction_summary(restaurant_id: str, created_at_filter: dict)
             "total_adjustments": total_adjustments,
             "entries": adjustments,
         },
+        "cash_drawer": cash_drawer,
+    }
+
+
+async def get_cash_activity_total(restaurant_id: str, created_at_filter: dict):
+    cash_payments = await db.payments.find({
+        "restaurant_id": restaurant_id,
+        "status": "completed",
+        "payment_method": "cash",
+        "created_at": created_at_filter,
+    }, {"_id": 0, "total": 1, "payment_type": 1}).to_list(5000)
+
+    cash_received = 0.0
+    cash_refunds = 0.0
+    for payment in cash_payments:
+        amount = round(float(payment.get("total", 0) or 0), 2)
+        payment_type = (payment.get("payment_type") or "").strip().lower()
+        if payment_type == "refund" or amount < 0:
+            cash_refunds = round(cash_refunds + abs(amount), 2)
+        else:
+            cash_received = round(cash_received + amount, 2)
+
+    cash_adjustments = await db.cash_adjustments.find({
+        "restaurant_id": restaurant_id,
+        "created_at": created_at_filter,
+    }, {"_id": 0, "amount": 1}).to_list(5000)
+    adjustment_total = round(sum(float(item.get("amount", 0) or 0) for item in cash_adjustments), 2)
+
+    return {
+        "cash_payments": cash_received,
+        "cash_refunds": cash_refunds,
+        "cash_adjustments": adjustment_total,
+        "net_cash_activity": round(cash_received + adjustment_total - cash_refunds, 2),
+    }
+
+
+async def build_cash_drawer_summary(
+    restaurant_id: str,
+    created_at_filter: dict,
+    period_cash_total: float = 0,
+    period_adjustment_total: float = 0,
+):
+    period_start = created_at_filter.get("$gte") if created_at_filter else None
+    period_end = created_at_filter.get("$lt") if created_at_filter else None
+
+    opening_activity = {
+        "cash_payments": 0.0,
+        "cash_refunds": 0.0,
+        "cash_adjustments": 0.0,
+        "net_cash_activity": 0.0,
+    }
+    if period_start:
+        opening_activity = await get_cash_activity_total(
+            restaurant_id,
+            {"$lt": period_start},
+        )
+    manual_opening = None
+    if period_start and period_end:
+        manual_opening = await db.cash_drawer_openings.find_one(
+            {
+                "restaurant_id": restaurant_id,
+                "business_day_start": period_start,
+                "business_day_end": period_end,
+            },
+            {"_id": 0},
+            sort=[("updated_at", -1)],
+        )
+
+    today_activity = {
+        "cash_payments": round(float(period_cash_total or 0), 2),
+        "cash_refunds": 0.0,
+        "cash_adjustments": round(float(period_adjustment_total or 0), 2),
+        "net_cash_activity": round(float(period_cash_total or 0) + float(period_adjustment_total or 0), 2),
+    }
+    if period_start or period_end:
+        activity_filter = {}
+        if period_start:
+            activity_filter["$gte"] = period_start
+        if period_end:
+            activity_filter["$lt"] = period_end
+        today_activity = await get_cash_activity_total(restaurant_id, activity_filter)
+
+    opening_balance = round(max(opening_activity["net_cash_activity"], 0), 2)
+    opening_source = "previous_day"
+    if manual_opening:
+        opening_balance = round(max(float(manual_opening.get("opening_balance", 0) or 0), 0), 2)
+        opening_source = "manual"
+    closing_balance = round(max(opening_balance + today_activity["net_cash_activity"], 0), 2)
+
+    return {
+        "opening_balance": opening_balance,
+        "closing_balance": closing_balance,
+        "cash_payments": today_activity["cash_payments"],
+        "cash_adjustments": today_activity["cash_adjustments"],
+        "cash_refunds": today_activity["cash_refunds"],
+        "net_cash_activity": today_activity["net_cash_activity"],
+        "opening_source": opening_source,
+        "manual_opening_id": (manual_opening or {}).get("opening_id"),
+        "period_start": period_start,
+        "period_end": period_end,
     }
 
 
@@ -2399,6 +2500,15 @@ async def create_payment(input: PaymentCreate, request: Request):
         )
         raise
 
+    if (input.payment_method or "").strip().lower() == "cash":
+        schedule_background_task(
+            sio.emit(
+                "cash_drawer_updated",
+                {"reason": "cash_payment", "payment_id": payment_doc["payment_id"]},
+                room=f"restaurant_{restaurant_id}",
+            )
+        )
+
     updated_orders = await db.orders.find({
         "order_id": {"$in": target_order_ids},
         "restaurant_id": restaurant_id
@@ -2432,10 +2542,20 @@ async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
     if float(input.amount) == 0:
         raise HTTPException(status_code=400, detail="Adjustment amount cannot be zero.")
 
+    adjustment_amount = round(float(input.amount), 2)
+    if adjustment_amount < 0:
+        cash_drawer = await build_cash_drawer_summary(restaurant_id, build_period_date_match("daily"))
+        available_cash = round(float(cash_drawer.get("closing_balance", 0) or 0), 2)
+        if abs(adjustment_amount) > available_cash:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot withdraw {abs(adjustment_amount):.2f}; only {available_cash:.2f} cash is available in the drawer.",
+            )
+
     adjustment_doc = {
         "adjustment_id": f"ADJ{secrets.token_hex(6).upper()}",
         "restaurant_id": restaurant_id,
-        "amount": round(float(input.amount), 2),
+        "amount": adjustment_amount,
         "reason": input.reason.strip(),
         "created_at": datetime.now(timezone.utc),
         "created_by": user["_id"],
@@ -2443,7 +2563,70 @@ async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
         "created_by_role": user.get("role"),
     }
     await db.cash_adjustments.insert_one(adjustment_doc)
+    schedule_background_task(
+        sio.emit(
+            "cash_drawer_updated",
+            {"reason": "cash_adjustment", "adjustment_id": adjustment_doc["adjustment_id"]},
+            room=f"restaurant_{restaurant_id}",
+        )
+    )
     return {k: v for k, v in adjustment_doc.items() if k != "_id"}
+
+
+@api_router.post("/cash-drawer/opening")
+async def set_cash_drawer_opening(input: CashDrawerOpeningCreate, request: Request):
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    opening_balance = round(float(input.opening_balance or 0), 2)
+    if opening_balance < 0:
+        raise HTTPException(status_code=400, detail="Opening balance cannot be negative.")
+
+    daily_filter = build_period_date_match("daily")
+    now = datetime.now(timezone.utc)
+    existing = await db.cash_drawer_openings.find_one({
+        "restaurant_id": restaurant_id,
+        "business_day_start": daily_filter["$gte"],
+        "business_day_end": daily_filter["$lt"],
+    }, {"_id": 0})
+    opening_id = (existing or {}).get("opening_id") or f"OPEN{secrets.token_hex(6).upper()}"
+    opening_doc = {
+        "opening_id": opening_id,
+        "restaurant_id": restaurant_id,
+        "business_day_start": daily_filter["$gte"],
+        "business_day_end": daily_filter["$lt"],
+        "opening_balance": opening_balance,
+        "updated_at": now,
+        "updated_by": user["_id"],
+        "updated_by_name": user.get("name") or user.get("email") or "Staff",
+        "updated_by_role": user.get("role"),
+    }
+
+    await db.cash_drawer_openings.update_one(
+        {
+            "restaurant_id": restaurant_id,
+            "business_day_start": daily_filter["$gte"],
+            "business_day_end": daily_filter["$lt"],
+        },
+        {
+            "$set": opening_doc,
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+    schedule_background_task(
+        sio.emit(
+            "cash_drawer_updated",
+            {"reason": "opening_balance", "opening_id": opening_id},
+            room=f"restaurant_{restaurant_id}",
+        )
+    )
+    return opening_doc
 
 @api_router.get("/payments/completed")
 async def get_completed_payments(request: Request, period: str = "daily"):
@@ -2571,6 +2754,7 @@ async def get_analytics(request: Request, period: str = "daily"):
             "best_seller": None,
             "payment_summary": transaction_summary["payment_summary"],
             "cash_adjustments": transaction_summary["cash_adjustments"],
+            "cash_drawer": transaction_summary["cash_drawer"],
         }
     
     # Top selling items for this restaurant only
@@ -2642,6 +2826,7 @@ async def get_analytics(request: Request, period: str = "daily"):
         "best_seller": best_seller,
         "payment_summary": transaction_summary["payment_summary"],
         "cash_adjustments": transaction_summary["cash_adjustments"],
+        "cash_drawer": transaction_summary["cash_drawer"],
     }
 
 
@@ -2799,6 +2984,10 @@ async def startup_event():
         await db.customer_sessions.create_index("session_token", unique=True)
         await db.payments.create_index([("restaurant_id", 1), ("order_id", 1)])
         await db.cash_adjustments.create_index([("restaurant_id", 1), ("created_at", -1)])
+        await db.cash_drawer_openings.create_index(
+            [("restaurant_id", 1), ("business_day_start", -1)],
+            unique=True,
+        )
         
         # Run initial subscription check
         await check_and_expire_subscriptions(db)
