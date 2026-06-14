@@ -1254,13 +1254,13 @@ const BillingDashboard = ({ embedded = false }) => {
       </div>
 
       <div className="max-w-[1440px] mx-auto p-4 sm:p-6 space-y-6">
-        <div className="rounded-[28px] border border-white/70 bg-white/85 p-4 shadow-[0_12px_30px_rgba(15,23,42,0.04)] backdrop-blur">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="rounded-2xl border border-slate-100 bg-white/85 px-3 py-2 shadow-sm backdrop-blur">
+          <div className="flex min-h-[58px] flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Transaction Summary</p>
+              <p className="text-sm font-bold text-slate-700">Transaction Summary</p>
             </div>
             <Select value={transactionPeriod} onValueChange={setTransactionPeriod}>
-              <SelectTrigger className="w-full rounded-full border-slate-200 bg-white sm:w-40">
+              <SelectTrigger className="h-10 w-full rounded-xl border-slate-200 bg-white sm:w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1272,18 +1272,18 @@ const BillingDashboard = ({ embedded = false }) => {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
           {dashboardStats.map((stat) => {
             const Icon = stat.icon;
             return (
-              <Card key={stat.label} className="rounded-[24px] border border-white/70 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-                <CardContent className="flex items-center gap-4 p-5">
-                  <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${stat.tintClassName}`}>
-                    <Icon className="h-5 w-5" />
+              <Card key={stat.label} className="rounded-2xl border border-slate-100 bg-white/85 shadow-sm">
+                <CardContent className="flex min-h-[58px] items-center gap-2 px-3 py-2">
+                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${stat.tintClassName}`}>
+                    <Icon className="h-4 w-4" />
                   </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-[15px] font-semibold text-slate-500">{stat.label}</p>
-                    <p className={`mt-4 text-[2.15rem] font-bold leading-none ${stat.valueClassName}`}>{stat.value}</p>
+                  <div className="min-w-0 sm:flex sm:items-baseline sm:gap-3">
+                    <p className="truncate text-sm font-bold text-slate-700">{stat.label}</p>
+                    <p className={`truncate text-base font-black leading-tight ${stat.valueClassName}`}>{stat.value}</p>
                   </div>
                 </CardContent>
               </Card>
