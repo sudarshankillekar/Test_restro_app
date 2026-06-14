@@ -342,16 +342,28 @@ async def build_cash_drawer_summary(
     period_start = created_at_filter.get("$gte") if created_at_filter else None
     period_end = created_at_filter.get("$lt") if created_at_filter else None
 
-    opening_activity = {
+    previous_opening = None
+    previous_activity = {
         "cash_payments": 0.0,
         "cash_refunds": 0.0,
         "cash_adjustments": 0.0,
         "net_cash_activity": 0.0,
     }
     if period_start:
-        opening_activity = await get_cash_activity_total(
+        previous_start = period_start - timedelta(days=1)
+        previous_end = period_start
+        previous_opening = await db.cash_drawer_openings.find_one(
+            {
+                "restaurant_id": restaurant_id,
+                "business_day_start": previous_start,
+                "business_day_end": previous_end,
+            },
+            {"_id": 0},
+            sort=[("updated_at", -1)],
+        )
+        previous_activity = await get_cash_activity_total(
             restaurant_id,
-            {"$lt": period_start},
+            {"$gte": previous_start, "$lt": previous_end},
         )
     manual_opening = None
     if period_start and period_end:
@@ -379,7 +391,8 @@ async def build_cash_drawer_summary(
             activity_filter["$lt"] = period_end
         today_activity = await get_cash_activity_total(restaurant_id, activity_filter)
 
-    opening_balance = round(max(opening_activity["net_cash_activity"], 0), 2)
+    previous_opening_balance = round(max(float((previous_opening or {}).get("opening_balance", 0) or 0), 0), 2)
+    opening_balance = round(max(previous_opening_balance + previous_activity["net_cash_activity"], 0), 2)
     opening_source = "previous_day"
     if manual_opening:
         opening_balance = round(max(float(manual_opening.get("opening_balance", 0) or 0), 0), 2)
