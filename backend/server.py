@@ -2751,13 +2751,12 @@ async def get_analytics(request: Request, period: str = "daily"):
     }))
     empty_tables = max(total_tables - occupied_tables, 0)
     transaction_summary = await build_transaction_summary(restaurant_id, created_at_filter)
-    adjustment_total = round(transaction_summary["cash_adjustments"].get("total_adjustments", 0), 2)
     billed_revenue = round(transaction_summary["payment_summary"].get("total_collected", 0), 2)
     
     if not result:
         return {
             "total_orders": 0,
-            "total_revenue": round(billed_revenue + adjustment_total, 2),
+            "total_revenue": billed_revenue,
             "avg_order_value": 0,
             "top_items": [],
             "peak_hours": [],
@@ -2821,16 +2820,15 @@ async def get_analytics(request: Request, period: str = "daily"):
             "quantity": top_items[0]["quantity"]
         }
 
-    adjusted_revenue = round(billed_revenue + adjustment_total, 2)
-    adjusted_avg_order_value = round(
-        adjusted_revenue / result[0]["total_orders"],
+    avg_order_value = round(
+        billed_revenue / result[0]["total_orders"],
         2,
     ) if result[0]["total_orders"] else 0
     
     return {
         "total_orders": result[0]["total_orders"],
-        "total_revenue": adjusted_revenue,
-        "avg_order_value": adjusted_avg_order_value,
+        "total_revenue": billed_revenue,
+        "avg_order_value": avg_order_value,
         "top_items": [{"name": item["_id"], "quantity": item["quantity"], "revenue": item["revenue"]} for item in top_items],
         "peak_hours": [],
         "occupied_tables": occupied_tables,

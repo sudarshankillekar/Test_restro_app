@@ -733,7 +733,7 @@ const BillingDashboard = ({ embedded = false }) => {
   const cashAdjustments = transactionSummary.cash_adjustments || createEmptyTransactionSummary().cash_adjustments;
   const cashDrawer = transactionSummary.cash_drawer || createEmptyTransactionSummary().cash_drawer;
   const recentAdjustmentEntries = cashAdjustments.entries?.slice(0, 5) || [];
-  const adjustedCashCollected = Math.max(Number(paymentSummary.cash || 0) + Number(cashAdjustments.total_adjustments || 0), 0);
+  const cashCollected = Math.max(Number(paymentSummary.cash || 0), 0);
   const openingBalance = Math.max(Number(cashDrawer.opening_balance || 0), 0);
   const closingBalance = Math.max(Number(cashDrawer.closing_balance || 0), 0);
   const dashboardStats = [
@@ -760,7 +760,7 @@ const BillingDashboard = ({ embedded = false }) => {
     },
     {
       label: 'Cash Collected',
-      value: formatCurrency(adjustedCashCollected),
+      value: formatCurrency(cashCollected),
       icon: Wallet,
       valueClassName: 'text-emerald-600',
       tintClassName: 'bg-emerald-50 text-emerald-600',
