@@ -14,6 +14,8 @@ import CustomerMenu from './pages/CustomerMenu';
 import OrderTracking from './pages/OrderTracking';
 import KitchenDashboard from './pages/KitchenDashboard';
 import BillingDashboard from './pages/BillingDashboard';
+import POSDashboard from './pages/POSDashboard';
+import POSLogin from './pages/POSLogin';
 import OperationsDashboard from './pages/OperationsDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
@@ -33,6 +35,7 @@ function AppRouter() {
     <Routes>
       <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/pos-login" element={<POSLogin />} />
       <Route path="/register" element={<Register />} />
       <Route path="/restaurant/register" element={<RestaurantRegistration />} />
       
@@ -63,6 +66,14 @@ function AppRouter() {
         element={
           <ProtectedRoute allowedRoles={['billing', 'admin']}>
             <BillingDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pos"
+        element={
+          <ProtectedRoute allowedRoles={['pos']}>
+            <POSDashboard />
           </ProtectedRoute>
         }
       />

@@ -49,6 +49,8 @@ const Login = () => {
         navigate('/billing');
       } else if (user.role === 'waiter') {
         navigate('/waiter');
+      } else if (user.role === 'pos') {
+        navigate('/pos');
       }  
     } catch (error) {
       const errorMsg = formatApiErrorDetail(error.response?.data?.detail) || error.message;

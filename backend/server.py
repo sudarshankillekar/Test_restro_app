@@ -34,7 +34,7 @@ from subscription import (
 from models import (
     LoginRequest, RegisterRequest, UserResponse, MenuItemCreate, MenuItemUpdate,
     TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, CounterOrderCreate, OrderItemsUpdate, OrderResponse,
-    PaymentCreate, CashAdjustmentCreate, CashDrawerOpeningCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
+    PaymentCreate, PosCheckoutCreate, PosBillUpdate, CashAdjustmentCreate, CashDrawerOpeningCreate, AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
 from xlsx_export import build_xlsx_bytes, parse_xlsx_bytes
 import jwt
@@ -214,7 +214,7 @@ async def get_restaurant_id_from_request(
     try:
         _, resolved_restaurant_id = await resolve_restaurant_access(
             request,
-            ["admin", "kitchen", "billing", "kitchen_billing", "waiter"],
+            ["admin", "kitchen", "billing", "kitchen_billing", "waiter", "pos"],
         )
         return resolved_restaurant_id
     except HTTPException:
@@ -1008,7 +1008,7 @@ async def get_my_subscription(request: Request):
 async def get_restaurant_profile(request: Request):
     """Restaurant admin/staff views their restaurant profile details"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing", "waiter"]:
+    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing", "waiter", "pos"]:
         raise HTTPException(status_code=403, detail="Restaurant access required")
 
     restaurant_id = user.get("restaurant_id")
@@ -1208,7 +1208,7 @@ async def get_subscription_plans():
 
 @api_router.post("/admin/staff")
 async def create_staff(input: RegisterRequest, request: Request):
-    """Restaurant admin creates kitchen/billing/waiter staff"""
+    """Restaurant admin creates kitchen/billing/waiter/POS staff"""
     user = await get_current_user(request, db)
     if user["role"] not in ["admin"]:
         raise HTTPException(status_code=403, detail="Restaurant admin access required")
@@ -1221,8 +1221,8 @@ async def create_staff(input: RegisterRequest, request: Request):
     await check_restaurant_subscription(db, restaurant_id)
     
     # Validate role - admin can only create restaurant staff accounts
-    if input.role not in ["kitchen", "billing", "kitchen_billing", "waiter"]:
-        raise HTTPException(status_code=400, detail="Can only create kitchen, billing, kitchen+billing, or waiter staff")
+    if input.role not in ["kitchen", "billing", "kitchen_billing", "waiter", "pos"]:
+        raise HTTPException(status_code=400, detail="Can only create kitchen, billing, kitchen+billing, waiter, or POS staff")
     
     # Check if email exists
     email = input.email.lower()
@@ -1260,7 +1260,7 @@ async def get_staff(request: Request):
     
     # Get all staff for this restaurant
     staff = await db.users.find(
-        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter"]}},
+        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter", "pos"]}},
         {"_id": 0, "password_hash": 0}
     ).to_list(1000)
     
@@ -1279,11 +1279,11 @@ async def delete_staff(email: str, request: Request):
     
     await check_restaurant_subscription(db, restaurant_id)
     
-    # Delete staff (only kitchen/billing/waiter)
+    # Delete staff (only kitchen/billing/waiter/POS)
     result = await db.users.delete_one({
         "email": email.lower(),
         "restaurant_id": restaurant_id,
-        "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter"]}
+        "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter", "pos"]}
     })
     
     if result.deleted_count == 0:
@@ -2540,10 +2540,347 @@ async def create_payment(input: PaymentCreate, request: Request):
     return {k: v for k, v in payment_doc.items() if k != "_id"}
 
 
+@api_router.post("/pos/checkout")
+async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
+    """Create a POS-only bill without sending the order through kitchen approval."""
+    user = await get_current_user(request, db)
+    if user["role"] != "pos":
+        raise HTTPException(status_code=403, detail="POS access required")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    await check_restaurant_subscription(db, restaurant_id)
+
+    order_type = (input.order_type or "dine_in").strip().lower()
+    if order_type not in ["dine_in", "takeaway"]:
+        raise HTTPException(status_code=400, detail="order_type must be dine_in or takeaway")
+
+    payment_method = (input.payment_method or "").strip().lower()
+    if payment_method not in ["cash", "upi", "card"]:
+        raise HTTPException(status_code=400, detail="payment_method must be cash, upi, or card")
+
+    if not input.items:
+        raise HTTPException(status_code=400, detail="Please add at least one item.")
+
+    customer_name = (input.customer_name or "").strip()
+    phone = (input.phone or "").strip()
+    display_customer_name = customer_name or ("Takeaway Customer" if order_type == "takeaway" else "Walk-in Customer")
+    table_id = None
+    table_number = None
+    table_label = None
+
+    if order_type == "dine_in":
+        table_id = (input.table_id or "").strip()
+        if not table_id:
+            raise HTTPException(status_code=400, detail="Please select a table for dine-in order.")
+        table = await db.tables.find_one({"table_id": table_id, "restaurant_id": restaurant_id}, {"_id": 0})
+        if not table:
+            raise HTTPException(status_code=404, detail="Selected table not found.")
+        table_number = table.get("table_number")
+        table_label = f"Table {table_number}" if table_number is not None else table_id
+    else:
+        table_id = f"pos_takeaway_{secrets.token_hex(6)}"
+        table_label = f"Takeaway {display_customer_name}"
+
+    subtotal, order_items = await build_order_items_from_input(input.items, restaurant_id)
+    restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    billing_settings = normalize_billing_settings(restaurant)
+    bill_amounts = calculate_bill_amounts(
+        subtotal,
+        billing_settings,
+        order_type == "takeaway",
+        input.discount or 0,
+    )
+    now = datetime.now(timezone.utc)
+    order_id = f"ORD{secrets.token_hex(6).upper()}"
+    bill_id = f"BILL{secrets.token_hex(5).upper()}"
+
+    order_doc = {
+        "order_id": order_id,
+        "table_id": table_id,
+        "table_number": table_number,
+        "table_label": table_label,
+        "restaurant_id": restaurant_id,
+        "customer_name": display_customer_name,
+        "phone": phone,
+        "items": order_items,
+        "total": subtotal,
+        "status": "served",
+        "payment_status": "completed",
+        "is_add_on": False,
+        "add_on_to_order_id": None,
+        "priority": "normal",
+        "order_type": order_type,
+        "order_source": "pos",
+        "created_by_role": user["role"],
+        "created_by_name": user.get("name") or user.get("email"),
+        "created_at": now,
+        "updated_at": now,
+        "timestamps": {
+            "pending": now.isoformat(),
+            "accepted": now.isoformat(),
+            "prepared": now.isoformat(),
+            "served": now.isoformat(),
+        },
+    }
+    payment_doc = {
+        "payment_id": f"PAY{secrets.token_hex(6).upper()}",
+        "bill_id": bill_id,
+        "order_id": order_id,
+        "order_ids": [order_id],
+        "restaurant_id": restaurant_id,
+        "table_id": table_id,
+        "table_number": table_number,
+        "subtotal": bill_amounts["subtotal"],
+        "tax": bill_amounts["tax"],
+        "tax_percentage": bill_amounts["tax_percentage"],
+        "service_charge": bill_amounts["service_charge"],
+        "service_charge_percentage": bill_amounts["service_charge_percentage"],
+        "parcel_charge": bill_amounts["parcel_charge"],
+        "discount": bill_amounts["discount"],
+        "total": bill_amounts["total"],
+        "payment_method": payment_method,
+        "status": "completed",
+        "created_at": now,
+        "created_by": user["_id"],
+        "created_by_role": user["role"],
+    }
+
+    await db.orders.insert_one(order_doc)
+    try:
+        await db.payments.insert_one(payment_doc)
+    except Exception:
+        await db.orders.delete_one({"order_id": order_id, "restaurant_id": restaurant_id})
+        raise
+
+    schedule_background_task(upsert_customer_record(restaurant_id, display_customer_name, phone))
+    if payment_method == "cash":
+        schedule_background_task(
+            sio.emit(
+                "cash_drawer_updated",
+                {"reason": "pos_cash_payment", "payment_id": payment_doc["payment_id"]},
+                room=f"restaurant_{restaurant_id}",
+            )
+        )
+
+    completed_order = (await enrich_orders([{k: v for k, v in order_doc.items() if k != "_id"}]))[0]
+    return {
+        "bill_id": bill_id,
+        "table_label": table_label,
+        "customer_name": display_customer_name,
+        "payment": {k: v for k, v in payment_doc.items() if k != "_id"},
+        "orders": [completed_order],
+    }
+
+
+@api_router.get("/pos/summary")
+async def get_pos_summary(request: Request):
+    user = await get_current_user(request, db)
+    if user["role"] != "pos":
+        raise HTTPException(status_code=403, detail="POS access required")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    return await build_transaction_summary(restaurant_id, build_period_date_match("daily"))
+
+
+@api_router.get("/pos/completed-bills")
+async def get_pos_completed_bills(request: Request, period: str = "daily"):
+    user = await get_current_user(request, db)
+    if user["role"] != "pos":
+        raise HTTPException(status_code=403, detail="POS access required")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    payment_query = {
+        "restaurant_id": restaurant_id,
+        "status": "completed",
+        "created_at": build_period_date_match(period),
+    }
+    payments = await db.payments.find(payment_query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    linked_order_ids = sorted({
+        order_id
+        for payment in payments
+        for order_id in (payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else []))
+        if order_id
+    })
+
+    order_map = {}
+    if linked_order_ids:
+        orders = await db.orders.find(
+            {"restaurant_id": restaurant_id, "order_id": {"$in": linked_order_ids}},
+            {"_id": 0}
+        ).to_list(len(linked_order_ids))
+        enriched_orders = await enrich_orders(orders)
+        order_map = {order["order_id"]: order for order in enriched_orders}
+
+    completed_bills = []
+    for payment in payments:
+        payment_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+        payment_orders = [order_map[order_id] for order_id in payment_order_ids if order_id in order_map]
+        first_order = payment_orders[0] if payment_orders else {}
+        completed_bills.append({
+            "bill_id": payment.get("bill_id") or payment.get("payment_id"),
+            "table_label": first_order.get("table_label") or payment.get("table_id") or "",
+            "customer_name": first_order.get("customer_name") or "",
+            "payment": payment,
+            "orders": payment_orders,
+        })
+
+    return completed_bills
+
+
+@api_router.patch("/pos/completed-bills/{bill_id}")
+async def update_pos_completed_bill(bill_id: str, input: PosBillUpdate, request: Request):
+    user = await get_current_user(request, db)
+    if user["role"] != "pos":
+        raise HTTPException(status_code=403, detail="POS access required")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    payment = await db.payments.find_one(
+        {
+            "restaurant_id": restaurant_id,
+            "status": "completed",
+            "$or": [{"bill_id": bill_id}, {"payment_id": bill_id}],
+        },
+        {"_id": 0}
+    )
+    if not payment:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    payment_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+    orders = []
+    if payment_order_ids:
+        orders = await db.orders.find(
+            {"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}},
+            {"_id": 0}
+        ).to_list(len(payment_order_ids))
+
+    update_payment = {}
+    update_order = {}
+    subtotal = round(sum(order.get("total", 0) for order in orders), 2) if orders else payment.get("subtotal", 0)
+    is_takeaway = any(order.get("order_type") == "takeaway" for order in orders)
+    payment_method = (input.payment_method or payment.get("payment_method") or "").strip().lower()
+    if input.payment_method is not None:
+        if payment_method not in ["cash", "upi", "card"]:
+            raise HTTPException(status_code=400, detail="payment_method must be cash, upi, or card")
+        update_payment["payment_method"] = payment_method
+
+    if input.items is not None:
+        if not input.items:
+            raise HTTPException(status_code=400, detail="Bill must have at least one item.")
+        if not payment_order_ids:
+            raise HTTPException(status_code=400, detail="Bill has no linked POS order.")
+        subtotal, order_items = await build_order_items_from_input(input.items, restaurant_id)
+        update_order["items"] = order_items
+        update_order["total"] = subtotal
+
+    if input.discount is not None or input.items is not None:
+        settings = {
+            "tax_enabled": bool(payment.get("tax_percentage", 0)),
+            "tax_percentage": payment.get("tax_percentage", 0),
+            "service_charge_enabled": bool(payment.get("service_charge_percentage", 0)),
+            "service_charge_percentage": payment.get("service_charge_percentage", 0),
+            "parcel_charge_enabled": bool(payment.get("parcel_charge", 0)),
+            "parcel_charge": payment.get("parcel_charge", 0),
+        }
+        bill_amounts = calculate_bill_amounts(
+            subtotal,
+            settings,
+            is_takeaway,
+            input.discount if input.discount is not None else payment.get("discount", 0),
+        )
+        update_payment.update({
+            "subtotal": bill_amounts["subtotal"],
+            "tax": bill_amounts["tax"],
+            "service_charge": bill_amounts["service_charge"],
+            "parcel_charge": bill_amounts["parcel_charge"],
+            "discount": bill_amounts["discount"],
+            "total": bill_amounts["total"],
+        })
+
+    if input.customer_name is not None:
+        update_order["customer_name"] = (input.customer_name or "").strip() or "Walk-in Customer"
+    if input.phone is not None:
+        update_order["phone"] = (input.phone or "").strip()
+
+    now = datetime.now(timezone.utc)
+    if update_payment:
+        update_payment["updated_at"] = now
+        await db.payments.update_one(
+            {"payment_id": payment["payment_id"], "restaurant_id": restaurant_id},
+            {"$set": update_payment}
+        )
+    if update_order and payment_order_ids:
+        update_order["updated_at"] = now
+        await db.orders.update_many(
+            {"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}},
+            {"$set": update_order}
+        )
+
+    if update_payment.get("payment_method") == "cash" or payment.get("payment_method") == "cash":
+        schedule_background_task(
+            sio.emit(
+                "cash_drawer_updated",
+                {"reason": "pos_bill_updated", "payment_id": payment["payment_id"]},
+                room=f"restaurant_{restaurant_id}",
+            )
+        )
+
+    return {"message": "Bill updated successfully"}
+
+
+@api_router.delete("/pos/completed-bills/{bill_id}")
+async def delete_pos_completed_bill(bill_id: str, request: Request):
+    user = await get_current_user(request, db)
+    if user["role"] != "pos":
+        raise HTTPException(status_code=403, detail="POS access required")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    payment = await db.payments.find_one(
+        {
+            "restaurant_id": restaurant_id,
+            "status": "completed",
+            "$or": [{"bill_id": bill_id}, {"payment_id": bill_id}],
+        },
+        {"_id": 0}
+    )
+    if not payment:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    payment_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+    await db.payments.delete_one({"payment_id": payment["payment_id"], "restaurant_id": restaurant_id})
+    if payment_order_ids:
+        await db.orders.delete_many({"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}})
+
+    if (payment.get("payment_method") or "").strip().lower() == "cash":
+        schedule_background_task(
+            sio.emit(
+                "cash_drawer_updated",
+                {"reason": "pos_bill_deleted", "payment_id": payment["payment_id"]},
+                room=f"restaurant_{restaurant_id}",
+            )
+        )
+
+    return {"message": "Bill deleted successfully"}
+
+
 @api_router.post("/cash-adjustments")
 async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing", "pos"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     restaurant_id = user.get("restaurant_id")
@@ -2589,7 +2926,7 @@ async def create_cash_adjustment(input: CashAdjustmentCreate, request: Request):
 @api_router.post("/cash-drawer/opening")
 async def set_cash_drawer_opening(input: CashDrawerOpeningCreate, request: Request):
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
+    if user["role"] not in ["admin", "billing", "kitchen_billing", "pos"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     restaurant_id = user.get("restaurant_id")

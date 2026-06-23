@@ -96,6 +96,22 @@ class CounterOrderCreate(BaseModel):
     phone: Optional[str] = None
     items: List[OrderItem]
 
+class PosCheckoutCreate(BaseModel):
+    order_type: str = "dine_in"  # dine_in, takeaway
+    table_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    phone: Optional[str] = None
+    items: List[OrderItem]
+    payment_method: str  # cash, upi, card
+    discount: Optional[float] = 0
+
+class PosBillUpdate(BaseModel):
+    customer_name: Optional[str] = None
+    phone: Optional[str] = None
+    payment_method: Optional[str] = None  # cash, upi, card
+    discount: Optional[float] = None
+    items: Optional[List[OrderItemUpdate]] = None
+
 class OrderItemsUpdate(BaseModel):
     items: List[OrderItemUpdate]
     
