@@ -405,6 +405,7 @@ const POSDashboard = () => {
   };
 
   const checkout = async (shouldPrint = false) => {
+    if (checkingOut) return;
     if (orderType === 'dine_in' && !selectedTableId) {
       toast.error('Please select a table.');
       return;
@@ -418,28 +419,49 @@ const POSDashboard = () => {
       return;
     }
 
+    const checkoutCart = [...cart];
+    const checkoutCustomerName = customerName;
+    const checkoutPhone = phone;
+    const checkoutPaymentMethod = paymentMethod;
+    const checkoutDiscount = parsedDiscount;
+    const checkoutDiscountInput = discount;
+    const checkoutOrderType = orderType;
+    const checkoutTableId = selectedTableId;
+    const optimisticPay = !shouldPrint;
+
     setCheckingOut(true);
-    try {
-      const response = await api.post('/api/pos/checkout', {
-        order_type: orderType,
-        table_id: orderType === 'dine_in' ? selectedTableId : undefined,
-        customer_name: customerName.trim(),
-        phone: phone.trim(),
-        payment_method: paymentMethod,
-        discount: parsedDiscount,
-        print_bill: shouldPrint,
-        items: cart.map((item) => ({
-          item_id: item.item_id,
-          quantity: item.quantity,
-        })),
-      });
-      toast.success('POS bill completed.');
+    if (optimisticPay) {
       setCart([]);
       setCustomerName('');
       setPhone('');
       setDiscount('');
       setPaymentMethod('cash');
       setCartDialogOpen(false);
+    }
+
+    try {
+      const response = await api.post('/api/pos/checkout', {
+        order_type: checkoutOrderType,
+        table_id: checkoutOrderType === 'dine_in' ? checkoutTableId : undefined,
+        customer_name: checkoutCustomerName.trim(),
+        phone: checkoutPhone.trim(),
+        payment_method: checkoutPaymentMethod,
+        discount: checkoutDiscount,
+        print_bill: shouldPrint,
+        items: checkoutCart.map((item) => ({
+          item_id: item.item_id,
+          quantity: item.quantity,
+        })),
+      });
+      toast.success('POS bill completed.');
+      if (!optimisticPay) {
+        setCart([]);
+        setCustomerName('');
+        setPhone('');
+        setDiscount('');
+        setPaymentMethod('cash');
+        setCartDialogOpen(false);
+      }
       setCheckingOut(false);
       if (shouldPrint) {
         try {
@@ -450,6 +472,14 @@ const POSDashboard = () => {
       }
       Promise.allSettled([loadSummary(), loadCompletedBills()]);
     } catch (error) {
+      if (optimisticPay) {
+        setCart(checkoutCart);
+        setCustomerName(checkoutCustomerName);
+        setPhone(checkoutPhone);
+        setDiscount(checkoutDiscountInput);
+        setPaymentMethod(checkoutPaymentMethod);
+        setCartDialogOpen(true);
+      }
       toast.error(error.response?.data?.detail || 'POS checkout failed');
       setCheckingOut(false);
     }

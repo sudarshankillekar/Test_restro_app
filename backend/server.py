@@ -2027,8 +2027,6 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
 
-    await check_restaurant_subscription(db, restaurant_id)
-
     order_type = (input.order_type or "dine_in").strip().lower()
     if order_type not in ["dine_in", "takeaway"]:
         raise HTTPException(status_code=400, detail="order_type must be dine_in or takeaway")
@@ -2571,21 +2569,29 @@ async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
     table_number = None
     table_label = None
 
+    restaurant_task = check_restaurant_subscription(db, restaurant_id)
+    order_items_task = build_order_items_from_input(input.items, restaurant_id)
+
     if order_type == "dine_in":
         table_id = (input.table_id or "").strip()
         if not table_id:
             raise HTTPException(status_code=400, detail="Please select a table for dine-in order.")
-        table = await db.tables.find_one({"table_id": table_id, "restaurant_id": restaurant_id}, {"_id": 0})
+        restaurant, item_result, table = await asyncio.gather(
+            restaurant_task,
+            order_items_task,
+            db.tables.find_one({"table_id": table_id, "restaurant_id": restaurant_id}, {"_id": 0}),
+        )
         if not table:
             raise HTTPException(status_code=404, detail="Selected table not found.")
+        subtotal, order_items = item_result
         table_number = table.get("table_number")
         table_label = f"Table {table_number}" if table_number is not None else table_id
     else:
         table_id = f"pos_takeaway_{secrets.token_hex(6)}"
         table_label = f"Takeaway {display_customer_name}"
+        restaurant, item_result = await asyncio.gather(restaurant_task, order_items_task)
+        subtotal, order_items = item_result
 
-    subtotal, order_items = await build_order_items_from_input(input.items, restaurant_id)
-    restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     billing_settings = normalize_billing_settings(restaurant)
     bill_amounts = calculate_bill_amounts(
         subtotal,
