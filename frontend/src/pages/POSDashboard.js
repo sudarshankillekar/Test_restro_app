@@ -8,7 +8,6 @@ import {
   LogOut,
   Menu,
   Minus,
-  MoreHorizontal,
   Pencil,
   Plus,
   Receipt,
@@ -190,6 +189,7 @@ const POSDashboard = () => {
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
   const [summaryCollapsed, setSummaryCollapsed] = useState(false);
   const [mobileTab, setMobileTab] = useState('pos');
+  const [balanceVisible, setBalanceVisible] = useState(true);
   const [cartDialogOpen, setCartDialogOpen] = useState(false);
 
   const loadSummary = useCallback(async () => {
@@ -346,7 +346,6 @@ const POSDashboard = () => {
         price: Number(item.price || 0),
         image: item.image,
         quantity: 1,
-        instructions: '',
       }];
     });
   };
@@ -355,12 +354,6 @@ const POSDashboard = () => {
     setCart((prev) => prev
       .map((item) => (item.item_id === itemId ? { ...item, quantity: nextQuantity } : item))
       .filter((item) => item.quantity > 0));
-  };
-
-  const updateInstructions = (itemId, instructions) => {
-    setCart((prev) => prev.map((item) => (
-      item.item_id === itemId ? { ...item, instructions } : item
-    )));
   };
 
   const printBill = (bill) => {
@@ -411,7 +404,7 @@ const POSDashboard = () => {
     `, `${restaurantName} - ${bill.bill_id}`);
   };
 
-  const checkout = async () => {
+  const checkout = async (shouldPrint = false) => {
     if (orderType === 'dine_in' && !selectedTableId) {
       toast.error('Please select a table.');
       return;
@@ -437,7 +430,6 @@ const POSDashboard = () => {
         items: cart.map((item) => ({
           item_id: item.item_id,
           quantity: item.quantity,
-          instructions: item.instructions || '',
         })),
       });
       toast.success('POS bill completed.');
@@ -448,10 +440,12 @@ const POSDashboard = () => {
       setPaymentMethod('cash');
       setCartDialogOpen(false);
       setCheckingOut(false);
-      try {
-        printBill(response.data);
-      } catch (printError) {
-        toast.error('Bill completed, but printing failed. You can reprint it from Bills.');
+      if (shouldPrint) {
+        try {
+          printBill(response.data);
+        } catch (printError) {
+          toast.error('Bill completed, but printing failed. You can reprint it from Bills.');
+        }
       }
       Promise.allSettled([loadSummary(), loadCompletedBills()]);
     } catch (error) {
@@ -637,8 +631,8 @@ const POSDashboard = () => {
   }
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#f8f9fa] pb-40 text-[#191c1d] lg:pb-36 xl:h-screen xl:overflow-hidden xl:pb-0">
-      <main className="flex min-h-screen flex-col overflow-visible lg:h-screen lg:min-h-0 lg:overflow-hidden xl:mr-[390px]">
+    <div className="h-[100dvh] overflow-hidden bg-[#f8f9fa] text-[#191c1d]">
+      <main className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden xl:mr-[390px]">
         <header className="shrink-0 border-b border-[#e1bfb6]/50 bg-[#f8f9fa]/95 px-4 py-3 backdrop-blur md:px-6">
           <div className="flex min-w-0 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -664,50 +658,68 @@ const POSDashboard = () => {
                 <LogOut className="mr-2 h-4 w-4" />
                 Logout
               </Button>
-              <Badge className="h-10 rounded-2xl bg-[#ffdbd1]/70 px-3 text-sm font-black text-[#a93107] hover:bg-[#ffdbd1]/70 sm:h-11 sm:px-4">
-                <Receipt className="mr-2 h-4 w-4 text-[#a93107]" />
-                Billing
-              </Badge>
             </div>
           </div>
         </header>
 
-        <section className="shrink-0 border-b border-[#e1bfb6]/50 bg-white px-4 py-2 md:px-6">
-          <div className="mx-auto grid max-w-5xl grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-center gap-2 rounded-2xl border border-[#e1bfb6]/70 bg-white px-3 py-2 shadow-sm sm:gap-4 sm:px-4">
-            <div className="flex items-center justify-center gap-2 sm:gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-green-50 text-green-700 sm:h-9 sm:w-9">
-                <Wallet className="h-4 w-4" />
+        <section className="shrink-0 border-b border-[#e1bfb6]/50 bg-white px-3 py-1 md:px-6">
+          {balanceVisible ? (
+            <div className="mx-auto flex max-w-5xl items-center gap-2">
+              <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-center gap-2 rounded-lg border border-[#e1bfb6]/70 bg-white px-2 py-1 shadow-sm sm:gap-4 sm:px-3">
+                <div className="grid min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-1.5 sm:grid-cols-[28px_minmax(0,1fr)] sm:gap-2">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-green-50 text-green-700 sm:h-7 sm:w-7">
+                    <Wallet className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold leading-tight text-[#59413b] sm:text-xs">Opening</p>
+                    <p className="truncate text-xs font-black leading-tight text-green-700 sm:text-sm">{formatCurrency(cashDrawer.opening_balance)}</p>
+                    <button
+                      type="button"
+                      className="text-[11px] font-black leading-tight text-[#645d5a] hover:text-[#a93107]"
+                      onClick={() => {
+                        setOpeningInput(String(Math.max(Number(cashDrawer.opening_balance || 0), 0)));
+                        setOpeningDialogOpen(true);
+                      }}
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+                <div className="h-7 w-px bg-[#e1bfb6] sm:h-8" />
+                <div className="grid min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-1.5 sm:grid-cols-[28px_minmax(0,1fr)] sm:gap-2">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[#ffdbd1]/60 text-[#a93107] sm:h-7 sm:w-7">
+                    <CreditCard className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold leading-tight text-[#59413b] sm:text-xs">Closing</p>
+                    <p className="truncate text-xs font-black leading-tight text-[#a93107] sm:text-sm">{formatCurrency(cashDrawer.closing_balance)}</p>
+                  </div>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-xs font-bold leading-tight text-[#59413b] sm:text-sm">Opening</p>
-                <p className="text-base font-black leading-tight text-green-700 sm:text-lg">{formatCurrency(cashDrawer.opening_balance)}</p>
-                <button
-                  type="button"
-                  className="text-xs font-black leading-tight text-[#645d5a] hover:text-[#a93107]"
-                  onClick={() => {
-                    setOpeningInput(String(Math.max(Number(cashDrawer.opening_balance || 0), 0)));
-                    setOpeningDialogOpen(true);
-                  }}
-                >
-                  Edit
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setBalanceVisible(false)}
+                className="h-8 shrink-0 rounded-lg border border-[#e1bfb6] bg-white px-2 text-xs font-black text-[#59413b] shadow-sm"
+              >
+                Hide
+              </button>
             </div>
-            <div className="h-10 w-px bg-[#e1bfb6] sm:h-12" />
-            <div className="flex items-center justify-center gap-2 sm:gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#ffdbd1]/60 text-[#a93107] sm:h-9 sm:w-9">
-                <CreditCard className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs font-bold leading-tight text-[#59413b] sm:text-sm">Closing</p>
-                <p className="text-base font-black leading-tight text-[#a93107] sm:text-lg">{formatCurrency(cashDrawer.closing_balance)}</p>
-              </div>
+          ) : (
+            <div className="mx-auto flex max-w-5xl items-center justify-between rounded-lg border border-[#e1bfb6]/70 bg-white px-3 py-1 shadow-sm">
+              <span className="text-xs font-black text-[#59413b]">Balances</span>
+              <button
+                type="button"
+                onClick={() => setBalanceVisible(true)}
+                className="h-7 rounded-md bg-[#ffdbd1]/70 px-3 text-xs font-black text-[#a93107]"
+              >
+                Show
+              </button>
             </div>
-          </div>
+          )}
         </section>
 
-        <section className="min-h-0 flex-1 px-4 py-3 md:px-6 md:py-4">
-          <div className={`grid h-full min-h-0 gap-5 ${summaryCollapsed ? 'xl:grid-cols-[minmax(0,1fr)]' : 'lg:grid-cols-[300px,minmax(0,1fr)] xl:grid-cols-[320px,minmax(0,1fr)]'}`}>
+        <section className="min-h-0 min-w-0 flex-1 overflow-hidden px-3 py-2 sm:px-4 md:px-6">
+          <div className={`grid h-full min-h-0 min-w-0 gap-5 ${summaryCollapsed ? 'xl:grid-cols-[minmax(0,1fr)]' : 'lg:grid-cols-[300px,minmax(0,1fr)] xl:grid-cols-[320px,minmax(0,1fr)]'}`}>
             <div className={`${mobileTab === 'summary' || mobileTab === 'cash' ? 'flex' : 'hidden'} ${summaryCollapsed ? 'lg:hidden' : 'lg:flex'} min-h-0 flex-col`}>
           <div className="shrink-0 rounded-2xl border border-[#e1bfb6]/60 bg-white/90 px-3 py-2 shadow-sm">
             <div className="flex min-h-[58px] items-center">
@@ -819,15 +831,15 @@ const POSDashboard = () => {
           </div>
             </div>
 
-            <div className={`${mobileTab === 'pos' ? 'flex' : 'hidden'} min-h-0 flex-col space-y-3 overflow-visible lg:flex lg:space-y-4 lg:overflow-hidden`}>
-          <div className="grid grid-cols-2 gap-3">
+            <div className={`${mobileTab === 'pos' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col space-y-2 overflow-hidden lg:flex lg:space-y-3`}>
+          <div className="grid min-w-0 grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => setOrderType('dine_in')}
-              className={`flex h-12 items-center justify-center gap-2 rounded-3xl border text-base font-black transition sm:h-16 sm:text-lg ${orderType === 'dine_in' ? 'border-[#a93107] bg-[#d92d0b] text-white shadow-sm' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
+              className={`flex h-10 min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-2xl border px-2 text-sm font-black transition sm:h-12 sm:gap-2 sm:text-base ${orderType === 'dine_in' ? 'border-[#a93107] bg-[#d92d0b] text-white shadow-sm' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
             >
-              <Utensils className="h-5 w-5" />
-              Dine-In
+              <Utensils className="h-4 w-4 shrink-0" />
+              <span className="truncate">Dine-In</span>
             </button>
             <button
               type="button"
@@ -835,20 +847,20 @@ const POSDashboard = () => {
                 setOrderType('takeaway');
                 setSelectedTableId('');
               }}
-              className={`flex h-12 items-center justify-center gap-2 rounded-3xl border text-base font-black transition sm:h-16 sm:text-lg ${orderType === 'takeaway' ? 'border-[#a93107] bg-[#d92d0b] text-white shadow-sm' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
+              className={`flex h-10 min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-2xl border px-2 text-sm font-black transition sm:h-12 sm:gap-2 sm:text-base ${orderType === 'takeaway' ? 'border-[#a93107] bg-[#d92d0b] text-white shadow-sm' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
             >
-              <ShoppingBag className="h-5 w-5" />
-              Takeaway
+              <ShoppingBag className="h-4 w-4 shrink-0" />
+              <span className="truncate">Takeaway</span>
             </button>
           </div>
 
           <div className="relative w-full">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#59413b]" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#59413b]" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search items"
-              className="h-12 rounded-3xl border-0 bg-[#edeeef] pl-12 pr-11 text-base shadow-none sm:h-14"
+              className="h-10 rounded-2xl border-0 bg-[#edeeef] pl-10 pr-9 text-sm shadow-none sm:h-11 sm:text-base"
             />
             {search && (
               <button
@@ -862,18 +874,18 @@ const POSDashboard = () => {
           </div>
 
           {orderType === 'dine_in' && (
-            <div className="space-y-2 sm:space-y-3">
+            <div className="space-y-1.5 sm:space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-black uppercase tracking-wide text-[#645d5a]">Select Table</h2>
-                <span className="text-sm font-bold text-[#a93107]">{tables.length} Tables</span>
+                <h2 className="text-xs font-black uppercase tracking-wide text-[#645d5a] sm:text-sm">Select Table</h2>
+                <span className="text-xs font-bold text-[#a93107] sm:text-sm">{tables.length} Tables</span>
               </div>
-              <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 sm:gap-3 md:grid-cols-8 xl:grid-cols-10">
+              <div className="flex min-w-0 gap-2 overflow-x-auto pb-1 lg:grid lg:grid-cols-8 lg:overflow-visible xl:grid-cols-10">
                 {tables.map((table) => (
                   <button
                     key={table.table_id}
                     type="button"
                     onClick={() => setSelectedTableId(table.table_id)}
-                    className={`h-11 rounded-2xl border text-base font-black sm:h-14 ${selectedTableId === table.table_id ? 'border-[#a93107] bg-[#cb4920] text-white' : 'border-[#e1bfb6] bg-white text-[#191c1d]'}`}
+                    className={`h-9 w-14 shrink-0 rounded-xl border text-sm font-black sm:h-10 sm:w-16 sm:text-base lg:w-auto ${selectedTableId === table.table_id ? 'border-[#a93107] bg-[#cb4920] text-white' : 'border-[#e1bfb6] bg-white text-[#191c1d]'}`}
                   >
                     T{table.table_number}
                   </button>
@@ -882,11 +894,11 @@ const POSDashboard = () => {
             </div>
           )}
 
-          <div className="flex gap-2 overflow-x-auto pb-1 sm:gap-3">
+          <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
             <Button
               type="button"
               onClick={() => setSelectedCategory('all')}
-              className={`h-11 shrink-0 rounded-2xl px-5 text-base font-black sm:h-12 sm:px-6 ${selectedCategory === 'all' ? 'bg-[#d92d0b] text-white hover:bg-[#b92308]' : 'border border-[#e1bfb6] bg-white text-[#191c1d] hover:bg-white'}`}
+              className={`h-9 shrink-0 rounded-xl px-4 text-sm font-black sm:h-10 sm:px-5 sm:text-base ${selectedCategory === 'all' ? 'bg-[#d92d0b] text-white hover:bg-[#b92308]' : 'border border-[#e1bfb6] bg-white text-[#191c1d] hover:bg-white'}`}
             >
               All
             </Button>
@@ -895,25 +907,25 @@ const POSDashboard = () => {
                 key={category.category_id}
                 type="button"
                 onClick={() => setSelectedCategory(category.category_id)}
-                className={`h-11 shrink-0 rounded-2xl px-5 text-base font-bold sm:h-12 sm:px-6 ${selectedCategory === category.category_id ? 'bg-[#d92d0b] text-white hover:bg-[#b92308]' : 'border border-[#e1bfb6] bg-white text-[#191c1d] hover:bg-white'}`}
+                className={`h-9 max-w-[170px] shrink-0 rounded-xl px-4 text-sm font-bold sm:h-10 sm:max-w-none sm:px-5 sm:text-base ${selectedCategory === category.category_id ? 'bg-[#d92d0b] text-white hover:bg-[#b92308]' : 'border border-[#e1bfb6] bg-white text-[#191c1d] hover:bg-white'}`}
               >
-                {category.name}
+                <span className="truncate">{category.name}</span>
               </Button>
             ))}
           </div>
 
           <div className="flex items-center justify-between">
-            <p className="text-xl font-black sm:text-2xl">{visibleItems.length} items</p>
+            <p className="text-lg font-black sm:text-xl">{visibleItems.length} items</p>
             <p className="text-sm font-bold text-[#645d5a]">{cartCount} in cart</p>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-visible pb-8 pr-0 lg:overflow-y-auto lg:pb-0 lg:pr-1">
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 lg:grid-cols-4 2xl:grid-cols-5">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-36 pr-0 lg:pb-0 lg:pr-1">
+          <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 2xl:grid-cols-5">
             {visibleItems.map((item) => {
               const cartItem = cart.find((entry) => entry.item_id === item.item_id);
               const imageUrl = normalizeImageUrl(item.image);
               return (
-                <Card key={item.item_id} className={`overflow-hidden rounded-xl border-[#e1bfb6] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.04)] ${!item.available ? 'opacity-60' : ''}`}>
+                <Card key={item.item_id} className={`min-w-0 overflow-hidden rounded-xl border-[#e1bfb6] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.04)] ${!item.available ? 'opacity-60' : ''}`}>
                   <CardContent className="flex h-full flex-col p-0">
                     <button type="button" className="text-left" onClick={() => addItem(item)}>
                       {imageUrl ? (
@@ -924,7 +936,7 @@ const POSDashboard = () => {
                         </div>
                       )}
                     </button>
-                    <div className="flex flex-1 flex-col p-2">
+                    <div className="flex min-w-0 flex-1 flex-col p-2">
                       <div className="flex items-start justify-between gap-1 sm:gap-2">
                         <div className="min-w-0">
                           <h3 className="line-clamp-2 min-h-[2rem] text-xs font-black leading-tight sm:text-sm">{item.name}</h3>
@@ -936,7 +948,7 @@ const POSDashboard = () => {
                         type="button"
                         disabled={!item.available}
                         onClick={() => addItem(item)}
-                        className="mt-2 h-8 rounded-xl bg-[#d92d0b] text-sm font-black text-white hover:bg-[#b92308] sm:h-9"
+                        className="mt-2 h-8 w-full rounded-xl bg-[#d92d0b] text-xs font-black text-white hover:bg-[#b92308] sm:h-9 sm:text-sm"
                       >
                         <Plus className="mr-1 h-4 w-4" />
                         Add
@@ -955,66 +967,60 @@ const POSDashboard = () => {
       </main>
 
       <aside className="hidden border-t border-[#e1bfb6] bg-white xl:fixed xl:inset-y-0 xl:right-0 xl:z-30 xl:flex xl:w-[390px] xl:flex-col xl:border-l xl:border-t-0">
-        <div className="flex items-center justify-between border-b border-[#e1bfb6] px-4 py-4">
+        <div className="flex items-center justify-between border-b border-[#e1bfb6] px-4 py-3">
           <div className="flex items-center gap-3">
-            <ShoppingBag className="h-6 w-6 text-[#a93107]" />
-            <h2 className="text-2xl font-black">Your Order ({cartCount})</h2>
+            <ShoppingBag className="h-5 w-5 text-[#a93107]" />
+            <h2 className="text-xl font-black">Your Order ({cartCount})</h2>
           </div>
           {cart.length > 0 && (
-            <Button variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => setCart([])}>
+            <Button variant="ghost" className="h-9 text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => setCart([])}>
               <Trash2 className="mr-2 h-4 w-4" />
               Clear
             </Button>
           )}
         </div>
 
-        <div className="max-h-[46vh] overflow-y-auto px-4 py-4 xl:min-h-0 xl:flex-1 xl:max-h-none">
+        <div className="max-h-[46vh] overflow-y-auto px-4 py-3 xl:min-h-0 xl:flex-1 xl:max-h-none">
           {cart.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-[#e1bfb6] p-6 text-center text-[#645d5a]">
               <ShoppingCart className="mx-auto h-10 w-10" />
               <p className="mt-3 font-bold">No items added</p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {cart.map((item) => {
                 const imageUrl = normalizeImageUrl(item.image);
                 return (
-                  <div key={item.item_id} className="border-b border-[#e1bfb6]/70 pb-4">
-                    <div className="flex gap-3">
+                  <div key={item.item_id} className="border-b border-[#e1bfb6]/70 pb-3">
+                    <div className="flex gap-2.5">
                       {imageUrl ? (
-                        <img src={imageUrl} alt={item.name} className="h-16 w-16 rounded-xl object-cover" />
+                        <img src={imageUrl} alt={item.name} className="h-12 w-12 rounded-xl object-cover" />
                       ) : (
-                        <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[#edeeef] text-[#8d7169]">
-                          <Utensils className="h-6 w-6" />
+                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#edeeef] text-[#8d7169]">
+                          <Utensils className="h-5 w-5" />
                         </div>
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
-                          <p className="line-clamp-2 font-black">{item.name}</p>
+                          <p className="line-clamp-2 text-sm font-black">{item.name}</p>
                           <button type="button" onClick={() => updateQuantity(item.item_id, 0)} className="text-[#645d5a]">
-                            <X className="h-5 w-5" />
+                            <X className="h-4 w-4" />
                           </button>
                         </div>
-                        <div className="mt-3 flex items-center justify-between gap-3">
+                        <div className="mt-2 flex items-center justify-between gap-2">
                           <div className="flex items-center overflow-hidden rounded-xl bg-[#edeeef]">
-                            <button type="button" className="flex h-11 w-11 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity - 1)}>
+                            <button type="button" className="flex h-8 w-8 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity - 1)}>
                               <Minus className="h-4 w-4" />
                             </button>
-                            <span className="min-w-[2.5rem] text-center text-lg font-black">{item.quantity}</span>
-                            <button type="button" className="flex h-11 w-11 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity + 1)}>
+                            <span className="min-w-[2rem] text-center font-black">{item.quantity}</span>
+                            <button type="button" className="flex h-8 w-8 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity + 1)}>
                               <Plus className="h-4 w-4" />
                             </button>
                           </div>
-                          <p className="text-lg font-black">{formatCurrency(item.price * item.quantity)}</p>
+                          <p className="text-base font-black">{formatCurrency(item.price * item.quantity)}</p>
                         </div>
                       </div>
                     </div>
-                    <Textarea
-                      value={item.instructions}
-                      onChange={(event) => updateInstructions(item.item_id, event.target.value)}
-                      placeholder="Special instructions"
-                      className="mt-3 min-h-[42px] rounded-xl"
-                    />
                   </div>
                 );
               })}
@@ -1022,10 +1028,10 @@ const POSDashboard = () => {
           )}
         </div>
 
-        <div className="space-y-3 border-t border-[#e1bfb6] bg-[#f8f9fa] px-4 py-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Customer name" className="h-11 rounded-xl bg-white" />
-            <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" className="h-11 rounded-xl bg-white" />
+        <div className="space-y-2.5 border-t border-[#e1bfb6] bg-[#f8f9fa] px-4 py-3">
+          <div className="grid grid-cols-2 gap-2">
+            <Input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Customer name" className="h-10 rounded-xl bg-white" />
+            <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" className="h-10 rounded-xl bg-white" />
           </div>
           <div className="grid grid-cols-3 gap-2">
             {paymentOptions.map((option) => {
@@ -1035,7 +1041,7 @@ const POSDashboard = () => {
                   key={option.value}
                   type="button"
                   onClick={() => setPaymentMethod(option.value)}
-                  className={`flex h-12 items-center justify-center gap-1 rounded-xl border text-sm font-black ${paymentMethod === option.value ? 'border-[#a93107] bg-[#a93107] text-white' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
+                  className={`flex h-10 items-center justify-center gap-1 rounded-xl border text-sm font-black ${paymentMethod === option.value ? 'border-[#a93107] bg-[#a93107] text-white' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
                 >
                   <Icon className="h-4 w-4" />
                   {option.label}
@@ -1049,58 +1055,63 @@ const POSDashboard = () => {
             value={discount}
             onChange={(event) => setDiscount(event.target.value)}
             placeholder="Discount"
-            className="h-11 rounded-xl bg-white"
+            className="h-10 rounded-xl bg-white"
           />
-          <div className="space-y-2 text-base">
+          <div className="space-y-1.5 text-sm">
             <div className="flex justify-between"><span className="text-[#645d5a]">Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
             {serviceCharge > 0 && <div className="flex justify-between"><span className="text-[#645d5a]">Service</span><span>{formatCurrency(serviceCharge)}</span></div>}
             {parcelCharge > 0 && <div className="flex justify-between"><span className="text-[#645d5a]">Parcel</span><span>{formatCurrency(parcelCharge)}</span></div>}
             <div className="flex justify-between"><span className="text-[#645d5a]">Tax ({taxPercentage.toFixed(2)}%)</span><span>{formatCurrency(tax)}</span></div>
             <div className="flex justify-between"><span className="text-[#645d5a]">Discount</span><span>{formatCurrency(parsedDiscount)}</span></div>
-            <div className="flex justify-between border-t border-[#e1bfb6] pt-3 text-3xl font-black text-[#a93107]">
+            <div className="flex justify-between border-t border-[#e1bfb6] pt-2 text-2xl font-black text-[#a93107]">
               <span>Total</span>
               <span>{formatCurrency(total)}</span>
             </div>
           </div>
-          <Button
-            type="button"
-            disabled={checkingOut || cart.length === 0 || (orderType === 'dine_in' && !selectedTable)}
-            onClick={checkout}
-            className="h-14 w-full rounded-2xl bg-[#a93107] text-lg font-black text-white hover:bg-[#862200]"
-          >
-            {checkingOut ? (
-              <>
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Completing...
-              </>
-            ) : 'Pay & Print Bill'}
-          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              disabled={checkingOut || cart.length === 0 || (orderType === 'dine_in' && !selectedTable)}
+              onClick={() => checkout(false)}
+              className="h-12 rounded-2xl bg-[#a93107] text-base font-black text-white hover:bg-[#862200]"
+            >
+              {checkingOut ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Pay'}
+            </Button>
+            <Button
+              type="button"
+              disabled={checkingOut || cart.length === 0 || (orderType === 'dine_in' && !selectedTable)}
+              onClick={() => checkout(true)}
+              className="h-12 rounded-2xl bg-[#d92d0b] text-base font-black text-white hover:bg-[#b92308]"
+            >
+              Pay & Print
+            </Button>
+          </div>
         </div>
       </aside>
 
-      <div className="fixed inset-x-4 bottom-20 z-40 xl:hidden">
+      <div className="fixed inset-x-3 bottom-[76px] z-40 xl:hidden">
         <button
           type="button"
           onClick={() => setCartDialogOpen(true)}
-          className="flex w-full items-center gap-3 rounded-[2rem] border border-[#e1bfb6]/70 bg-[#fff2ee]/95 px-4 py-3 text-left shadow-lg backdrop-blur"
+          className="flex w-full items-center gap-2 rounded-2xl border border-[#e1bfb6]/70 bg-[#fff2ee]/95 px-3 py-2 text-left shadow-md backdrop-blur"
         >
-          <div className="relative flex h-11 w-11 shrink-0 items-center justify-center text-[#a93107]">
-            <ShoppingCart className="h-9 w-9" />
-            <span className="absolute -right-1 -top-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-[#d92d0b] px-1 text-xs font-black text-white">
+          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center text-[#a93107]">
+            <ShoppingCart className="h-7 w-7" />
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#d92d0b] px-1 text-[11px] font-black text-white">
               {cartCount}
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-base font-black">Your Order</p>
-            <p className="truncate text-sm font-bold text-[#645d5a]">{cart.length === 0 ? 'No items added' : `${cartCount} items added`}</p>
+            <p className="text-sm font-black leading-tight">Your Order</p>
+            <p className="truncate text-xs font-bold leading-tight text-[#645d5a]">{cart.length === 0 ? 'No items added' : `${cartCount} items added`}</p>
           </div>
-          <p className="shrink-0 text-lg font-black text-[#d92d0b]">{formatCurrency(total)}</p>
-          <span className="text-3xl font-black text-[#d92d0b]">›</span>
+          <p className="shrink-0 text-base font-black text-[#d92d0b]">{formatCurrency(total)}</p>
+          <span className="text-2xl font-black leading-none text-[#d92d0b]">›</span>
         </button>
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#e1bfb6]/50 bg-white/95 px-4 pb-4 pt-3 shadow-[0_-6px_18px_rgba(0,0,0,0.06)] backdrop-blur xl:hidden">
-        <div className="mx-auto grid max-w-3xl grid-cols-5 gap-2 text-xs font-bold">
+        <div className="mx-auto grid max-w-3xl grid-cols-4 gap-2 text-xs font-bold">
           <button type="button" className={`flex flex-col items-center gap-1 ${mobileTab === 'pos' ? 'text-[#d92d0b]' : 'text-[#645d5a]'}`} onClick={() => setMobileTab('pos')}>
             <span className={`flex h-9 w-9 items-center justify-center rounded-2xl ${mobileTab === 'pos' ? 'bg-[#ffdbd1]/60' : ''}`}><Home className="h-5 w-5" /></span>
             POS
@@ -1125,10 +1136,6 @@ const POSDashboard = () => {
             <span className={`flex h-9 w-9 items-center justify-center rounded-2xl ${mobileTab === 'summary' ? 'bg-blue-50 text-blue-600' : ''}`}><Receipt className="h-5 w-5" /></span>
             Summary
           </button>
-          <button type="button" className="flex flex-col items-center gap-1 text-[#645d5a]">
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl"><MoreHorizontal className="h-5 w-5" /></span>
-            More
-          </button>
         </div>
       </nav>
 
@@ -1140,45 +1147,45 @@ const POSDashboard = () => {
               Your Order ({cartCount})
             </DialogTitle>
           </DialogHeader>
-          <div className="flex min-h-0 flex-col gap-4">
-            <div className="max-h-[34vh] overflow-y-auto rounded-2xl border border-[#e1bfb6]/70 p-3">
+          <div className="flex min-h-0 flex-col gap-3">
+            <div className="max-h-[34vh] overflow-y-auto rounded-2xl border border-[#e1bfb6]/70 p-2.5">
               {cart.length === 0 ? (
                 <div className="p-6 text-center text-[#645d5a]">
                   <ShoppingCart className="mx-auto h-10 w-10" />
                   <p className="mt-3 font-bold">No items added</p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {cart.map((item) => {
                     const imageUrl = normalizeImageUrl(item.image);
                     return (
-                      <div key={item.item_id} className="border-b border-[#e1bfb6]/70 pb-3 last:border-b-0 last:pb-0">
-                        <div className="flex gap-3">
+                      <div key={item.item_id} className="border-b border-[#e1bfb6]/70 pb-2.5 last:border-b-0 last:pb-0">
+                        <div className="flex gap-2.5">
                           {imageUrl ? (
-                            <img src={imageUrl} alt={item.name} className="h-14 w-14 rounded-xl object-cover" />
+                            <img src={imageUrl} alt={item.name} className="h-11 w-11 rounded-xl object-cover" />
                           ) : (
-                            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-[#edeeef] text-[#8d7169]">
-                              <Utensils className="h-5 w-5" />
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#edeeef] text-[#8d7169]">
+                              <Utensils className="h-4 w-4" />
                             </div>
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 font-black">{item.name}</p>
+                              <p className="line-clamp-2 text-sm font-black">{item.name}</p>
                               <button type="button" onClick={() => updateQuantity(item.item_id, 0)} className="text-[#645d5a]">
-                                <X className="h-5 w-5" />
+                                <X className="h-4 w-4" />
                               </button>
                             </div>
                             <div className="mt-2 flex items-center justify-between gap-3">
                               <div className="flex items-center overflow-hidden rounded-xl bg-[#edeeef]">
-                                <button type="button" className="flex h-9 w-9 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity - 1)}>
+                                <button type="button" className="flex h-8 w-8 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity - 1)}>
                                   <Minus className="h-4 w-4" />
                                 </button>
                                 <span className="min-w-[2rem] text-center font-black">{item.quantity}</span>
-                                <button type="button" className="flex h-9 w-9 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity + 1)}>
+                                <button type="button" className="flex h-8 w-8 items-center justify-center" onClick={() => updateQuantity(item.item_id, item.quantity + 1)}>
                                   <Plus className="h-4 w-4" />
                                 </button>
                               </div>
-                              <p className="font-black">{formatCurrency(item.price * item.quantity)}</p>
+                              <p className="text-sm font-black">{formatCurrency(item.price * item.quantity)}</p>
                             </div>
                           </div>
                         </div>
@@ -1189,9 +1196,9 @@ const POSDashboard = () => {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Customer name" className="h-11 rounded-xl bg-white" />
-              <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" className="h-11 rounded-xl bg-white" />
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Customer name" className="h-10 rounded-xl bg-white" />
+              <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" className="h-10 rounded-xl bg-white" />
             </div>
             <div className="grid grid-cols-3 gap-2">
               {paymentOptions.map((option) => {
@@ -1201,7 +1208,7 @@ const POSDashboard = () => {
                     key={option.value}
                     type="button"
                     onClick={() => setPaymentMethod(option.value)}
-                    className={`flex h-11 items-center justify-center gap-1 rounded-xl border text-sm font-black ${paymentMethod === option.value ? 'border-[#a93107] bg-[#a93107] text-white' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
+                    className={`flex h-10 items-center justify-center gap-1 rounded-xl border text-sm font-black ${paymentMethod === option.value ? 'border-[#a93107] bg-[#a93107] text-white' : 'border-[#e1bfb6] bg-white text-[#59413b]'}`}
                   >
                     <Icon className="h-4 w-4" />
                     {option.label}
@@ -1215,32 +1222,37 @@ const POSDashboard = () => {
               value={discount}
               onChange={(event) => setDiscount(event.target.value)}
               placeholder="Discount"
-              className="h-11 rounded-xl bg-white"
+              className="h-10 rounded-xl bg-white"
             />
-            <div className="space-y-2 text-sm">
+            <div className="space-y-1.5 text-sm">
               <div className="flex justify-between"><span className="text-[#645d5a]">Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
               {serviceCharge > 0 && <div className="flex justify-between"><span className="text-[#645d5a]">Service</span><span>{formatCurrency(serviceCharge)}</span></div>}
               {parcelCharge > 0 && <div className="flex justify-between"><span className="text-[#645d5a]">Parcel</span><span>{formatCurrency(parcelCharge)}</span></div>}
               <div className="flex justify-between"><span className="text-[#645d5a]">Tax ({taxPercentage.toFixed(2)}%)</span><span>{formatCurrency(tax)}</span></div>
               <div className="flex justify-between"><span className="text-[#645d5a]">Discount</span><span>{formatCurrency(parsedDiscount)}</span></div>
-              <div className="flex justify-between border-t border-[#e1bfb6] pt-3 text-2xl font-black text-[#a93107]">
+              <div className="flex justify-between border-t border-[#e1bfb6] pt-2 text-xl font-black text-[#a93107]">
                 <span>Total</span>
                 <span>{formatCurrency(total)}</span>
               </div>
             </div>
-            <Button
-              type="button"
-              disabled={checkingOut || cart.length === 0 || (orderType === 'dine_in' && !selectedTable)}
-              onClick={checkout}
-              className="h-12 w-full rounded-2xl bg-[#a93107] text-base font-black text-white hover:bg-[#862200]"
-            >
-              {checkingOut ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Completing...
-                </>
-              ) : 'Pay & Print Bill'}
-            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                disabled={checkingOut || cart.length === 0 || (orderType === 'dine_in' && !selectedTable)}
+                onClick={() => checkout(false)}
+                className="h-12 rounded-2xl bg-[#a93107] text-base font-black text-white hover:bg-[#862200]"
+              >
+                {checkingOut ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Pay'}
+              </Button>
+              <Button
+                type="button"
+                disabled={checkingOut || cart.length === 0 || (orderType === 'dine_in' && !selectedTable)}
+                onClick={() => checkout(true)}
+                className="h-12 rounded-2xl bg-[#d92d0b] text-base font-black text-white hover:bg-[#b92308]"
+              >
+                Pay & Print
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
