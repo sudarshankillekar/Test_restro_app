@@ -427,6 +427,7 @@ const POSDashboard = () => {
         phone: phone.trim(),
         payment_method: paymentMethod,
         discount: parsedDiscount,
+        print_bill: shouldPrint,
         items: cart.map((item) => ({
           item_id: item.item_id,
           quantity: item.quantity,

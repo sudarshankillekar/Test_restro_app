@@ -104,6 +104,7 @@ class PosCheckoutCreate(BaseModel):
     items: List[OrderItem]
     payment_method: str  # cash, upi, card
     discount: Optional[float] = 0
+    print_bill: bool = False
 
 class PosBillUpdate(BaseModel):
     customer_name: Optional[str] = None

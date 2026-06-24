@@ -2665,6 +2665,15 @@ async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
             )
         )
 
+    if not input.print_bill:
+        return {
+            "bill_id": bill_id,
+            "table_label": table_label,
+            "customer_name": display_customer_name,
+            "payment": {k: v for k, v in payment_doc.items() if k != "_id"},
+            "orders": [],
+        }
+
     completed_order = (await enrich_orders([{k: v for k, v in order_doc.items() if k != "_id"}]))[0]
     return {
         "bill_id": bill_id,
