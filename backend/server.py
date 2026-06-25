@@ -2042,26 +2042,33 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
     table_number = None
     table_label = None
 
+    order_items_task = build_order_items_from_input(input.items, restaurant_id)
+
     if order_type == "dine_in":
         table_id = (input.table_id or "").strip()
         if not table_id:
             raise HTTPException(status_code=400, detail="Please select a table for dine-in order.")
-        table = await db.tables.find_one({"table_id": table_id, "restaurant_id": restaurant_id}, {"_id": 0})
+        table_task = db.tables.find_one({"table_id": table_id, "restaurant_id": restaurant_id}, {"_id": 0})
+        existing_orders_task = db.orders.find({
+            "table_id": table_id,
+            "restaurant_id": restaurant_id,
+            "status": {"$nin": ["served", "cancelled"]}
+        }, {"_id": 0, "order_id": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
+        table, existing_active_orders, item_result = await asyncio.gather(
+            table_task,
+            existing_orders_task,
+            order_items_task,
+        )
         if not table:
             raise HTTPException(status_code=404, detail="Selected table not found.")
+        total, order_items = item_result
         table_number = table.get("table_number")
         table_label = f"Table {table_number}" if table_number is not None else table_id
     else:
         table_id = f"takeaway_{secrets.token_hex(6)}"
         table_label = f"Takeaway {display_customer_name}"
-
-    existing_active_orders = await db.orders.find({
-        "table_id": table_id,
-        "restaurant_id": restaurant_id,
-        "status": {"$nin": ["served", "cancelled"]}
-    }, {"_id": 0, "order_id": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
-
-    total, order_items = await build_order_items_from_input(input.items, restaurant_id)
+        existing_active_orders = []
+        total, order_items = await order_items_task
 
     latest_active_order = existing_active_orders[0] if existing_active_orders else None
     prioritized_add_on = any(order["status"] in ["pending", "accepted"] for order in existing_active_orders)
@@ -2094,7 +2101,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
     await db.orders.insert_one(order_doc)
     schedule_background_task(upsert_customer_record(restaurant_id, display_customer_name, phone))
 
-    created_order = (await enrich_orders([{k: v for k, v in order_doc.items() if k != "_id"}]))[0]
+    created_order = {k: v for k, v in order_doc.items() if k != "_id"}
 
     schedule_background_task(emit_order_event('new_order', to_socket_payload(created_order), restaurant_id))
     if created_order.get("is_add_on"):
@@ -2364,8 +2371,9 @@ async def update_order_status(order_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Order not found")
     
     # Update timestamps
+    changed_at = datetime.now(timezone.utc)
     timestamps = order.get("timestamps", {})
-    timestamps[new_status] = datetime.now(timezone.utc).isoformat()
+    timestamps[new_status] = changed_at.isoformat()
     
     await db.orders.update_one(
         {"order_id": order_id, "restaurant_id": restaurant_id},
@@ -2373,19 +2381,26 @@ async def update_order_status(order_id: str, request: Request):
             "$set": {
                 "status": new_status,
                 "timestamps": timestamps,
-                "updated_at": datetime.now(timezone.utc)
+                "updated_at": changed_at
             }
         }
     )
     
-    updated_order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id}, {"_id": 0})
-    enriched = await enrich_orders([updated_order])
+    updated_order = {k: v for k, v in order.items() if k != "_id"}
+    updated_order["status"] = new_status
+    updated_order["timestamps"] = timestamps
+    updated_order["updated_at"] = changed_at
+    if not updated_order.get("table_label"):
+        if updated_order.get("table_number") is not None:
+            updated_order["table_label"] = f"Table {updated_order['table_number']}"
+        else:
+            updated_order["table_label"] = updated_order.get("table_id")
     
     schedule_background_task(
-        emit_order_event('order_status_updated', to_socket_payload(enriched[0]), restaurant_id, order_id)
+        emit_order_event('order_status_updated', to_socket_payload(updated_order), restaurant_id, order_id)
     )
     
-    return enriched[0]
+    return updated_order
 
 
 
@@ -3344,6 +3359,7 @@ async def startup_event():
         await db.menu_items.create_index([("restaurant_id", 1), ("category_id", 1)])
         await db.orders.create_index("order_id", unique=True)
         await db.orders.create_index([("restaurant_id", 1), ("status", 1), ("created_at", -1)])
+        await db.orders.create_index([("restaurant_id", 1), ("table_id", 1), ("status", 1), ("created_at", -1)])
         await db.customer_sessions.create_index("session_token", unique=True)
         await db.payments.create_index([("restaurant_id", 1), ("order_id", 1)])
         await db.cash_adjustments.create_index([("restaurant_id", 1), ("created_at", -1)])

@@ -513,7 +513,7 @@ const BillingDashboard = ({ embedded = false }) => {
   };
 
   const submitCounterOrder = async (shouldPrint = false) => {
-    
+    if (counterSubmitting) return;
     if (counterOrderType === 'dine_in' && !counterTableId) {
       toast.error('Please select a table for dine-in order.');
       return;
@@ -523,14 +523,28 @@ const BillingDashboard = ({ embedded = false }) => {
       return;
     }
 
+    const orderTypeSnapshot = counterOrderType;
+    const tableIdSnapshot = counterTableId;
+    const customerNameSnapshot = counterCustomerName;
+    const phoneSnapshot = counterPhone;
+    const cartSnapshot = [...counterCart];
+    const searchSnapshot = counterSearch;
+    const categorySnapshot = counterCategory;
+    const optimisticSubmit = !shouldPrint;
+
     setCounterSubmitting(true);
+    if (optimisticSubmit) {
+      setCounterDialogOpen(false);
+      resetCounterForm();
+    }
+
     try {
       const response = await api.post('/api/counter/orders', {
-        order_type: counterOrderType,
-        table_id: counterOrderType === 'dine_in' ? counterTableId : undefined,
-        customer_name: counterCustomerName.trim(),
-        phone: counterPhone.trim(),
-        items: counterCart.map((item) => ({
+        order_type: orderTypeSnapshot,
+        table_id: orderTypeSnapshot === 'dine_in' ? tableIdSnapshot : undefined,
+        customer_name: customerNameSnapshot.trim(),
+        phone: phoneSnapshot.trim(),
+        items: cartSnapshot.map((item) => ({
           item_id: item.item_id,
           quantity: item.quantity,
           instructions: item.instructions || '',
@@ -538,13 +552,25 @@ const BillingDashboard = ({ embedded = false }) => {
       });
 
       setOrders((prev) => [response.data, ...prev.filter((order) => order.order_id !== response.data.order_id)]);
-      setCounterDialogOpen(false);
-      resetCounterForm();
+      if (!optimisticSubmit) {
+        setCounterDialogOpen(false);
+        resetCounterForm();
+      }
       toast.success('Counter order created successfully.');
       if (shouldPrint) {
         printOrderTicket(response.data);
       }
     } catch (error) {
+      if (optimisticSubmit) {
+        setCounterOrderType(orderTypeSnapshot);
+        setCounterTableId(tableIdSnapshot);
+        setCounterCustomerName(customerNameSnapshot);
+        setCounterPhone(phoneSnapshot);
+        setCounterCart(cartSnapshot);
+        setCounterSearch(searchSnapshot);
+        setCounterCategory(categorySnapshot);
+        setCounterDialogOpen(true);
+      }
       toast.error(error.response?.data?.detail || 'Failed to create counter order');
     } finally {
       setCounterSubmitting(false);
