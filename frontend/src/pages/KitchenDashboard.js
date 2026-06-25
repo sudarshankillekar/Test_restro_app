@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -203,7 +203,8 @@ const KitchenOrderCard = memo(({
   const [checkedItems, setCheckedItems] = useState({});
   const [collapsedCategories, setCollapsedCategories] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [statusUpdating, setStatusUpdating] = useState({});
+  const statusSaveQueueRef = useRef({});
+  const desiredStatusRef = useRef({});
  
 
   useEffect(() => {
@@ -283,15 +284,11 @@ const KitchenOrderCard = memo(({
     }
   };
 
-  const updateStatus = async (orderId, status) => {
-    if (statusUpdating[orderId]) return;
-
+  const updateStatus = (orderId, status) => {
     const changedAt = new Date().toISOString();
-    let previousOrder = null;
-    setStatusUpdating((current) => ({ ...current, [orderId]: true }));
+    desiredStatusRef.current[orderId] = status;
     setOrders((prev) => prev.map((order) => {
       if (order.order_id !== orderId) return order;
-      previousOrder = order;
       return {
         ...order,
         status,
@@ -303,29 +300,34 @@ const KitchenOrderCard = memo(({
       };
     }));
 
-    try {
-     const response = await api.put(
-        `/api/orders/${orderId}/status`,
-        { status }
-      );
-      setOrders((prev) => prev.map((order) => (
-      order.order_id === orderId ? response.data : order
-      )));
-      toast.success(`Order marked as ${status}`);
-    } catch (error) {
-      if (previousOrder) {
-        setOrders((prev) => prev.map((order) => (
-          order.order_id === orderId ? previousOrder : order
-        )));
-      }
-      toast.error(error.response?.data?.detail || 'Failed to update status');
-    } finally {
-      setStatusUpdating((current) => {
-        const next = { ...current };
-        delete next[orderId];
-        return next;
+    const saveRequest = (statusSaveQueueRef.current[orderId] || Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        const response = await api.put(
+          `/api/orders/${orderId}/status`,
+          { status }
+        );
+        if (desiredStatusRef.current[orderId] === status) {
+          setOrders((prev) => prev.map((order) => (
+            order.order_id === orderId ? response.data : order
+          )));
+        }
+        toast.success(`Order marked as ${status}`);
+      })
+      .catch((error) => {
+        if (desiredStatusRef.current[orderId] === status) {
+          toast.error(error.response?.data?.detail || 'Failed to update status');
+          fetchOrders();
+        }
+      })
+      .finally(() => {
+        if (statusSaveQueueRef.current[orderId] === saveRequest) {
+          delete statusSaveQueueRef.current[orderId];
+          delete desiredStatusRef.current[orderId];
+        }
       });
-    }
+
+    statusSaveQueueRef.current[orderId] = saveRequest;
   };
 
   const handleLogout = async () => {
@@ -768,21 +770,19 @@ const toggleSound = () => {
                   {selectedOrder.status === 'pending' && (
                     <Button
                       onClick={() => updateStatus(selectedOrder.order_id, 'accepted')}
-                      disabled={Boolean(statusUpdating[selectedOrder.order_id])}
                       className={`h-14 rounded-lg text-xl font-black ${selectedTone.button}`}
                       data-testid={`accept-order-${selectedOrder.order_id}`}
                     >
-                      {statusUpdating[selectedOrder.order_id] ? 'Accepting...' : 'Accept'}
+                      Accept
                     </Button>
                   )}
                   {selectedOrder.status === 'accepted' && (
                     <Button
                       onClick={() => updateStatus(selectedOrder.order_id, 'prepared')}
-                      disabled={Boolean(statusUpdating[selectedOrder.order_id])}
                       className={`h-14 rounded-lg text-xl font-black ${selectedTone.button}`}
                       data-testid={`mark-prepared-${selectedOrder.order_id}`}
                     >
-                      {statusUpdating[selectedOrder.order_id] ? 'Saving...' : 'Mark Prepared'}
+                      Mark Prepared
                     </Button>
                   )}
                   {selectedOrder.status === 'prepared' && (

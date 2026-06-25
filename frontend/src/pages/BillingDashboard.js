@@ -595,27 +595,39 @@ const BillingDashboard = ({ embedded = false }) => {
       return;
     }
 
+    const selectedGroupSnapshot = currentSelectedGroup;
+    const ordersSnapshot = orders;
+    const paymentMethodSnapshot = paymentMethod;
+    const discountSnapshot = discount;
+    const selectedOrderIds = selectedGroupSnapshot.orders.map((order) => order.order_id);
+
     paymentInFlightRef.current = true;
     setPaymentSubmitting(true);
+    completedPaymentKeysRef.current.add(paymentKey);
+    setOrders((prev) => prev.filter((order) => !selectedOrderIds.includes(order.order_id)));
+    setSelectedGroup(null);
+    setPaymentMethod('');
+    setPaymentMethodError('');
+    setDiscount(0);
 
     try {
       await api.post('/api/payments', {
-        order_ids: currentSelectedGroup.orders.map((order) => order.order_id),
-        payment_method: paymentMethod,
-        discount: Number(discount) || 0,
+        order_ids: selectedOrderIds,
+        payment_method: paymentMethodSnapshot,
+        discount: Number(discountSnapshot) || 0,
       });
 
-      completedPaymentKeysRef.current.add(paymentKey);
-      await Promise.all([
+      toast.success('Bill completed successfully.');
+      Promise.allSettled([
         loadTransactionSummary(),
         refreshOrders(),
       ]);
-      toast.success('Bill completed successfully.');
-      setSelectedGroup(null);
-      setPaymentMethod('');
-      setPaymentMethodError('');
-      setDiscount(0);
     } catch (error) {
+      completedPaymentKeysRef.current.delete(paymentKey);
+      setOrders(ordersSnapshot);
+      setSelectedGroup(selectedGroupSnapshot);
+      setPaymentMethod(paymentMethodSnapshot);
+      setDiscount(discountSnapshot);
       toast.error(error.response?.data?.detail || 'Payment failed');
     } finally {
       paymentInFlightRef.current = false;

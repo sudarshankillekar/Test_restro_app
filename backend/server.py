@@ -2421,13 +2421,11 @@ async def create_payment(input: PaymentCreate, request: Request):
     if not target_order_ids:
         raise HTTPException(status_code=400, detail="Please select at least one order to bill.")
 
-    orders = await db.orders.find({
+    orders_task = db.orders.find({
         "order_id": {"$in": target_order_ids},
         "restaurant_id": restaurant_id
     }, {"_id": 0}).to_list(len(target_order_ids))
-    if len(orders) != len(target_order_ids):
-        raise HTTPException(status_code=404, detail="One or more orders were not found")
-    existing_payment = await db.payments.find_one({
+    existing_payment_task = db.payments.find_one({
         "restaurant_id": restaurant_id,
         "status": "completed",
         "$or": [
@@ -2435,6 +2433,14 @@ async def create_payment(input: PaymentCreate, request: Request):
             {"order_ids": {"$in": target_order_ids}},
         ],
     }, {"_id": 0})
+    restaurant_task = db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    orders, existing_payment, restaurant = await asyncio.gather(
+        orders_task,
+        existing_payment_task,
+        restaurant_task,
+    )
+    if len(orders) != len(target_order_ids):
+        raise HTTPException(status_code=404, detail="One or more orders were not found")
     if existing_payment:
         raise HTTPException(status_code=409, detail="Bill generated already.")
     if any(order["status"] != "prepared" for order in orders):
@@ -2469,7 +2475,6 @@ async def create_payment(input: PaymentCreate, request: Request):
         raise HTTPException(status_code=409, detail="Bill generated already.")
     
     subtotal = round(sum(order["total"] for order in orders), 2)
-    restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
     billing_settings = normalize_billing_settings(restaurant)
     bill_amounts = calculate_bill_amounts(
         subtotal,
@@ -2503,13 +2508,14 @@ async def create_payment(input: PaymentCreate, request: Request):
     try:
         await db.payments.insert_one(payment_doc)
         
+        served_at = datetime.now(timezone.utc)
         await db.orders.update_many(
             {"order_id": {"$in": target_order_ids}, "restaurant_id": restaurant_id, "billing_lock_id": billing_lock_id},
             {"$set": {
                 "status": "served",
                 "payment_status": "completed",
-                "updated_at": datetime.now(timezone.utc),
-                "timestamps.served": datetime.now(timezone.utc).isoformat()
+                "updated_at": served_at,
+                "timestamps.served": served_at.isoformat()
             }, "$unset": {
                 "billing_lock_id": ""
             }}
@@ -2535,18 +2541,26 @@ async def create_payment(input: PaymentCreate, request: Request):
             )
         )
 
-    updated_orders = await db.orders.find({
-        "order_id": {"$in": target_order_ids},
-        "restaurant_id": restaurant_id
-    }, {"_id": 0}).to_list(len(target_order_ids))
-    enriched_orders = await enrich_orders(updated_orders)
-    for enriched_order in enriched_orders:
+    for order in orders:
+        updated_order = dict(order)
+        updated_order["status"] = "served"
+        updated_order["payment_status"] = "completed"
+        updated_order["updated_at"] = served_at
+        updated_order["payment"] = {k: v for k, v in payment_doc.items() if k != "_id"}
+        timestamps = dict(updated_order.get("timestamps") or {})
+        timestamps["served"] = served_at.isoformat()
+        updated_order["timestamps"] = timestamps
+        if not updated_order.get("table_label"):
+            if updated_order.get("table_number") is not None:
+                updated_order["table_label"] = f"Table {updated_order['table_number']}"
+            else:
+                updated_order["table_label"] = updated_order.get("table_id")
         schedule_background_task(
             emit_order_event(
                 'order_status_updated',
-                to_socket_payload(enriched_order),
+                to_socket_payload(updated_order),
                 restaurant_id,
-                enriched_order["order_id"]
+                updated_order["order_id"]
             )
         )
     
@@ -3362,6 +3376,8 @@ async def startup_event():
         await db.orders.create_index([("restaurant_id", 1), ("table_id", 1), ("status", 1), ("created_at", -1)])
         await db.customer_sessions.create_index("session_token", unique=True)
         await db.payments.create_index([("restaurant_id", 1), ("order_id", 1)])
+        await db.payments.create_index([("restaurant_id", 1), ("status", 1), ("order_id", 1)])
+        await db.payments.create_index([("restaurant_id", 1), ("status", 1), ("order_ids", 1)])
         await db.cash_adjustments.create_index([("restaurant_id", 1), ("created_at", -1)])
         await db.cash_drawer_openings.create_index(
             [("restaurant_id", 1), ("business_day_start", -1)],
