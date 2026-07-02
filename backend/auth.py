@@ -11,6 +11,28 @@ ACCESS_TOKEN_EXPIRE_DAYS = 7
 REFRESH_TOKEN_EXPIRE_DAYS = 30
 ACCESS_TOKEN_MAX_AGE_SECONDS = ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 REFRESH_TOKEN_MAX_AGE_SECONDS = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+DEFAULT_RESTAURANT_ACCESS_CONFIG = {
+    "pos_enabled": True,
+    "kitchen_enabled": True,
+    "billing_enabled": True,
+    "waiter_enabled": True,
+    "kitchen_billing_enabled": True,
+}
+STAFF_ROLE_ACCESS_KEYS = {
+    "pos": "pos_enabled",
+    "kitchen": "kitchen_enabled",
+    "billing": "billing_enabled",
+    "waiter": "waiter_enabled",
+    "kitchen_billing": "kitchen_billing_enabled",
+}
+
+def normalize_access_config(access_config=None) -> dict:
+    normalized = dict(DEFAULT_RESTAURANT_ACCESS_CONFIG)
+    if isinstance(access_config, dict):
+        for key in normalized:
+            if key in access_config:
+                normalized[key] = bool(access_config[key])
+    return normalized
 
 def get_jwt_secret() -> str:
     return os.environ.get("JWT_SECRET", "dev_secret_key_change_in_production")
@@ -48,9 +70,12 @@ async def attach_restaurant_context(user: dict, db) -> dict:
     if restaurant_id:
         restaurant = await db.restaurants.find_one(
             {"restaurant_id": restaurant_id},
-            {"_id": 0, "name": 1, "restaurant_id": 1, "gst_number": 1}
+            {"_id": 0, "name": 1, "restaurant_id": 1, "gst_number": 1, "access_config": 1}
         )
         if restaurant:
+            role_access_key = STAFF_ROLE_ACCESS_KEYS.get(user.get("role"))
+            if role_access_key and not normalize_access_config(restaurant.get("access_config")).get(role_access_key, True):
+                raise HTTPException(status_code=403, detail=f"{user.get('role', 'Staff').replace('_', ' ').title()} access is disabled for this restaurant.")
             user["restaurant_name"] = restaurant.get("name")
             user["restaurant_gst_number"] = restaurant.get("gst_number")
 

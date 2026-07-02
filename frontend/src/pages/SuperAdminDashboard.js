@@ -7,11 +7,40 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import { Crown, LogOut, Building2, TrendingUp, DollarSign, CheckCircle, XCircle, Clock, AlertTriangle, Download } from 'lucide-react';
+import { Crown, LogOut, Building2, TrendingUp, DollarSign, CheckCircle, XCircle, Clock, AlertTriangle, Download, Settings } from 'lucide-react';
+
+const DEFAULT_ACCESS_CONFIG = {
+  pos_enabled: true,
+  kitchen_enabled: true,
+  billing_enabled: true,
+  waiter_enabled: true,
+  kitchen_billing_enabled: true,
+  staff_management_enabled: true,
+  table_management_enabled: true,
+  max_tables: '',
+  max_staff: '',
+};
+
+const ACCESS_FLAGS = [
+  { key: 'pos_enabled', label: 'POS Only' },
+  { key: 'kitchen_enabled', label: 'Kitchen Staff' },
+  { key: 'billing_enabled', label: 'Billing Staff' },
+  { key: 'waiter_enabled', label: 'Waiter' },
+  { key: 'kitchen_billing_enabled', label: 'Kitchen & Billing' },
+  { key: 'staff_management_enabled', label: 'Staff Management' },
+  { key: 'table_management_enabled', label: 'Table Management' },
+];
+
+const normalizeAccessConfig = (config = {}) => ({
+  ...DEFAULT_ACCESS_CONFIG,
+  ...config,
+  max_tables: config?.max_tables ?? '',
+  max_staff: config?.max_staff ?? '',
+});
 
 const SuperAdminDashboard = () => {
   const navigate = useNavigate();
@@ -21,6 +50,8 @@ const SuperAdminDashboard = () => {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedRestaurant, setSelectedRestaurant] = useState(null);
+  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
+  const [accessForm, setAccessForm] = useState(DEFAULT_ACCESS_CONFIG);
   const [exportFilters, setExportFilters] = useState({
     restaurant_id: 'all',
     start_date: '',
@@ -108,6 +139,41 @@ const SuperAdminDashboard = () => {
       fetchRestaurants();
     } catch (error) {
       toast.error('Failed to extend subscription');
+    }
+  };
+
+  const openAccessDialog = (restaurant) => {
+    setSelectedRestaurant(restaurant);
+    setAccessForm(normalizeAccessConfig(restaurant.access_config));
+    setAccessDialogOpen(true);
+  };
+
+  const updateAccessFlag = (key, value) => {
+    setAccessForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const saveRestaurantAccess = async () => {
+    if (!selectedRestaurant) return;
+    const payload = {
+      ...accessForm,
+      max_tables: accessForm.max_tables === '' ? null : Number(accessForm.max_tables),
+      max_staff: accessForm.max_staff === '' ? null : Number(accessForm.max_staff),
+    };
+    if ((payload.max_tables !== null && payload.max_tables < 0) || (payload.max_staff !== null && payload.max_staff < 0)) {
+      toast.error('Limits cannot be negative.');
+      return;
+    }
+
+    try {
+      await api.put(`/api/super-admin/restaurants/${selectedRestaurant.restaurant_id}`, {
+        access_config: payload,
+      });
+      toast.success('Access configuration updated');
+      setAccessDialogOpen(false);
+      setSelectedRestaurant(null);
+      fetchRestaurants();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to update access configuration');
     }
   };
 
@@ -370,7 +436,13 @@ const SuperAdminDashboard = () => {
             </Card>
 
             <div className="grid grid-cols-1 gap-4">
-              {restaurants.map((restaurant) => (
+              {restaurants.map((restaurant) => {
+                const accessConfig = normalizeAccessConfig(restaurant.access_config);
+                const enabledRoleLabels = ACCESS_FLAGS
+                  .filter((flag) => !['staff_management_enabled', 'table_management_enabled'].includes(flag.key))
+                  .filter((flag) => accessConfig[flag.key])
+                  .map((flag) => flag.label);
+                return (
                 <Card key={restaurant.restaurant_id} className="border-border rounded-2xl" data-testid={`restaurant-card-${restaurant.restaurant_id}`}>
                   <CardContent className="p-6">
                     <div className="flex items-start justify-between">
@@ -401,6 +473,27 @@ const SuperAdminDashboard = () => {
                             <p className="font-medium">
                               {restaurant.subscriptionEnd ? new Date(restaurant.subscriptionEnd).toLocaleDateString() : 'Not set'}
                             </p>
+                          </div>
+                        </div>
+                        <div className="mt-4 space-y-2 text-sm">
+                          <p className="text-muted-foreground">Access</p>
+                          <div className="flex flex-wrap gap-2">
+                            {enabledRoleLabels.map((label) => (
+                              <Badge key={label} variant="outline" className="rounded-md">
+                                {label}
+                              </Badge>
+                            ))}
+                            {enabledRoleLabels.length === 0 && (
+                              <Badge variant="outline" className="rounded-md border-destructive text-destructive">
+                                No staff roles enabled
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                            <span>Tables: {accessConfig.max_tables === '' ? 'Unlimited' : accessConfig.max_tables}</span>
+                            <span>Staff: {accessConfig.max_staff === '' ? 'Unlimited' : accessConfig.max_staff}</span>
+                            <span>Table setup: {accessConfig.table_management_enabled ? 'Enabled' : 'Disabled'}</span>
+                            <span>Staff setup: {accessConfig.staff_management_enabled ? 'Enabled' : 'Disabled'}</span>
                           </div>
                         </div>
                       </div>
@@ -441,6 +534,15 @@ const SuperAdminDashboard = () => {
                         <Button
                           size="sm"
                           variant="outline"
+                          onClick={() => openAccessDialog(restaurant)}
+                          className="rounded-full"
+                        >
+                          <Settings className="w-4 h-4 mr-1" />
+                          Access
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
                           onClick={() => extendSubscription(restaurant.restaurant_id, 30)}
                           className="rounded-full"
                           data-testid={`extend-${restaurant.restaurant_id}`}
@@ -451,9 +553,81 @@ const SuperAdminDashboard = () => {
                     </div>
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           </TabsContent>
+
+          <Dialog open={accessDialogOpen} onOpenChange={setAccessDialogOpen}>
+            <DialogContent className="max-w-2xl rounded-2xl">
+              <DialogHeader>
+                <DialogTitle>Configure Access{selectedRestaurant ? ` - ${selectedRestaurant.name}` : ''}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-5">
+                <div>
+                  <p className="mb-3 text-sm font-semibold text-muted-foreground">Allowed Features</p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {ACCESS_FLAGS.map((flag) => (
+                      <label key={flag.key} className="flex items-center justify-between rounded-xl border border-border bg-white px-4 py-3 text-sm font-semibold">
+                        <span>{flag.label}</span>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(accessForm[flag.key])}
+                          onChange={(event) => updateAccessFlag(flag.key, event.target.checked)}
+                          className="h-5 w-5"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Max Tables</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={accessForm.max_tables}
+                      onChange={(event) => updateAccessFlag('max_tables', event.target.value)}
+                      placeholder="Unlimited"
+                      className="rounded-full"
+                    />
+                    <p className="text-xs text-muted-foreground">Leave empty for unlimited. Use 0 to block new tables.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Max Staff</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={accessForm.max_staff}
+                      onChange={(event) => updateAccessFlag('max_staff', event.target.value)}
+                      placeholder="Unlimited"
+                      className="rounded-full"
+                    />
+                    <p className="text-xs text-muted-foreground">Counts restaurant staff roles only, not the owner admin.</p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-full"
+                    onClick={() => setAccessDialogOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    className="rounded-full bg-primary hover:bg-[#C54E2C]"
+                    onClick={saveRestaurantAccess}
+                  >
+                    Save Access
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </Tabs>
       </div>
     </div>

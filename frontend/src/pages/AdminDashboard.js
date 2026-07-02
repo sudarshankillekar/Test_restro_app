@@ -17,6 +17,29 @@ import { ChefHat, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Downloa
 import { QRCodeCanvas } from 'qrcode.react';
 
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
+const DEFAULT_ACCESS_CONFIG = {
+  pos_enabled: true,
+  kitchen_enabled: true,
+  billing_enabled: true,
+  waiter_enabled: true,
+  kitchen_billing_enabled: true,
+  staff_management_enabled: true,
+  table_management_enabled: true,
+  max_tables: null,
+  max_staff: null,
+};
+const STAFF_ROLE_OPTIONS = [
+  { value: 'kitchen', label: 'Kitchen Staff', accessKey: 'kitchen_enabled' },
+  { value: 'billing', label: 'Billing Counter', accessKey: 'billing_enabled' },
+  { value: 'kitchen_billing', label: 'Kitchen + Billing', accessKey: 'kitchen_billing_enabled' },
+  { value: 'waiter', label: 'Waiter', accessKey: 'waiter_enabled' },
+  { value: 'pos', label: 'POS Only', accessKey: 'pos_enabled' },
+];
+
+const normalizeAccessConfig = (config = {}) => ({
+  ...DEFAULT_ACCESS_CONFIG,
+  ...(config || {}),
+});
 
 const getErrorMessage = (error, fallback) => error.response?.data?.detail || fallback;
 
@@ -80,6 +103,7 @@ const AdminDashboard = () => {
     service_charge_percentage: 0,
     parcel_charge_enabled: false,
     parcel_charge: 0,
+    access_config: DEFAULT_ACCESS_CONFIG,
   });
 
   useEffect(() => {
@@ -87,7 +111,7 @@ const AdminDashboard = () => {
     if (activeTab === 'menu') fetchMenu();
     if (activeTab === 'tables') fetchTables();
     if (activeTab === 'staff') fetchStaff();
-    if (activeTab === 'settings') fetchRestaurantProfile();
+    if (['tables', 'staff', 'settings'].includes(activeTab)) fetchRestaurantProfile();
   }, [activeTab, period]);
 
   useEffect(() => {
@@ -312,6 +336,15 @@ const AdminDashboard = () => {
 
   
   const createTable = async () => {
+    const accessConfig = normalizeAccessConfig(restaurantProfile.access_config);
+    if (!accessConfig.table_management_enabled) {
+      toast.error('Table management is disabled by super admin.');
+      return;
+    }
+    if (accessConfig.max_tables !== null && tables.length >= Number(accessConfig.max_tables)) {
+      toast.error(`Table limit reached. Max tables allowed: ${accessConfig.max_tables}.`);
+      return;
+    }
     if (!newTableNumber.trim()) {
       toast.error('Please add one table number to create QR code.');
       return;
@@ -388,6 +421,7 @@ const AdminDashboard = () => {
       const response = await api.get(`/api/restaurant/profile`, {
         withCredentials: true,
       });
+      const nextAccessConfig = normalizeAccessConfig(response.data.access_config);
       setRestaurantProfile({
         name: response.data.name || '',
         gst_number: response.data.gst_number || '',
@@ -399,6 +433,13 @@ const AdminDashboard = () => {
         service_charge_percentage: response.data.service_charge_percentage ?? 0,
         parcel_charge_enabled: response.data.parcel_charge_enabled ?? false,
         parcel_charge: response.data.parcel_charge ?? 0,
+        access_config: nextAccessConfig,
+      });
+      setNewStaff((current) => {
+        const selectedRoleEnabled = STAFF_ROLE_OPTIONS.some((role) => role.value === current.role && nextAccessConfig[role.accessKey]);
+        if (selectedRoleEnabled) return current;
+        const firstEnabledRole = STAFF_ROLE_OPTIONS.find((role) => nextAccessConfig[role.accessKey]);
+        return { ...current, role: firstEnabledRole?.value || current.role };
       });
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to load restaurant settings'));
@@ -440,6 +481,20 @@ const AdminDashboard = () => {
   };
 
   const createStaff = async () => {
+    const accessConfig = normalizeAccessConfig(restaurantProfile.access_config);
+    if (!accessConfig.staff_management_enabled) {
+      toast.error('Staff management is disabled by super admin.');
+      return;
+    }
+    const selectedRole = STAFF_ROLE_OPTIONS.find((role) => role.value === newStaff.role);
+    if (selectedRole && !accessConfig[selectedRole.accessKey]) {
+      toast.error(`${selectedRole.label} access is disabled by super admin.`);
+      return;
+    }
+    if (accessConfig.max_staff !== null && staff.length >= Number(accessConfig.max_staff)) {
+      toast.error(`Staff limit reached. Max staff allowed: ${accessConfig.max_staff}.`);
+      return;
+    }
     try {
       await api.post(
         `/api/admin/staff`,
@@ -529,6 +584,11 @@ const AdminDashboard = () => {
     link.href = url;
     link.click();
   };
+
+  const accessConfig = normalizeAccessConfig(restaurantProfile.access_config);
+  const allowedStaffRoles = STAFF_ROLE_OPTIONS.filter((role) => accessConfig[role.accessKey]);
+  const tableLimitReached = accessConfig.max_tables !== null && tables.length >= Number(accessConfig.max_tables);
+  const staffLimitReached = accessConfig.max_staff !== null && staff.length >= Number(accessConfig.max_staff);
 
   return (
     <div className="min-h-screen" style={{ background: '#F3F4F6' }}>
@@ -1092,23 +1152,37 @@ const AdminDashboard = () => {
               <CardHeader>
                 <CardTitle>Add Table</CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-col sm:flex-row gap-2">
+              <CardContent className="flex flex-col gap-2">
+                {!accessConfig.table_management_enabled && (
+                  <p className="rounded-xl bg-yellow-50 px-3 py-2 text-sm font-medium text-yellow-800">
+                    Table management is disabled by super admin.
+                  </p>
+                )}
+                {accessConfig.table_management_enabled && accessConfig.max_tables !== null && (
+                  <p className="text-sm text-muted-foreground">
+                    Tables used: {tables.length}/{accessConfig.max_tables}
+                  </p>
+                )}
+                <div className="flex flex-col sm:flex-row gap-2">
                 <Input
                   type="number"
                   placeholder="Table number"
                   value={newTableNumber}
                   onChange={(e) => setNewTableNumber(e.target.value)}
+                  disabled={!accessConfig.table_management_enabled || tableLimitReached}
                   className="rounded-full"
                   data-testid="table-number-input"
                 />
                 <Button
                   onClick={createTable}
+                  disabled={!accessConfig.table_management_enabled || tableLimitReached}
                   className="rounded-full bg-primary hover:bg-[#C54E2C]"
                   data-testid="add-table-button"
                 >
                   <Plus className="w-4 h-4 mr-1" />
                   Add
                 </Button>
+                </div>
               </CardContent>
             </Card>
 
@@ -1139,6 +1213,7 @@ const AdminDashboard = () => {
                       </Button>
                       <Button
                         onClick={() => deleteTable(table.table_id)}
+                        disabled={!accessConfig.table_management_enabled}
                         variant="destructive"
                         className="w-full rounded-full"
                         data-testid={`delete-table-${table.table_id}`}
@@ -1159,6 +1234,21 @@ const AdminDashboard = () => {
                 <CardTitle>Add Staff Member</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {!accessConfig.staff_management_enabled && (
+                  <p className="rounded-xl bg-yellow-50 px-3 py-2 text-sm font-medium text-yellow-800">
+                    Staff management is disabled by super admin.
+                  </p>
+                )}
+                {accessConfig.staff_management_enabled && accessConfig.max_staff !== null && (
+                  <p className="text-sm text-muted-foreground">
+                    Staff used: {staff.length}/{accessConfig.max_staff}
+                  </p>
+                )}
+                {accessConfig.staff_management_enabled && allowedStaffRoles.length === 0 && (
+                  <p className="rounded-xl bg-yellow-50 px-3 py-2 text-sm font-medium text-yellow-800">
+                    No staff roles are enabled by super admin.
+                  </p>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Name</Label>
@@ -1166,6 +1256,7 @@ const AdminDashboard = () => {
                       value={newStaff.name}
                       onChange={(e) => setNewStaff({ ...newStaff, name: e.target.value })}
                       className="rounded-full"
+                      disabled={!accessConfig.staff_management_enabled || staffLimitReached}
                       placeholder="John Doe"
                       data-testid="staff-name-input"
                     />
@@ -1177,6 +1268,7 @@ const AdminDashboard = () => {
                       value={newStaff.email}
                       onChange={(e) => setNewStaff({ ...newStaff, email: e.target.value })}
                       className="rounded-full"
+                      disabled={!accessConfig.staff_management_enabled || staffLimitReached}
                       placeholder="staff@restaurant.com"
                       data-testid="staff-email-input"
                     />
@@ -1188,28 +1280,32 @@ const AdminDashboard = () => {
                       value={newStaff.password}
                       onChange={(e) => setNewStaff({ ...newStaff, password: e.target.value })}
                       className="rounded-full"
+                      disabled={!accessConfig.staff_management_enabled || staffLimitReached}
                       placeholder="••••••••"
                       data-testid="staff-password-input"
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>Role</Label>
-                    <Select value={newStaff.role} onValueChange={(val) => setNewStaff({ ...newStaff, role: val })}>
+                    <Select
+                      value={newStaff.role}
+                      onValueChange={(val) => setNewStaff({ ...newStaff, role: val })}
+                      disabled={!accessConfig.staff_management_enabled || staffLimitReached || allowedStaffRoles.length === 0}
+                    >
                       <SelectTrigger className="rounded-full" data-testid="staff-role-select">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="kitchen">Kitchen Staff</SelectItem>
-                        <SelectItem value="billing">Billing Counter</SelectItem>
-                        <SelectItem value="kitchen_billing">Kitchen + Billing</SelectItem>
-                        <SelectItem value="waiter">Waiter</SelectItem>
-                        <SelectItem value="pos">POS Only</SelectItem>
+                        {allowedStaffRoles.map((role) => (
+                          <SelectItem key={role.value} value={role.value}>{role.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
                 <Button
                   onClick={createStaff}
+                  disabled={!accessConfig.staff_management_enabled || staffLimitReached || allowedStaffRoles.length === 0}
                   className="w-full rounded-full bg-primary hover:bg-[#C54E2C]"
                   data-testid="add-staff-button"
                 >
@@ -1241,6 +1337,7 @@ const AdminDashboard = () => {
                     <Button
                       size="sm"
                       variant="destructive"
+                      disabled={!accessConfig.staff_management_enabled}
                       className="w-full rounded-full"
                       onClick={() => deleteStaff(member.email)}
                       data-testid={`delete-staff-${member.email}`}

@@ -26,6 +26,7 @@ class RestaurantCreate(BaseModel):
     owner_password: str
     plan: Optional[str] = "CUSTOM"
     subscription_amount: Optional[float] = None
+    access_config: Optional[dict] = None
 
 
 class RestaurantUpdate(BaseModel):
@@ -34,6 +35,7 @@ class RestaurantUpdate(BaseModel):
     plan: Optional[str] = None
     subscription_amount: Optional[float] = None
     gst_number: Optional[str] = None
+    access_config: Optional[dict] = None
 
 class RestaurantProfileUpdate(BaseModel):
     gst_number: Optional[str] = None

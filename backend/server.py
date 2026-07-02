@@ -41,6 +41,96 @@ import jwt
 import secrets
 
 BUSINESS_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+DEFAULT_RESTAURANT_ACCESS_CONFIG = {
+    "pos_enabled": True,
+    "kitchen_enabled": True,
+    "billing_enabled": True,
+    "waiter_enabled": True,
+    "kitchen_billing_enabled": True,
+    "staff_management_enabled": True,
+    "table_management_enabled": True,
+    "max_tables": None,
+    "max_staff": None,
+}
+STAFF_ROLE_ACCESS_KEYS = {
+    "pos": "pos_enabled",
+    "kitchen": "kitchen_enabled",
+    "billing": "billing_enabled",
+    "waiter": "waiter_enabled",
+    "kitchen_billing": "kitchen_billing_enabled",
+}
+STAFF_ROLES = list(STAFF_ROLE_ACCESS_KEYS.keys())
+
+def normalize_access_config(access_config: Optional[dict] = None) -> dict:
+    normalized = dict(DEFAULT_RESTAURANT_ACCESS_CONFIG)
+    if isinstance(access_config, dict):
+        for key in normalized:
+            if key in access_config:
+                normalized[key] = access_config[key]
+
+    for key in [
+        "pos_enabled",
+        "kitchen_enabled",
+        "billing_enabled",
+        "waiter_enabled",
+        "kitchen_billing_enabled",
+        "staff_management_enabled",
+        "table_management_enabled",
+    ]:
+        normalized[key] = bool(normalized.get(key, True))
+
+    for key in ["max_tables", "max_staff"]:
+        value = normalized.get(key)
+        if value in [None, ""]:
+            normalized[key] = None
+        else:
+            try:
+                normalized[key] = int(value)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key} must be a number or empty.")
+            if normalized[key] < 0:
+                raise HTTPException(status_code=400, detail=f"{key} cannot be negative.")
+
+    return normalized
+
+def ensure_access_flag(access_config: dict, key: str, label: str):
+    if not normalize_access_config(access_config).get(key, True):
+        raise HTTPException(status_code=403, detail=f"{label} is disabled for this restaurant. Contact super admin.")
+
+async def get_restaurant_access_config(restaurant_id: str) -> dict:
+    restaurant = await db.restaurants.find_one(
+        {"restaurant_id": restaurant_id},
+        {"_id": 0, "access_config": 1},
+    )
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    return normalize_access_config(restaurant.get("access_config"))
+
+async def ensure_staff_creation_allowed(restaurant_id: str, role: str):
+    access_config = await get_restaurant_access_config(restaurant_id)
+    ensure_access_flag(access_config, "staff_management_enabled", "Staff management")
+    role_access_key = STAFF_ROLE_ACCESS_KEYS.get(role)
+    if role_access_key:
+        ensure_access_flag(access_config, role_access_key, role.replace("_", " ").title())
+
+    max_staff = access_config.get("max_staff")
+    if max_staff is not None:
+        staff_count = await db.users.count_documents({
+            "restaurant_id": restaurant_id,
+            "role": {"$in": STAFF_ROLES},
+        })
+        if staff_count >= max_staff:
+            raise HTTPException(status_code=403, detail=f"Staff limit reached. Max staff allowed: {max_staff}.")
+
+async def ensure_table_creation_allowed(restaurant_id: str):
+    access_config = await get_restaurant_access_config(restaurant_id)
+    ensure_access_flag(access_config, "table_management_enabled", "Table management")
+
+    max_tables = access_config.get("max_tables")
+    if max_tables is not None:
+        table_count = await db.tables.count_documents({"restaurant_id": restaurant_id})
+        if table_count >= max_tables:
+            raise HTTPException(status_code=403, detail=f"Table limit reached. Max tables allowed: {max_tables}.")
 
 def schedule_background_task(coro):
     task = asyncio.create_task(coro)
@@ -598,11 +688,14 @@ async def login(input: LoginRequest, request: Request, response: Response):
 
     restaurant_id = user.get("restaurant_id")
     if user.get("role") != "super_admin" and restaurant_id:
-        restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0, "status": 1})
+        restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0, "status": 1, "access_config": 1})
         if restaurant and restaurant.get("status") == "SUSPENDED":
             raise HTTPException(status_code=403, detail="Restaurant account is suspended. Please contact support.")
         if restaurant and restaurant.get("status") == "EXPIRED":
             raise HTTPException(status_code=403, detail="Restaurant subscription has expired. Please contact support.")
+        role_access_key = STAFF_ROLE_ACCESS_KEYS.get(user.get("role"))
+        if role_access_key and restaurant:
+            ensure_access_flag(normalize_access_config(restaurant.get("access_config")), role_access_key, user.get("role", "Staff").replace("_", " ").title())
     
     await clear_failed_logins(db, client_ip, email)
     
@@ -746,6 +839,7 @@ async def create_restaurant_super(input: RestaurantCreate, request: Request):
         "subscriptionStart": datetime.now(timezone.utc),
         "subscriptionEnd": datetime.now(timezone.utc) + timedelta(days=subscription_terms["duration_days"]),
         "paymentStatus": "PAID",
+        "access_config": normalize_access_config(input.access_config),
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc)
     }
@@ -793,6 +887,7 @@ async def register_restaurant(input: RestaurantCreate):
         "subscriptionStart": None,
         "subscriptionEnd": None,
         "paymentStatus": "PENDING",
+        "access_config": normalize_access_config(),
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
         "approval_pending": True
@@ -830,6 +925,7 @@ async def list_all_restaurants(request: Request):
     
     # Enrich with owner info
     for rest in restaurants:
+        rest["access_config"] = normalize_access_config(rest.get("access_config"))
         owner = await db.users.find_one(
             {"restaurant_id": rest["restaurant_id"], "role": "admin"},
             {"_id": 0, "email": 1, "name": 1}
@@ -850,6 +946,12 @@ async def update_restaurant_super(restaurant_id: str, input: RestaurantUpdate, r
         raise HTTPException(status_code=404, detail="Restaurant not found")
     
     update_data = {k: v for k, v in input.model_dump().items() if v is not None}
+    if "access_config" in update_data:
+        existing_access_config = normalize_access_config(restaurant.get("access_config"))
+        incoming_access_config = update_data.get("access_config") or {}
+        if not isinstance(incoming_access_config, dict):
+            raise HTTPException(status_code=400, detail="access_config must be an object.")
+        update_data["access_config"] = normalize_access_config({**existing_access_config, **incoming_access_config})
     if "subscription_amount" in update_data:
         update_data["subscription_amount"] = float(update_data["subscription_amount"] or 0)
         if update_data["subscription_amount"] <= 0:
@@ -887,6 +989,7 @@ async def update_restaurant_super(restaurant_id: str, input: RestaurantUpdate, r
     )
     
     updated = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    updated["access_config"] = normalize_access_config(updated.get("access_config"))
     return updated
 
 @api_router.post("/super-admin/restaurants/{restaurant_id}/extend")
@@ -1030,12 +1133,13 @@ async def get_restaurant_profile(request: Request):
             "service_charge_percentage": 1,
             "parcel_charge_enabled": 1,
             "parcel_charge": 1,
+            "access_config": 1,
         }
     )
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
-    return {**restaurant, **normalize_billing_settings(restaurant)}
+    return {**restaurant, **normalize_billing_settings(restaurant), "access_config": normalize_access_config(restaurant.get("access_config"))}
 
 @api_router.put("/restaurant/profile")
 async def update_restaurant_profile(input: RestaurantProfileUpdate, request: Request):
@@ -1223,6 +1327,7 @@ async def create_staff(input: RegisterRequest, request: Request):
     # Validate role - admin can only create restaurant staff accounts
     if input.role not in ["kitchen", "billing", "kitchen_billing", "waiter", "pos"]:
         raise HTTPException(status_code=400, detail="Can only create kitchen, billing, kitchen+billing, waiter, or POS staff")
+    await ensure_staff_creation_allowed(restaurant_id, input.role)
     
     # Check if email exists
     email = input.email.lower()
@@ -1278,6 +1383,8 @@ async def delete_staff(email: str, request: Request):
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
     
     await check_restaurant_subscription(db, restaurant_id)
+    access_config = await get_restaurant_access_config(restaurant_id)
+    ensure_access_flag(access_config, "staff_management_enabled", "Staff management")
     
     # Delete staff (only kitchen/billing/waiter/POS)
     result = await db.users.delete_one({
@@ -1775,6 +1882,7 @@ async def create_table(input: TableCreate, request: Request):
         raise HTTPException(status_code=400, detail="Please add one table number to create QR code.")
     if input.table_number <= 0:
         raise HTTPException(status_code=400, detail="Please enter a valid table number.")
+    await ensure_table_creation_allowed(restaurant_id)
 
     table_id = f"table_{secrets.token_hex(6)}"
     
@@ -1930,6 +2038,8 @@ async def delete_table(table_id: str, request: Request):
     restaurant_id = user.get("restaurant_id")
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+    access_config = await get_restaurant_access_config(restaurant_id)
+    ensure_access_flag(access_config, "table_management_enabled", "Table management")
     
     # Delete only if it belongs to this restaurant
     result = await db.tables.delete_one({
