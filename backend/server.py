@@ -44,6 +44,7 @@ BUSINESS_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
 DEFAULT_RESTAURANT_ACCESS_CONFIG = {
     "pos_enabled": True,
     "kitchen_enabled": True,
+    "kitchen_tv_enabled": True,
     "billing_enabled": True,
     "waiter_enabled": True,
     "kitchen_billing_enabled": True,
@@ -55,6 +56,7 @@ DEFAULT_RESTAURANT_ACCESS_CONFIG = {
 STAFF_ROLE_ACCESS_KEYS = {
     "pos": "pos_enabled",
     "kitchen": "kitchen_enabled",
+    "kitchen_tv": "kitchen_tv_enabled",
     "billing": "billing_enabled",
     "waiter": "waiter_enabled",
     "kitchen_billing": "kitchen_billing_enabled",
@@ -71,6 +73,7 @@ def normalize_access_config(access_config: Optional[dict] = None) -> dict:
     for key in [
         "pos_enabled",
         "kitchen_enabled",
+        "kitchen_tv_enabled",
         "billing_enabled",
         "waiter_enabled",
         "kitchen_billing_enabled",
@@ -106,8 +109,23 @@ async def get_restaurant_access_config(restaurant_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Restaurant not found")
     return normalize_access_config(restaurant.get("access_config"))
 
-async def ensure_staff_creation_allowed(restaurant_id: str, role: str):
-    access_config = await get_restaurant_access_config(restaurant_id)
+async def get_staff_management_restaurant(restaurant_id: str) -> dict:
+    try:
+        return await check_restaurant_subscription(db, restaurant_id)
+    except HTTPException as error:
+        if error.status_code == 404 and error.detail == "Restaurant not found":
+            logging.warning(
+                "Restaurant %s missing while managing staff; using legacy default access config.",
+                restaurant_id,
+            )
+            return {
+                "restaurant_id": restaurant_id,
+                "access_config": normalize_access_config(),
+            }
+        raise
+
+async def ensure_staff_creation_allowed(restaurant_id: str, role: str, access_config: Optional[dict] = None):
+    access_config = normalize_access_config(access_config) if access_config is not None else await get_restaurant_access_config(restaurant_id)
     ensure_access_flag(access_config, "staff_management_enabled", "Staff management")
     role_access_key = STAFF_ROLE_ACCESS_KEYS.get(role)
     if role_access_key:
@@ -304,7 +322,7 @@ async def get_restaurant_id_from_request(
     try:
         _, resolved_restaurant_id = await resolve_restaurant_access(
             request,
-            ["admin", "kitchen", "billing", "kitchen_billing", "waiter", "pos"],
+            ["admin", "kitchen", "kitchen_tv", "billing", "kitchen_billing", "waiter", "pos"],
         )
         return resolved_restaurant_id
     except HTTPException:
@@ -633,6 +651,15 @@ def build_cors_origins() -> list[str]:
     return sorted(default_origins)
 
 # ============ Auth Endpoints ============
+@api_router.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "staff_management_patch": "legacy-restaurant-fallback",
+        "kitchen_tv_role": True,
+    }
+
+
 @api_router.post("/auth/register")
 async def register(input: RegisterRequest, request: Request, response: Response):
     """Register new staff user - ONLY restaurant admins can create kitchen/billing/waiter staff"""
@@ -1111,7 +1138,7 @@ async def get_my_subscription(request: Request):
 async def get_restaurant_profile(request: Request):
     """Restaurant admin/staff views their restaurant profile details"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing", "waiter", "pos"]:
+    if user["role"] not in ["admin", "kitchen", "kitchen_tv", "billing", "kitchen_billing", "waiter", "pos"]:
         raise HTTPException(status_code=403, detail="Restaurant access required")
 
     restaurant_id = user.get("restaurant_id")
@@ -1137,7 +1164,15 @@ async def get_restaurant_profile(request: Request):
         }
     )
     if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
+        logging.warning(
+            "Restaurant %s missing while loading profile; returning legacy default profile.",
+            restaurant_id,
+        )
+        restaurant = {
+            "restaurant_id": restaurant_id,
+            "name": user.get("restaurant_name") or "",
+            "access_config": normalize_access_config(),
+        }
 
     return {**restaurant, **normalize_billing_settings(restaurant), "access_config": normalize_access_config(restaurant.get("access_config"))}
 
@@ -1322,12 +1357,12 @@ async def create_staff(input: RegisterRequest, request: Request):
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
     
-    await check_restaurant_subscription(db, restaurant_id)
+    restaurant = await get_staff_management_restaurant(restaurant_id)
     
     # Validate role - admin can only create restaurant staff accounts
-    if input.role not in ["kitchen", "billing", "kitchen_billing", "waiter", "pos"]:
-        raise HTTPException(status_code=400, detail="Can only create kitchen, billing, kitchen+billing, waiter, or POS staff")
-    await ensure_staff_creation_allowed(restaurant_id, input.role)
+    if input.role not in ["kitchen", "kitchen_tv", "billing", "kitchen_billing", "waiter", "pos"]:
+        raise HTTPException(status_code=400, detail="Can only create kitchen, kitchen TV, billing, kitchen+billing, waiter, or POS staff")
+    await ensure_staff_creation_allowed(restaurant_id, input.role, restaurant.get("access_config"))
     
     # Check if email exists
     email = input.email.lower()
@@ -1361,11 +1396,11 @@ async def get_staff(request: Request):
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
     
-    await check_restaurant_subscription(db, restaurant_id)
+    await get_staff_management_restaurant(restaurant_id)
     
     # Get all staff for this restaurant
     staff = await db.users.find(
-        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter", "pos"]}},
+        {"restaurant_id": restaurant_id, "role": {"$in": ["kitchen", "kitchen_tv", "billing", "kitchen_billing", "waiter", "pos"]}},
         {"_id": 0, "password_hash": 0}
     ).to_list(1000)
     
@@ -1382,15 +1417,15 @@ async def delete_staff(email: str, request: Request):
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
     
-    await check_restaurant_subscription(db, restaurant_id)
-    access_config = await get_restaurant_access_config(restaurant_id)
+    restaurant = await get_staff_management_restaurant(restaurant_id)
+    access_config = normalize_access_config(restaurant.get("access_config"))
     ensure_access_flag(access_config, "staff_management_enabled", "Staff management")
     
-    # Delete staff (only kitchen/billing/waiter/POS)
+    # Delete staff (only kitchen/kitchen TV/billing/waiter/POS)
     result = await db.users.delete_one({
         "email": email.lower(),
         "restaurant_id": restaurant_id,
-        "role": {"$in": ["kitchen", "billing", "kitchen_billing", "waiter", "pos"]}
+        "role": {"$in": ["kitchen", "kitchen_tv", "billing", "kitchen_billing", "waiter", "pos"]}
     })
     
     if result.deleted_count == 0:
@@ -2229,7 +2264,7 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
 async def get_orders(request: Request, status: str = None):
     """Get all orders (kitchen/billing dashboard - requires auth)"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing", "waiter"]:
+    if user["role"] not in ["admin", "kitchen", "kitchen_tv", "billing", "kitchen_billing", "waiter"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     # Get restaurant_id for data isolation
@@ -2463,11 +2498,12 @@ async def delete_order_admin(order_id: str, request: Request):
 async def update_order_status(order_id: str, request: Request):
     """Update order status (kitchen/billing - requires auth)"""
     user = await get_current_user(request, db)
-    if user["role"] not in ["admin", "kitchen", "billing", "kitchen_billing"]:
+    if user["role"] not in ["admin", "kitchen", "kitchen_tv", "billing", "kitchen_billing"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     data = await request.json()
     new_status = data.get("status")
+    mark_items_ready = bool(data.get("mark_items_ready"))
     
     if new_status not in ["accepted", "prepared", "served", "cancelled"]:
         raise HTTPException(status_code=400, detail="Invalid status")
@@ -2484,20 +2520,26 @@ async def update_order_status(order_id: str, request: Request):
     changed_at = datetime.now(timezone.utc)
     timestamps = order.get("timestamps", {})
     timestamps[new_status] = changed_at.isoformat()
+    update_fields = {
+        "status": new_status,
+        "timestamps": timestamps,
+        "updated_at": changed_at
+    }
+    if new_status == "prepared" and mark_items_ready:
+        update_fields["items"] = [
+            {**item, "ready": True, "ready_updated_at": changed_at.isoformat()}
+            for item in order.get("items", [])
+        ]
     
     await db.orders.update_one(
         {"order_id": order_id, "restaurant_id": restaurant_id},
-        {
-            "$set": {
-                "status": new_status,
-                "timestamps": timestamps,
-                "updated_at": changed_at
-            }
-        }
+        {"$set": update_fields}
     )
     
     updated_order = {k: v for k, v in order.items() if k != "_id"}
     updated_order["status"] = new_status
+    if "items" in update_fields:
+        updated_order["items"] = update_fields["items"]
     updated_order["timestamps"] = timestamps
     updated_order["updated_at"] = changed_at
     if not updated_order.get("table_label"):
@@ -2511,6 +2553,50 @@ async def update_order_status(order_id: str, request: Request):
     )
     
     return updated_order
+
+
+@api_router.put("/orders/{order_id}/items/{item_index}/ready")
+async def update_order_item_ready(order_id: str, item_index: int, request: Request):
+    """Update a kitchen item's ready state for TV display screens."""
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "kitchen", "kitchen_tv", "kitchen_billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    data = await request.json()
+    ready = bool(data.get("ready"))
+
+    order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") in ["served", "cancelled"]:
+        raise HTTPException(status_code=400, detail="Completed or cancelled orders cannot be changed.")
+
+    items = list(order.get("items", []))
+    if item_index < 0 or item_index >= len(items):
+        raise HTTPException(status_code=400, detail="Invalid item index")
+
+    changed_at = datetime.now(timezone.utc)
+    items[item_index] = {
+        **items[item_index],
+        "ready": ready,
+        "ready_updated_at": changed_at.isoformat(),
+    }
+
+    await db.orders.update_one(
+        {"order_id": order_id, "restaurant_id": restaurant_id},
+        {"$set": {"items": items, "updated_at": changed_at}}
+    )
+
+    updated_order = await db.orders.find_one({"order_id": order_id, "restaurant_id": restaurant_id}, {"_id": 0})
+    enriched = await enrich_orders([updated_order])
+    schedule_background_task(
+        emit_order_event('order_status_updated', to_socket_payload(enriched[0]), restaurant_id, order_id)
+    )
+    return enriched[0]
 
 
 

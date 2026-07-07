@@ -16,6 +16,7 @@ import { Crown, LogOut, Building2, TrendingUp, DollarSign, CheckCircle, XCircle,
 const DEFAULT_ACCESS_CONFIG = {
   pos_enabled: true,
   kitchen_enabled: true,
+  kitchen_tv_enabled: true,
   billing_enabled: true,
   waiter_enabled: true,
   kitchen_billing_enabled: true,
@@ -28,6 +29,7 @@ const DEFAULT_ACCESS_CONFIG = {
 const ACCESS_FLAGS = [
   { key: 'pos_enabled', label: 'POS Only' },
   { key: 'kitchen_enabled', label: 'Kitchen Staff' },
+  { key: 'kitchen_tv_enabled', label: 'Kitchen TV Display' },
   { key: 'billing_enabled', label: 'Billing Staff' },
   { key: 'waiter_enabled', label: 'Waiter' },
   { key: 'kitchen_billing_enabled', label: 'Kitchen & Billing' },

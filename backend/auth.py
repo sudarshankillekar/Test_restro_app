@@ -14,6 +14,7 @@ REFRESH_TOKEN_MAX_AGE_SECONDS = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 DEFAULT_RESTAURANT_ACCESS_CONFIG = {
     "pos_enabled": True,
     "kitchen_enabled": True,
+    "kitchen_tv_enabled": True,
     "billing_enabled": True,
     "waiter_enabled": True,
     "kitchen_billing_enabled": True,
@@ -21,6 +22,7 @@ DEFAULT_RESTAURANT_ACCESS_CONFIG = {
 STAFF_ROLE_ACCESS_KEYS = {
     "pos": "pos_enabled",
     "kitchen": "kitchen_enabled",
+    "kitchen_tv": "kitchen_tv_enabled",
     "billing": "billing_enabled",
     "waiter": "waiter_enabled",
     "kitchen_billing": "kitchen_billing_enabled",

@@ -20,6 +20,7 @@ const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
 const DEFAULT_ACCESS_CONFIG = {
   pos_enabled: true,
   kitchen_enabled: true,
+  kitchen_tv_enabled: true,
   billing_enabled: true,
   waiter_enabled: true,
   kitchen_billing_enabled: true,
@@ -30,6 +31,7 @@ const DEFAULT_ACCESS_CONFIG = {
 };
 const STAFF_ROLE_OPTIONS = [
   { value: 'kitchen', label: 'Kitchen Staff', accessKey: 'kitchen_enabled' },
+  { value: 'kitchen_tv', label: 'Kitchen TV Display', accessKey: 'kitchen_tv_enabled' },
   { value: 'billing', label: 'Billing Counter', accessKey: 'billing_enabled' },
   { value: 'kitchen_billing', label: 'Kitchen + Billing', accessKey: 'kitchen_billing_enabled' },
   { value: 'waiter', label: 'Waiter', accessKey: 'waiter_enabled' },
@@ -1325,13 +1327,15 @@ const AdminDashboard = () => {
                       <p className="text-xs text-muted-foreground mt-1 capitalize">
                          {member.role === 'kitchen'
                           ? 'Kitchen Staff'
-                          : member.role === 'billing'
-                            ? 'Billing Counter'
-                            : member.role === 'kitchen_billing'
-                              ? 'Kitchen + Billing'
-                              : member.role === 'pos'
-                                ? 'POS Only'
-                                : 'Waiter'}
+                          : member.role === 'kitchen_tv'
+                            ? 'Kitchen TV Display'
+                            : member.role === 'billing'
+                              ? 'Billing Counter'
+                              : member.role === 'kitchen_billing'
+                                ? 'Kitchen + Billing'
+                                : member.role === 'pos'
+                                  ? 'POS Only'
+                                  : 'Waiter'}
                       </p>
                     </div>
                     <Button

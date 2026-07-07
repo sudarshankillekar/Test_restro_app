@@ -13,6 +13,7 @@ import CustomerLanding from './pages/CustomerLanding';
 import CustomerMenu from './pages/CustomerMenu';
 import OrderTracking from './pages/OrderTracking';
 import KitchenDashboard from './pages/KitchenDashboard';
+import KitchenTVDisplay from './pages/KitchenTVDisplay';
 import BillingDashboard from './pages/BillingDashboard';
 import POSDashboard from './pages/POSDashboard';
 import POSLogin from './pages/POSLogin';
@@ -50,6 +51,14 @@ function AppRouter() {
         element={
           <ProtectedRoute allowedRoles={['kitchen', 'admin']}>
             <KitchenDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/kitchen-tv"
+        element={
+          <ProtectedRoute allowedRoles={['kitchen_tv', 'kitchen', 'admin', 'kitchen_billing']}>
+            <KitchenTVDisplay />
           </ProtectedRoute>
         }
       />

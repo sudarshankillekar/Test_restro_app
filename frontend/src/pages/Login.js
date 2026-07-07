@@ -43,6 +43,8 @@ const Login = () => {
         navigate('/admin');
       } else if (user.role === 'kitchen_billing') {
         navigate('/operations');
+      } else if (user.role === 'kitchen_tv') {
+        navigate('/kitchen-tv');
       } else if (user.role === 'kitchen') {
         navigate('/kitchen');
       } else if (user.role === 'billing') {
