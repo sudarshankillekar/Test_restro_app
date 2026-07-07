@@ -79,6 +79,14 @@ const summarizeBillItems = (orders = []) => {
   return Array.from(grouped.values());
 };
 
+const isImmediateCounterBillable = (order) => (
+  order?.order_source === 'billing_counter' && ['pending', 'accepted', 'prepared'].includes(order.status)
+);
+
+const isReadyForBilling = (order) => (
+  order?.payment_status !== 'completed' && (order.status === 'prepared' || isImmediateCounterBillable(order))
+);
+
 const printHtml = (html, title) => {
   const popup = window.open('', '_blank', 'width=900,height=720');
   if (!popup) {
@@ -310,8 +318,8 @@ const BillingDashboard = ({ embedded = false }) => {
   };
 
   const activeReadyGroups = useMemo(() => {
-    const preparedOrders = orders.filter((order) => order.payment_status !== 'completed' && order.status === 'prepared');
-    const grouped = preparedOrders.reduce((accumulator, order) => {
+    const billableOrders = orders.filter(isReadyForBilling);
+    const grouped = billableOrders.reduce((accumulator, order) => {
       const key = order.table_id;
       if (!accumulator[key]) {
         accumulator[key] = {
@@ -334,7 +342,11 @@ const BillingDashboard = ({ embedded = false }) => {
 
   const activeCounterOrders = useMemo(() => (
     orders
-      .filter((order) => order.order_source === 'billing_counter' && order.payment_status !== 'completed')
+      .filter((order) => (
+        order.order_source === 'billing_counter'
+        && order.payment_status !== 'completed'
+        && !isReadyForBilling(order)
+      ))
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
   ), [orders]);
 
@@ -1659,7 +1671,7 @@ const BillingDashboard = ({ embedded = false }) => {
                   <div className="rounded-[24px] border border-dashed border-blue-200 bg-blue-50/40 p-10 text-center text-slate-500">
                     <Receipt className="mx-auto h-7 w-7 text-blue-500" />
                     <div className="mt-3 text-base">
-                      No prepared orders are waiting for payment.
+                      No prepared or counter orders are waiting for payment.
                     </div>
                   </div>
                 )}

@@ -346,6 +346,12 @@ def to_socket_payload(data):
     return jsonable_encoder(data)
 
 
+def is_billable_order(order: dict) -> bool:
+    if order.get("status") == "prepared":
+        return True
+    return order.get("order_source") == "billing_counter" and order.get("status") in ["pending", "accepted"]
+
+
 def normalize_excel_headers(row: list[str]) -> list[str]:
     return [str(value or "").strip().lower().replace(" ", "_") for value in row]
 
@@ -2639,8 +2645,8 @@ async def create_payment(input: PaymentCreate, request: Request):
         raise HTTPException(status_code=404, detail="One or more orders were not found")
     if existing_payment:
         raise HTTPException(status_code=409, detail="Bill generated already.")
-    if any(order["status"] != "prepared" for order in orders):
-        raise HTTPException(status_code=400, detail="Only prepared orders can be billed.")
+    if any(not is_billable_order(order) for order in orders):
+        raise HTTPException(status_code=400, detail="Only prepared orders or billing-counter orders can be billed.")
     if any(order.get("payment_status") in ["completed", "processing"] for order in orders):
         raise HTTPException(status_code=409, detail="Bill generated already.")
 
@@ -2655,10 +2661,19 @@ async def create_payment(input: PaymentCreate, request: Request):
         {
             "order_id": {"$in": target_order_ids},
             "restaurant_id": restaurant_id,
-            "status": "prepared",
-            "$or": [
-                {"payment_status": {"$exists": False}},
-                {"payment_status": {"$nin": ["completed", "processing"]}},
+            "$and": [
+                {
+                    "$or": [
+                        {"status": "prepared"},
+                        {"order_source": "billing_counter", "status": {"$in": ["pending", "accepted"]}},
+                    ],
+                },
+                {
+                    "$or": [
+                        {"payment_status": {"$exists": False}},
+                        {"payment_status": {"$nin": ["completed", "processing"]}},
+                    ],
+                },
             ],
         },
         {"$set": {
