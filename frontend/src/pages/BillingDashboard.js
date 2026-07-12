@@ -84,7 +84,7 @@ const isImmediateCounterBillable = (order) => (
 );
 
 const isReadyForBilling = (order) => (
-  order?.payment_status !== 'completed' && (order.status === 'prepared' || isImmediateCounterBillable(order))
+  order?.payment_status !== 'completed' && (['prepared', 'served'].includes(order.status) || isImmediateCounterBillable(order))
 );
 
 const printHtml = (html, title) => {
@@ -296,9 +296,13 @@ const BillingDashboard = ({ embedded = false }) => {
         return [incomingOrder, ...prev];
       });
     };
+    const handleBillRequested = (payload) => {
+      toast.info(`Bill requested for ${payload.table_label || 'a table'}`);
+    };
 
     socket.on('new_order', upsertOrder);
     socket.on('order_status_updated', upsertOrder);
+    socket.on('bill_requested', handleBillRequested);
     socket.on('order_deleted', (payload) => {
       setOrders((prev) => prev.filter((order) => order.order_id !== payload.order_id));
     });
@@ -307,6 +311,7 @@ const BillingDashboard = ({ embedded = false }) => {
     return () => {
       socket.off('new_order', upsertOrder);
       socket.off('order_status_updated', upsertOrder);
+      socket.off('bill_requested', handleBillRequested);
       socket.off('order_deleted');
       socket.off('cash_drawer_updated', loadTransactionSummary);
     };
@@ -327,9 +332,11 @@ const BillingDashboard = ({ embedded = false }) => {
           table_label: order.table_label || `Table ${order.table_id}`,
           customer_name: order.customer_name,
           order_type: order.order_type || 'dine_in',
+          bill_requested: Boolean(order.bill_requested),
           orders: [],
         };
       }
+      accumulator[key].bill_requested = accumulator[key].bill_requested || Boolean(order.bill_requested);
       accumulator[key].orders.push(order);
       return accumulator;
     }, {});
@@ -1454,9 +1461,16 @@ const BillingDashboard = ({ embedded = false }) => {
                             <CardTitle className="text-lg">{group.table_label}</CardTitle>
                             <p className="text-sm text-muted-foreground">{group.customer_name}</p>
                           </div>
-                          <Badge className="rounded-full bg-emerald-100 text-emerald-700">
-                            {group.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
-                          </Badge>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            {group.bill_requested && (
+                              <Badge className="rounded-full bg-amber-100 text-amber-700">
+                                Bill Requested
+                              </Badge>
+                            )}
+                            <Badge className="rounded-full bg-emerald-100 text-emerald-700">
+                              {group.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
+                            </Badge>
+                          </div>
                         </div>
                       </CardHeader>
                       <CardContent className="space-y-4">

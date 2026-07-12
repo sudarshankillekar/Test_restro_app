@@ -5,7 +5,7 @@ import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
-import { CheckCircle, Clock, ChefHat, Download, Package, Loader2, Star, Plus } from 'lucide-react';
+import { CheckCircle, Clock, ChefHat, Download, Package, Loader2, Star, Plus, Receipt } from 'lucide-react';
 
 
 const statusConfig = {
@@ -45,6 +45,7 @@ const OrderTracking = () => {
   const navigate = useNavigate();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [requestingBill, setRequestingBill] = useState(false);
   const { socket, joinRoom } = useSocket();
 
   useEffect(() => {
@@ -114,7 +115,14 @@ const OrderTracking = () => {
   const combinedTotal = tableSummary?.combined_total ?? order.total;
   const billSummary = order.bill_summary;
   const googleReviewUrl = billSummary?.google_review_url;
-  const canAddMoreItems = !billSummary?.payment && !['served', 'cancelled'].includes(order.status);
+  const isPaid = Boolean(billSummary?.payment) || order.payment_status === 'completed';
+  const tableOrdersForActions = activeTableOrders.length > 0 ? activeTableOrders : [order];
+  const billRequested = tableOrdersForActions.some((tableOrder) => tableOrder.bill_requested);
+  const allTableOrdersReadyForBill = tableOrdersForActions.every((tableOrder) => (
+    ['prepared', 'served'].includes(tableOrder.status)
+  ));
+  const canAddMoreItems = !isPaid && order.status !== 'cancelled';
+  const canRequestBill = !isPaid && order.status !== 'cancelled' && allTableOrdersReadyForBill;
   const paidBillItems = billSummary?.payment ? summarizeBillItems(billSummary.orders) : [];
   const displayItems = billSummary?.payment
     ? paidBillItems.map((item) => ({
@@ -208,43 +216,87 @@ const OrderTracking = () => {
     navigate(`/customer/${tableId}/menu`);
   };
 
+  const handleRequestBill = async () => {
+    if (!canRequestBill || billRequested || requestingBill) return;
+
+    const sessionToken = localStorage.getItem('customer_session');
+    if (!sessionToken) {
+      toast.error('Session expired. Please scan the QR code again.');
+      return;
+    }
+
+    setRequestingBill(true);
+    try {
+      await api.post(`/api/orders/${orderId}/request-bill`, {
+        customer_session_token: sessionToken,
+      });
+      const requestedAt = new Date().toISOString();
+      setOrder((currentOrder) => ({
+        ...currentOrder,
+        bill_requested: true,
+        bill_requested_at: requestedAt,
+        table_order_summary: currentOrder?.table_order_summary
+          ? {
+            ...currentOrder.table_order_summary,
+            orders: (currentOrder.table_order_summary.orders || []).map((tableOrder) => ({
+              ...tableOrder,
+              bill_requested: true,
+              bill_requested_at: requestedAt,
+            })),
+          }
+          : currentOrder?.table_order_summary,
+      }));
+      toast.success('Bill requested. Staff will prepare it shortly.');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to request bill');
+    } finally {
+      setRequestingBill(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen p-6" style={{ background: '#F9F8F6' }}>
-      <div className="max-w-2xl mx-auto space-y-6">
-        <Card className="border-border rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.05)]">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-2xl tracking-tight">Order #{order.order_id}</CardTitle>
-              <Badge className={`${statusConfig[order.status]?.color} text-white rounded-md px-3 py-1`}>
+    <div className="min-h-screen px-4 py-6 sm:p-6" style={{ background: '#F9F8F6' }}>
+      <div className="mx-auto max-w-2xl space-y-6">
+        <Card className="overflow-hidden rounded-2xl border-border shadow-[0_2px_10px_rgba(0,0,0,0.05)]">
+          <CardHeader className="space-y-4 p-5 sm:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-muted-foreground">
+                  {order.table_label || `Table ${order.table_id}`}
+                </p>
+                <CardTitle className="mt-1 break-words text-2xl leading-tight tracking-tight sm:text-3xl">
+                  Order #{order.order_id}
+                </CardTitle>
+              </div>
+              <Badge className={`${statusConfig[order.status]?.color} w-fit shrink-0 text-white rounded-md px-3 py-1`}>
                 <StatusIcon className="w-4 h-4 mr-1" />
                 {statusConfig[order.status]?.label}
               </Badge>
             </div>
-            <p className="text-sm text-muted-foreground">{order.table_label || `Table ${order.table_id}`}</p>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-5 p-5 pt-0 sm:p-6 sm:pt-0">
             <div>
-               <h3 className="font-semibold mb-3">
+              <h3 className="mb-3 text-lg font-semibold">
                 {billSummary?.payment ? 'Final Bill Items' : 'Order Items'}
               </h3>
               <div className="space-y-2">
                 {displayItems.map((item, idx) => (
-                  <div key={idx} className="flex justify-between items-center p-3 bg-accent rounded-xl">
-                    <div>
+                  <div key={idx} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl bg-accent p-3">
+                    <div className="min-w-0">
                       <p className="font-medium">{item.name}</p>
                       <p className="text-sm text-muted-foreground">Quantity: {item.quantity}</p>
                       {item.instructions && (
                         <p className="text-xs text-muted-foreground italic">Note: {item.instructions}</p>
                       )}
                     </div>
-                     <p className="font-semibold">₹{item.amount.toFixed(2)}</p>
+                    <p className="shrink-0 font-semibold">₹{item.amount.toFixed(2)}</p>
                   </div>
                 ))}
               </div>
             </div>
 
             <div className="border-t border-border pt-4">
-               {billSummary?.payment ? (
+              {billSummary?.payment ? (
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span>Subtotal</span>
@@ -279,15 +331,34 @@ const OrderTracking = () => {
               )}
             </div>
 
-            {canAddMoreItems && (
-              <button
-                type="button"
-                onClick={handleAddMoreItems}
-                className="flex w-full items-center justify-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#C54E2C] active:scale-[0.99]"
-              >
-                <Plus className="h-4 w-4" />
-                Add More Items
-              </button>
+            {(canAddMoreItems || canRequestBill) && (
+              <div className={`grid gap-3 ${canAddMoreItems && canRequestBill ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {canAddMoreItems && (
+                  <button
+                    type="button"
+                    onClick={handleAddMoreItems}
+                    className="flex w-full items-center justify-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#C54E2C] active:scale-[0.99]"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add More Items
+                  </button>
+                )}
+                {canRequestBill && (
+                  <button
+                    type="button"
+                    onClick={handleRequestBill}
+                    disabled={billRequested || requestingBill}
+                    className="flex w-full items-center justify-center gap-2 rounded-full border border-primary bg-white px-4 py-3 text-sm font-semibold text-primary shadow-sm transition hover:bg-primary/5 disabled:cursor-not-allowed disabled:border-muted disabled:text-muted-foreground"
+                  >
+                    {requestingBill ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Receipt className="h-4 w-4" />
+                    )}
+                    {billRequested ? 'Bill Requested' : 'Request Bill'}
+                  </button>
+                )}
+              </div>
             )}
 
             {billSummary?.payment && (
@@ -330,11 +401,12 @@ const OrderTracking = () => {
             )}
             <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
               <p className="text-sm text-blue-900">
-                {order.status === 'pending' && 'Your order is being reviewed by the kitchen.'}
-                {order.status === 'accepted' && 'Your delicious meal is being prepared!'}
-                {order.status === 'prepared' && 'Your order is prepared and is now being served.'}
-                {order.status === 'served' && 'Enjoy your meal!'}
-                {order.status === 'cancelled' && 'This order has been cancelled.'}
+                {billRequested && !billSummary?.payment && 'Your bill has been requested. Staff will prepare it shortly.'}
+                {!billRequested && order.status === 'pending' && 'Your order is being reviewed by the kitchen.'}
+                {!billRequested && order.status === 'accepted' && 'Your delicious meal is being prepared!'}
+                {!billRequested && order.status === 'prepared' && 'Your order is prepared and is now being served.'}
+                {!billRequested && order.status === 'served' && 'Enjoy your meal!'}
+                {!billRequested && order.status === 'cancelled' && 'This order has been cancelled.'}
               </p>
             </div>
 

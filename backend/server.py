@@ -347,7 +347,7 @@ def to_socket_payload(data):
 
 
 def is_billable_order(order: dict) -> bool:
-    if order.get("status") == "prepared":
+    if order.get("status") in ["prepared", "served"]:
         return True
     return order.get("order_source") == "billing_counter" and order.get("status") in ["pending", "accepted"]
 
@@ -2327,6 +2327,104 @@ async def get_order(order_id: str, request: Request, customer_session_token: str
         response_order["bill_summary"] = await build_order_bill_summary(response_order)
 
     return response_order
+
+
+@api_router.post("/orders/{order_id}/request-bill")
+async def request_order_bill(order_id: str, request: Request):
+    """Allow a customer to request the bill after all active table orders are served."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    customer_session_token = data.get("customer_session_token") or request.query_params.get("customer_session_token")
+    if not customer_session_token:
+        raise HTTPException(status_code=401, detail="customer_session_token is required")
+
+    session = await db.customer_sessions.find_one({"session_token": customer_session_token})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    table_id = session.get("table_id")
+    restaurant_id = session.get("restaurant_id")
+    if not restaurant_id and table_id:
+        table = await db.tables.find_one({"table_id": table_id}, {"_id": 0, "restaurant_id": 1})
+        restaurant_id = table.get("restaurant_id") if table else None
+    if not restaurant_id or not table_id:
+        raise HTTPException(status_code=400, detail="Customer session is not linked to a table.")
+
+    order = await db.orders.find_one({
+        "order_id": order_id,
+        "table_id": table_id,
+        "restaurant_id": restaurant_id,
+    }, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Cancelled orders cannot request a bill.")
+    if order.get("payment_status") == "completed":
+        raise HTTPException(status_code=409, detail="Bill is already completed.")
+
+    active_orders = await db.orders.find({
+        "table_id": table_id,
+        "restaurant_id": restaurant_id,
+        "status": {"$nin": ["cancelled"]},
+        "payment_status": {"$ne": "completed"},
+    }, {"_id": 0}).sort("created_at", 1).to_list(100)
+    if not active_orders:
+        raise HTTPException(status_code=404, detail="No active orders found for this table.")
+    if any(active_order.get("status") not in ["prepared", "served"] for active_order in active_orders):
+        raise HTTPException(status_code=400, detail="Bill can be requested only after all active orders are served.")
+
+    requested_at = datetime.now(timezone.utc)
+    target_order_ids = [active_order["order_id"] for active_order in active_orders]
+    await db.orders.update_many(
+        {
+            "order_id": {"$in": target_order_ids},
+            "restaurant_id": restaurant_id,
+        },
+        {"$set": {
+            "bill_requested": True,
+            "bill_requested_at": requested_at,
+            "updated_at": requested_at,
+        }}
+    )
+
+    updated_orders = await db.orders.find({
+        "order_id": {"$in": target_order_ids},
+        "restaurant_id": restaurant_id,
+    }, {"_id": 0}).sort("created_at", 1).to_list(len(target_order_ids))
+    enriched_orders = await enrich_orders(updated_orders)
+
+    for updated_order in enriched_orders:
+        schedule_background_task(
+            emit_order_event(
+                "order_status_updated",
+                to_socket_payload(updated_order),
+                restaurant_id,
+                updated_order["order_id"],
+            )
+        )
+
+    schedule_background_task(
+        sio.emit(
+            "bill_requested",
+            {
+                "order_id": order_id,
+                "order_ids": target_order_ids,
+                "table_id": table_id,
+                "table_label": enriched_orders[0].get("table_label") if enriched_orders else table_id,
+                "requested_at": requested_at.isoformat(),
+            },
+            room=f"restaurant_{restaurant_id}",
+        )
+    )
+
+    return {
+        "message": "Bill requested successfully.",
+        "requested_at": requested_at,
+        "orders": enriched_orders,
+    }
     
 @api_router.get("/admin/orders/search")
 async def search_order(order_id: str, request: Request):
@@ -2664,7 +2762,7 @@ async def create_payment(input: PaymentCreate, request: Request):
             "$and": [
                 {
                     "$or": [
-                        {"status": "prepared"},
+                        {"status": {"$in": ["prepared", "served"]}},
                         {"order_source": "billing_counter", "status": {"$in": ["pending", "accepted"]}},
                     ],
                 },
