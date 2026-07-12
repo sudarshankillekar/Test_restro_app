@@ -1463,9 +1463,9 @@ const BillingDashboard = ({ embedded = false }) => {
                           </div>
                           <div className="flex flex-wrap justify-end gap-2">
                             {group.bill_requested && (
-                              <Badge className="rounded-full bg-amber-100 text-amber-700">
+                              <span className="bill-request-flicker rounded-full bg-red-50 px-3 py-1 text-xs font-black uppercase tracking-[0.12em] text-red-600">
                                 Bill Requested
-                              </Badge>
+                              </span>
                             )}
                             <Badge className="rounded-full bg-emerald-100 text-emerald-700">
                               {group.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}

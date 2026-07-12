@@ -2286,6 +2286,41 @@ async def get_orders(request: Request, status: str = None):
     orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return await enrich_orders(orders)
 
+
+@api_router.get("/customer/orders")
+async def get_customer_table_orders(customer_session_token: str):
+    """Get active unpaid orders for the current customer table."""
+    session = await db.customer_sessions.find_one({"session_token": customer_session_token})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    table_id = session.get("table_id")
+    restaurant_id = session.get("restaurant_id")
+    if not restaurant_id and table_id:
+        table = await db.tables.find_one({"table_id": table_id}, {"_id": 0, "restaurant_id": 1})
+        restaurant_id = table.get("restaurant_id") if table else None
+    if not table_id or not restaurant_id:
+        raise HTTPException(status_code=400, detail="Customer session is not linked to a table.")
+
+    orders = await db.orders.find({
+        "table_id": table_id,
+        "restaurant_id": restaurant_id,
+        "status": {"$ne": "cancelled"},
+        "payment_status": {"$ne": "completed"},
+    }, {"_id": 0}).sort("created_at", 1).to_list(100)
+
+    enriched_orders = await enrich_orders(orders)
+    return {
+        "table_id": table_id,
+        "orders": enriched_orders,
+        "item_count": sum(
+            sum(int(item.get("quantity") or 0) for item in order.get("items", []))
+            for order in enriched_orders
+        ),
+        "combined_total": round(sum(float(order.get("total") or 0) for order in enriched_orders), 2),
+    }
+
+
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str, request: Request, customer_session_token: str = None):
     """Get single order (customer tracking)"""
