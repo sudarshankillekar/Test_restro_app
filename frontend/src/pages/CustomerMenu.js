@@ -8,7 +8,17 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { normalizeImageUrl } from '../lib/utils';
-import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles, Receipt, ArrowRight } from 'lucide-react';
+
+const formatCurrency = (value = 0) => `₹${Number(value || 0).toFixed(2)}`;
+
+const orderStatusConfig = {
+  pending: { label: 'Pending', className: 'bg-slate-100 text-slate-700' },
+  accepted: { label: 'Preparing', className: 'bg-orange-100 text-orange-700' },
+  prepared: { label: 'Served', className: 'bg-emerald-100 text-emerald-700' },
+  served: { label: 'Served', className: 'bg-emerald-100 text-emerald-700' },
+  cancelled: { label: 'Cancelled', className: 'bg-red-100 text-red-700' },
+};
 
 const CustomerMenu = () => {
   const { tableId } = useParams();
@@ -20,6 +30,9 @@ const CustomerMenu = () => {
   const [submitting, setSubmitting] = useState(false);
   const [brokenImages, setBrokenImages] = useState({});
   const [cartOpen, setCartOpen] = useState(false);
+  const [orderedItemsOpen, setOrderedItemsOpen] = useState(false);
+  const [orderedOrders, setOrderedOrders] = useState([]);
+  const [orderedOrdersLoading, setOrderedOrdersLoading] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState({});
 
   useEffect(() => {
@@ -38,7 +51,7 @@ const CustomerMenu = () => {
   const fetchMenu = async () => {
     try {
       const sessionToken = localStorage.getItem('customer_session') || '';
-      const [catRes, itemsRes] = await Promise.all([
+      const [catRes, itemsRes, ordersRes] = await Promise.all([
         api.get('/api/menu/categories', {
           params: {
             customer_session_token: sessionToken,
@@ -51,15 +64,45 @@ const CustomerMenu = () => {
             table_id: tableId,
           },
         }),
+        api.get('/api/customer/orders', {
+          params: {
+            customer_session_token: sessionToken,
+          },
+        }),
       ]);
       
       setCategories(catRes.data);
       setMenuItems(itemsRes.data.filter(item => item.available));
+      setOrderedOrders(ordersRes.data.orders || []);
       setLoading(false);
     } catch (error) {
       toast.error('Failed to load menu');
       setLoading(false);
     }
+  };
+
+  const fetchOrderedOrders = async ({ showLoader = false } = {}) => {
+    const sessionToken = localStorage.getItem('customer_session') || '';
+    if (!sessionToken) return;
+
+    if (showLoader) setOrderedOrdersLoading(true);
+    try {
+      const response = await api.get('/api/customer/orders', {
+        params: {
+          customer_session_token: sessionToken,
+        },
+      });
+      setOrderedOrders(response.data.orders || []);
+    } catch (error) {
+      toast.error('Failed to load ordered items');
+    } finally {
+      if (showLoader) setOrderedOrdersLoading(false);
+    }
+  };
+
+  const openOrderedItems = () => {
+    setOrderedItemsOpen(true);
+    fetchOrderedOrders({ showLoader: true });
   };
 
   const addToCart = (item) => {
@@ -132,6 +175,11 @@ const CustomerMenu = () => {
   };
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const orderedItemCount = orderedOrders.reduce(
+    (sum, order) => sum + (order.items || []).reduce((itemSum, item) => itemSum + Number(item.quantity || 0), 0),
+    0
+  );
+  const orderedTotal = orderedOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
   const getCartItem = (itemId) => cart.find((item) => item.item_id === itemId);
 
   if (loading) {
@@ -165,9 +213,22 @@ const CustomerMenu = () => {
               <p className="text-sm uppercase tracking-[0.24em] text-muted-foreground">Food Ordering</p>
               <h2 className="text-2xl font-semibold tracking-tight">Browse by category</h2>
             </div>
-            <div className="flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-sm font-medium text-primary">
-              <Sparkles className="h-4 w-4" />
-              Freshly prepared for your table
+            <div className="flex flex-wrap items-center gap-2">
+              {orderedOrders.length > 0 && (
+                <button
+                  type="button"
+                  onClick={openOrderedItems}
+                  className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-white px-4 py-2 text-sm font-semibold text-primary shadow-sm transition hover:bg-primary/5"
+                >
+                  <Receipt className="h-4 w-4" />
+                  Ordered Items
+                  <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-white">{orderedItemCount}</span>
+                </button>
+              )}
+              <div className="flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-sm font-medium text-primary">
+                <Sparkles className="h-4 w-4" />
+                Freshly prepared for your table
+              </div>
             </div>
           </div>
         </div>
@@ -334,6 +395,103 @@ const CustomerMenu = () => {
           </Card>
         )}
       </div>
+
+      <Drawer open={orderedItemsOpen} onOpenChange={setOrderedItemsOpen}>
+        <DrawerContent className="mx-auto max-h-[88dvh] max-w-3xl rounded-t-[28px] border-border bg-[#FCFBF8]">
+          <DrawerHeader className="border-b border-border px-5 pb-4 pt-2 text-left">
+            <DrawerTitle className="text-2xl font-bold tracking-tight">Ordered Items</DrawerTitle>
+            <DrawerDescription>
+              Track the items already placed for this table.
+            </DrawerDescription>
+          </DrawerHeader>
+
+          <div className="max-h-[58dvh] space-y-4 overflow-y-auto px-5 py-4">
+            {orderedOrdersLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : orderedOrders.length > 0 ? (
+              orderedOrders.map((order) => {
+                const status = orderStatusConfig[order.status] || orderStatusConfig.pending;
+                return (
+                  <div key={order.order_id} className="rounded-[22px] border border-border bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.04)]">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="break-words text-lg font-bold tracking-tight">Order #{order.order_id}</h3>
+                          <Badge className={`rounded-full ${status.className}`}>
+                            {status.label}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {order.table_label || `Table ${tableId}`} • {new Date(order.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 shrink-0 rounded-full px-4"
+                        onClick={() => navigate(`/customer/order/${order.order_id}`)}
+                      >
+                        Track
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      {(order.items || []).map((item, index) => (
+                        <div
+                          key={`${order.order_id}-${item.item_id || item.name}-${index}`}
+                          className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-2xl bg-accent px-3 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-semibold">{item.name}</p>
+                            <p className="text-xs text-muted-foreground">Quantity: {item.quantity}</p>
+                            {item.instructions && (
+                              <p className="mt-1 break-words text-xs italic text-muted-foreground">
+                                Note: {item.instructions}
+                              </p>
+                            )}
+                          </div>
+                          <p className="shrink-0 text-sm font-bold text-primary">
+                            {formatCurrency(Number(item.price || 0) * Number(item.quantity || 0))}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+                      <span className="text-sm font-medium text-muted-foreground">
+                        {(order.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0)} item(s)
+                      </span>
+                      <span className="text-base font-bold text-primary">{formatCurrency(order.total)}</span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-[22px] border border-dashed border-border bg-white p-8 text-center">
+                <Receipt className="mx-auto h-8 w-8 text-muted-foreground" />
+                <p className="mt-3 font-semibold">No ordered items yet</p>
+                <p className="mt-1 text-sm text-muted-foreground">Items you place will appear here.</p>
+              </div>
+            )}
+          </div>
+
+          {orderedOrders.length > 0 && (
+            <DrawerFooter className="border-t border-border bg-white px-5 pb-5 pt-4">
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>{orderedItemCount} item{orderedItemCount === 1 ? '' : 's'} ordered</span>
+                <span>Total</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xl font-bold tracking-tight">Current order total</span>
+                <span className="text-xl font-bold text-primary">{formatCurrency(orderedTotal)}</span>
+              </div>
+            </DrawerFooter>
+          )}
+        </DrawerContent>
+      </Drawer>
 
       {/* Sticky Cart */}
       {cart.length > 0 && (
