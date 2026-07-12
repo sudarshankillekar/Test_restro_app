@@ -8,7 +8,7 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { normalizeImageUrl } from '../lib/utils';
-import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles, Receipt, ArrowRight } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles, Receipt, ArrowRight, BellRing } from 'lucide-react';
 
 const formatCurrency = (value = 0) => `₹${Number(value || 0).toFixed(2)}`;
 
@@ -33,6 +33,8 @@ const CustomerMenu = () => {
   const [orderedItemsOpen, setOrderedItemsOpen] = useState(false);
   const [orderedOrders, setOrderedOrders] = useState([]);
   const [orderedOrdersLoading, setOrderedOrdersLoading] = useState(false);
+  const [assistanceRequest, setAssistanceRequest] = useState(null);
+  const [requestingAssistance, setRequestingAssistance] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState({});
 
   useEffect(() => {
@@ -74,6 +76,7 @@ const CustomerMenu = () => {
       setCategories(catRes.data);
       setMenuItems(itemsRes.data.filter(item => item.available));
       setOrderedOrders(ordersRes.data.orders || []);
+      setAssistanceRequest(ordersRes.data.assistance_request || null);
       setLoading(false);
     } catch (error) {
       toast.error('Failed to load menu');
@@ -93,6 +96,7 @@ const CustomerMenu = () => {
         },
       });
       setOrderedOrders(response.data.orders || []);
+      setAssistanceRequest(response.data.assistance_request || null);
     } catch (error) {
       toast.error('Failed to load ordered items');
     } finally {
@@ -103,6 +107,30 @@ const CustomerMenu = () => {
   const openOrderedItems = () => {
     setOrderedItemsOpen(true);
     fetchOrderedOrders({ showLoader: true });
+  };
+
+  const requestAssistance = async () => {
+    if (requestingAssistance || assistanceRequest) return;
+
+    const sessionToken = localStorage.getItem('customer_session');
+    if (!sessionToken) {
+      toast.error('Session expired. Please scan the QR code again.');
+      navigate(`/customer/${tableId}`);
+      return;
+    }
+
+    setRequestingAssistance(true);
+    try {
+      const response = await api.post('/api/customer/assistance', {
+        customer_session_token: sessionToken,
+      });
+      setAssistanceRequest(response.data);
+      toast.success('Staff assistance requested.');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to request assistance');
+    } finally {
+      setRequestingAssistance(false);
+    }
   };
 
   const addToCart = (item) => {
@@ -214,6 +242,19 @@ const CustomerMenu = () => {
               <h2 className="text-2xl font-semibold tracking-tight">Browse by category</h2>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={requestAssistance}
+                disabled={requestingAssistance || Boolean(assistanceRequest)}
+                className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-80"
+              >
+                {requestingAssistance ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <BellRing className="h-4 w-4" />
+                )}
+                {assistanceRequest ? 'Assistance Requested' : 'Request Assistance'}
+              </button>
               {orderedOrders.length > 0 && (
                 <button
                   type="button"
@@ -418,7 +459,7 @@ const CustomerMenu = () => {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="break-words text-lg font-bold tracking-tight">Order #{order.order_id}</h3>
+                          <h3 className="break-words text-sm font-normal text-muted-foreground">Order #{order.order_id}</h3>
                           <Badge className={`rounded-full ${status.className}`}>
                             {status.label}
                           </Badge>

@@ -62,6 +62,16 @@ STAFF_ROLE_ACCESS_KEYS = {
     "kitchen_billing": "kitchen_billing_enabled",
 }
 STAFF_ROLES = list(STAFF_ROLE_ACCESS_KEYS.keys())
+LOCAL_NETWORK_CORS_REGEX = (
+    r"^https://.*\.vercel\.app$"
+    r"|^https?://("
+    r"localhost"
+    r"|127\.0\.0\.1"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$"
+)
 
 def normalize_access_config(access_config: Optional[dict] = None) -> dict:
     normalized = dict(DEFAULT_RESTAURANT_ACCESS_CONFIG)
@@ -213,18 +223,6 @@ sio = socketio.AsyncServer(
 # Create the main app
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://dineflo.online",
-        "https://www.dineflo.online",
-    ],
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 api_router = APIRouter(prefix="/api")
 
 @app.get("/")
@@ -650,6 +648,8 @@ def build_cors_origins() -> list[str]:
     default_origins = {
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://dineflo.online",
+        "https://www.dineflo.online",
     }
     if frontend_url:
         default_origins.add(frontend_url)
@@ -2310,15 +2310,150 @@ async def get_customer_table_orders(customer_session_token: str):
     }, {"_id": 0}).sort("created_at", 1).to_list(100)
 
     enriched_orders = await enrich_orders(orders)
+    assistance_request = await db.assistance_requests.find_one({
+        "table_id": table_id,
+        "restaurant_id": restaurant_id,
+        "status": "active",
+    }, {"_id": 0})
     return {
         "table_id": table_id,
         "orders": enriched_orders,
+        "assistance_request": assistance_request,
         "item_count": sum(
             sum(int(item.get("quantity") or 0) for item in order.get("items", []))
             for order in enriched_orders
         ),
         "combined_total": round(sum(float(order.get("total") or 0) for order in enriched_orders), 2),
     }
+
+
+@api_router.post("/customer/assistance")
+async def request_customer_assistance(request: Request):
+    """Customer requests staff assistance for their current table."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    customer_session_token = data.get("customer_session_token") or request.query_params.get("customer_session_token")
+    if not customer_session_token:
+        raise HTTPException(status_code=401, detail="customer_session_token is required")
+
+    session = await db.customer_sessions.find_one({"session_token": customer_session_token})
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    table_id = session.get("table_id")
+    restaurant_id = session.get("restaurant_id")
+    table = None
+    if table_id:
+        table = await db.tables.find_one({"table_id": table_id}, {"_id": 0, "restaurant_id": 1, "table_number": 1})
+        if not restaurant_id:
+            restaurant_id = table.get("restaurant_id") if table else None
+    if not table_id or not restaurant_id:
+        raise HTTPException(status_code=400, detail="Customer session is not linked to a table.")
+
+    now = datetime.now(timezone.utc)
+    active_request = await db.assistance_requests.find_one({
+        "table_id": table_id,
+        "restaurant_id": restaurant_id,
+        "status": "active",
+    }, {"_id": 0})
+
+    if active_request:
+        request_id = active_request["request_id"]
+        await db.assistance_requests.update_one(
+            {"request_id": request_id, "restaurant_id": restaurant_id},
+            {"$set": {"requested_at": now, "updated_at": now}}
+        )
+    else:
+        request_id = f"HELP{secrets.token_hex(5).upper()}"
+        active_request = {
+            "request_id": request_id,
+            "restaurant_id": restaurant_id,
+            "table_id": table_id,
+            "table_number": table.get("table_number") if table else None,
+            "table_label": f"Table {table.get('table_number')}" if table and table.get("table_number") is not None else table_id,
+            "customer_name": session.get("customer_name"),
+            "phone": session.get("phone"),
+            "status": "active",
+            "requested_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.assistance_requests.insert_one(active_request)
+
+    assistance_request = await db.assistance_requests.find_one(
+        {"request_id": request_id, "restaurant_id": restaurant_id},
+        {"_id": 0}
+    )
+
+    schedule_background_task(
+        sio.emit(
+            "assistance_requested",
+            to_socket_payload(assistance_request),
+            room=f"restaurant_{restaurant_id}",
+        )
+    )
+
+    return assistance_request
+
+
+@api_router.get("/assistance-requests")
+async def get_assistance_requests(request: Request):
+    """Get active customer assistance requests for billing/admin staff."""
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    requests = await db.assistance_requests.find({
+        "restaurant_id": restaurant_id,
+        "status": "active",
+    }, {"_id": 0}).sort("requested_at", -1).to_list(100)
+    return requests
+
+
+@api_router.patch("/assistance-requests/{request_id}/resolve")
+async def resolve_assistance_request(request_id: str, request: Request):
+    """Mark a customer assistance request as resolved."""
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing", "kitchen_billing"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    resolved_at = datetime.now(timezone.utc)
+    result = await db.assistance_requests.update_one(
+        {
+            "request_id": request_id,
+            "restaurant_id": restaurant_id,
+            "status": "active",
+        },
+        {"$set": {
+            "status": "resolved",
+            "resolved_at": resolved_at,
+            "resolved_by": user.get("_id"),
+            "updated_at": resolved_at,
+        }}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Assistance request not found")
+
+    schedule_background_task(
+        sio.emit(
+            "assistance_resolved",
+            {"request_id": request_id, "resolved_at": resolved_at.isoformat()},
+            room=f"restaurant_{restaurant_id}",
+        )
+    )
+
+    return {"message": "Assistance request resolved"}
 
 
 @api_router.get("/orders/{order_id}")
@@ -3696,6 +3831,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=build_cors_origins(),
+    allow_origin_regex=LOCAL_NETWORK_CORS_REGEX,
     allow_methods=["*"],
     allow_headers=["*"],
 )

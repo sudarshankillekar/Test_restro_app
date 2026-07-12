@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, CreditCard, DollarSign, Loader2, LogOut, Menu, Pencil, Plus, Printer, Receipt, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react';
+import { BellRing, CalendarDays, CreditCard, DollarSign, Loader2, LogOut, Menu, Pencil, Plus, Printer, Receipt, Search, ShoppingCart, Trash2, Wallet, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
@@ -185,6 +185,8 @@ const BillingDashboard = ({ embedded = false }) => {
   const [openingBalanceEditing, setOpeningBalanceEditing] = useState(false);
   const [openingBalanceSubmitting, setOpeningBalanceSubmitting] = useState(false);
   const [showAllCompletedBills, setShowAllCompletedBills] = useState(false);
+  const [assistanceRequests, setAssistanceRequests] = useState([]);
+  const [assistanceResolvingId, setAssistanceResolvingId] = useState('');
 
   const refreshOrders = async () => {
     const response = await api.get('/api/orders', { withCredentials: true });
@@ -239,14 +241,16 @@ const BillingDashboard = ({ embedded = false }) => {
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        const [ordersResponse, tablesResponse, profileResponse] = await Promise.all([
+        const [ordersResponse, tablesResponse, profileResponse, assistanceResponse] = await Promise.all([
           api.get('/api/orders', { withCredentials: true }),
           api.get('/api/tables', { withCredentials: true }),
           api.get('/api/restaurant/profile', { withCredentials: true }),
+          api.get('/api/assistance-requests', { withCredentials: true }),
         ]);
 
         setOrders(ordersResponse.data);
         setTables(tablesResponse.data);
+        setAssistanceRequests(assistanceResponse.data || []);
         setRestaurantProfile({
           name: profileResponse.data.name || '',
           gst_number: profileResponse.data.gst_number || '',
@@ -299,10 +303,25 @@ const BillingDashboard = ({ embedded = false }) => {
     const handleBillRequested = (payload) => {
       toast.info(`Bill requested for ${payload.table_label || 'a table'}`);
     };
+    const handleAssistanceRequested = (payload) => {
+      setAssistanceRequests((prev) => {
+        const existing = prev.find((request) => request.request_id === payload.request_id);
+        if (existing) {
+          return prev.map((request) => request.request_id === payload.request_id ? payload : request);
+        }
+        return [payload, ...prev];
+      });
+      toast.warning(`${payload.table_label || 'A table'} is requesting assistance`);
+    };
+    const handleAssistanceResolved = (payload) => {
+      setAssistanceRequests((prev) => prev.filter((request) => request.request_id !== payload.request_id));
+    };
 
     socket.on('new_order', upsertOrder);
     socket.on('order_status_updated', upsertOrder);
     socket.on('bill_requested', handleBillRequested);
+    socket.on('assistance_requested', handleAssistanceRequested);
+    socket.on('assistance_resolved', handleAssistanceResolved);
     socket.on('order_deleted', (payload) => {
       setOrders((prev) => prev.filter((order) => order.order_id !== payload.order_id));
     });
@@ -312,10 +331,27 @@ const BillingDashboard = ({ embedded = false }) => {
       socket.off('new_order', upsertOrder);
       socket.off('order_status_updated', upsertOrder);
       socket.off('bill_requested', handleBillRequested);
+      socket.off('assistance_requested', handleAssistanceRequested);
+      socket.off('assistance_resolved', handleAssistanceResolved);
       socket.off('order_deleted');
       socket.off('cash_drawer_updated', loadTransactionSummary);
     };
   }, [socket, loadTransactionSummary]);
+
+  const resolveAssistanceRequest = async (requestId) => {
+    if (!requestId || assistanceResolvingId) return;
+
+    setAssistanceResolvingId(requestId);
+    try {
+      await api.patch(`/api/assistance-requests/${requestId}/resolve`, {}, { withCredentials: true });
+      setAssistanceRequests((prev) => prev.filter((request) => request.request_id !== requestId));
+      toast.success('Assistance request resolved');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to resolve assistance request');
+    } finally {
+      setAssistanceResolvingId('');
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -807,6 +843,13 @@ const BillingDashboard = ({ embedded = false }) => {
       icon: ShoppingCart,
       valueClassName: 'text-emerald-600',
       tintClassName: 'bg-emerald-50 text-emerald-600',
+    },
+    {
+      label: 'Assistance',
+      value: assistanceRequests.length,
+      icon: BellRing,
+      valueClassName: assistanceRequests.length > 0 ? 'text-red-600' : 'text-slate-600',
+      tintClassName: assistanceRequests.length > 0 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600',
     },
     {
       label: 'Completed Bills',
@@ -1329,7 +1372,7 @@ const BillingDashboard = ({ embedded = false }) => {
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8">
           {dashboardStats.map((stat) => {
             const Icon = stat.icon;
             return (
@@ -1347,6 +1390,56 @@ const BillingDashboard = ({ embedded = false }) => {
             );
           })}
         </div>
+
+        {assistanceRequests.length > 0 && (
+          <Card className="rounded-[24px] border border-red-200 bg-red-50/90 shadow-[0_12px_30px_rgba(220,38,38,0.08)]">
+            <CardContent className="space-y-3 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-red-100 text-red-600">
+                    <BellRing className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <p className="text-base font-black text-red-700">Customer Assistance Needed</p>
+                    <p className="text-sm font-medium text-red-600">
+                      {assistanceRequests.length} active request{assistanceRequests.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {assistanceRequests.map((assistanceRequest) => (
+                  <div
+                    key={assistanceRequest.request_id}
+                    className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="assistance-request-flicker text-lg font-black text-red-600">
+                        {assistanceRequest.table_label || `Table ${assistanceRequest.table_id}`}
+                      </p>
+                      <p className="text-sm font-medium text-slate-600">
+                        {assistanceRequest.customer_name || 'Customer'} needs assistance
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {assistanceRequest.requested_at ? new Date(assistanceRequest.requested_at).toLocaleString() : 'Just now'}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 rounded-full border-red-200 px-4 font-bold text-red-600 hover:bg-red-50"
+                      disabled={assistanceResolvingId === assistanceRequest.request_id}
+                      onClick={() => resolveAssistanceRequest(assistanceRequest.request_id)}
+                    >
+                      {assistanceResolvingId === assistanceRequest.request_id ? 'Resolving' : 'Resolved'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="rounded-[28px] border border-white/70 bg-white/80 px-4 py-3 shadow-[0_12px_30px_rgba(15,23,42,0.04)] backdrop-blur">
           <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">

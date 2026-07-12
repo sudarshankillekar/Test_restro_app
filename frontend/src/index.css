@@ -34,8 +34,13 @@
     animation: bill-request-flicker 0.75s steps(2, start) infinite;
   }
 
+  .assistance-request-flicker {
+    animation: bill-request-flicker 0.95s steps(2, start) infinite;
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .bill-request-flicker {
+    .bill-request-flicker,
+    .assistance-request-flicker {
       animation: none;
     }
   }
