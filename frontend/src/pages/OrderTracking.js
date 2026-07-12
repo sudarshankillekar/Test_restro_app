@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
-import { CheckCircle, Clock, ChefHat, Download, Package, Loader2, Star } from 'lucide-react';
+import { CheckCircle, Clock, ChefHat, Download, Package, Loader2, Star, Plus } from 'lucide-react';
 
 
 const statusConfig = {
@@ -42,6 +42,7 @@ const summarizeBillItems = (orders = []) => {
 
 const OrderTracking = () => {
   const { orderId } = useParams();
+  const navigate = useNavigate();
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const { socket, joinRoom } = useSocket();
@@ -113,6 +114,7 @@ const OrderTracking = () => {
   const combinedTotal = tableSummary?.combined_total ?? order.total;
   const billSummary = order.bill_summary;
   const googleReviewUrl = billSummary?.google_review_url;
+  const canAddMoreItems = !billSummary?.payment && !['served', 'cancelled'].includes(order.status);
   const paidBillItems = billSummary?.payment ? summarizeBillItems(billSummary.orders) : [];
   const displayItems = billSummary?.payment
     ? paidBillItems.map((item) => ({
@@ -193,6 +195,19 @@ const OrderTracking = () => {
     link.click();
     window.URL.revokeObjectURL(url);
   };
+
+  const handleAddMoreItems = () => {
+    const tableId = order.table_id || localStorage.getItem('customer_table_id');
+
+    if (!tableId) {
+      toast.error('Unable to reopen the menu for this table.');
+      return;
+    }
+
+    localStorage.setItem('customer_table_id', tableId);
+    navigate(`/customer/${tableId}/menu`);
+  };
+
   return (
     <div className="min-h-screen p-6" style={{ background: '#F9F8F6' }}>
       <div className="max-w-2xl mx-auto space-y-6">
@@ -263,7 +278,19 @@ const OrderTracking = () => {
                 </>
               )}
             </div>
-               {billSummary?.payment && (
+
+            {canAddMoreItems && (
+              <button
+                type="button"
+                onClick={handleAddMoreItems}
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#C54E2C] active:scale-[0.99]"
+              >
+                <Plus className="h-4 w-4" />
+                Add More Items
+              </button>
+            )}
+
+            {billSummary?.payment && (
               <div className="space-y-3">
                 <button
                   type="button"
