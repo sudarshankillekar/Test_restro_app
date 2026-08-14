@@ -111,6 +111,8 @@ const formatMinutes = (minutes = 0) => {
 
 const roleLabel = (role = '') => role.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 
+const hasSelectValue = (value) => typeof value === 'string' && value.trim().length > 0;
+
 const getPunchSuccessMessage = (eventName = '') => {
   const messages = {
     attendance_clock_in: 'Checked in successfully',
@@ -467,7 +469,45 @@ const ProgressRing = ({ value }) => {
   );
 };
 
-const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
+class AttendanceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error) {
+    console.error('Attendance page crashed', error);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4 text-slate-950">
+        <Card className="w-full max-w-md rounded-lg">
+          <CardHeader>
+            <CardTitle>Attendance could not load</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Something went wrong while opening attendance. Refresh once; if it repeats, check staff profiles for missing email details.
+            </p>
+            <Button className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700" onClick={() => window.location.reload()}>
+              <RefreshCw className="h-4 w-4" />
+              Reload Attendance
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+}
+
+const AttendanceDashboardContent = ({ kioskOnly = false, publicKiosk = false }) => {
   const navigate = useNavigate();
   const { kioskToken } = useParams();
   const { user, logout } = useAuth();
@@ -533,7 +573,8 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
   const [summary, setSummary] = useState(null);
   const [logs, setLogs] = useState([]);
 
-  const activeStaff = useMemo(() => staff.filter((staffMember) => staffMember.attendance_active), [staff]);
+  const staffWithEmail = useMemo(() => staff.filter((staffMember) => hasSelectValue(staffMember?.email)), [staff]);
+  const activeStaff = useMemo(() => staffWithEmail.filter((staffMember) => staffMember.attendance_active), [staffWithEmail]);
   const activeShifts = useMemo(() => shifts.filter((shift) => shift.active !== false), [shifts]);
 
   useEffect(() => {
@@ -766,7 +807,7 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
         api.get('/api/attendance/shifts'),
       ]);
       setSettings({ ...emptySettings, ...(settingsResponse.data.settings || {}) });
-      const staffList = staffResponse.data || [];
+      const staffList = (staffResponse.data || []).filter((staffMember) => hasSelectValue(staffMember?.email));
       const shiftList = shiftsResponse.data || [];
       setStaff(staffList);
       setShifts(shiftList);
@@ -1277,7 +1318,7 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
                             <SelectValue placeholder="Select staff" />
                           </SelectTrigger>
                           <SelectContent>
-                            {(activeStaff.length ? activeStaff : staff).map((staffMember) => (
+                            {(activeStaff.length ? activeStaff : staffWithEmail).map((staffMember) => (
                               <SelectItem key={staffMember.email} value={staffMember.email}>
                                 {staffMember.name} · {roleLabel(staffMember.role)}
                               </SelectItem>
@@ -1340,17 +1381,17 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
                         <select
                           value={enrollStaffEmail}
                           onChange={(event) => setEnrollStaffEmail(event.target.value)}
-                          disabled={!staff.length}
+                          disabled={!staffWithEmail.length}
                           className="flex h-10 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm shadow-sm outline-none ring-offset-background focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {!staff.length && <option value="">No staff found</option>}
-                          {staff.map((staffMember) => (
+                          {!staffWithEmail.length && <option value="">No staff found</option>}
+                          {staffWithEmail.map((staffMember) => (
                             <option key={staffMember.email} value={staffMember.email}>
                               {staffMember.name} - {roleLabel(staffMember.role)}
                             </option>
                           ))}
                         </select>
-                        {!staff.length && (
+                        {!staffWithEmail.length && (
                           <p className="text-xs text-slate-500">Create staff from Admin &gt; Staff first, then refresh attendance.</p>
                         )}
                       </div>
@@ -1406,7 +1447,7 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
                           <CheckCircle2 className="h-5 w-5" />
                           Face registration completed successfully.
                         </p>
-                        <p className="mt-1 text-sm">Profile preview: {staff.find((item) => item.email === enrollStaffEmail)?.name || enrollStaffEmail}</p>
+                        <p className="mt-1 text-sm">Profile preview: {staffWithEmail.find((item) => item.email === enrollStaffEmail)?.name || enrollStaffEmail}</p>
                       </div>
                     )}
 
@@ -1438,7 +1479,7 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
                   </CardHeader>
                   <CardContent className="max-h-[420px] overflow-auto p-4 pt-0">
                     <div className="grid gap-2">
-                      {staff.map((staffMember) => (
+                      {staffWithEmail.map((staffMember) => (
                         <div key={staffMember.email} className="grid gap-3 rounded-lg border p-3 lg:grid-cols-[1fr_240px_auto] lg:items-center">
                           <div>
                             <p className="font-semibold">{staffMember.name}</p>
@@ -1501,7 +1542,7 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
                     className="flex h-10 min-w-[190px] rounded-lg border border-input bg-white px-3 py-2 text-sm shadow-sm outline-none ring-offset-background focus:ring-1 focus:ring-ring"
                   >
                     <option value="all">All staff</option>
-                    {staff.map((staffMember) => (
+                    {staffWithEmail.map((staffMember) => (
                       <option key={staffMember.email} value={staffMember.email}>
                         {staffMember.name}
                       </option>
@@ -1795,5 +1836,11 @@ const AttendanceDashboard = ({ kioskOnly = false, publicKiosk = false }) => {
     </div>
   );
 };
+
+const AttendanceDashboard = (props) => (
+  <AttendanceErrorBoundary>
+    <AttendanceDashboardContent {...props} />
+  </AttendanceErrorBoundary>
+);
 
 export default AttendanceDashboard;
