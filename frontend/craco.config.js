@@ -55,6 +55,19 @@ let webpackConfig = {
       if (config.enableHealthCheck && healthPluginInstance) {
         webpackConfig.plugins.push(healthPluginInstance);
       }
+
+      webpackConfig.ignoreWarnings = [
+        ...(webpackConfig.ignoreWarnings || []),
+        {
+          message: /Critical dependency: the request of a dependency is an expression/,
+        },
+        (warning) => (
+          typeof warning.message === "string"
+          && warning.message.includes("Failed to parse source map")
+          && warning.message.includes("@mediapipe/tasks-vision")
+        ),
+      ];
+
       return webpackConfig;
     },
   },
