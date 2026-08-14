@@ -45,7 +45,43 @@ const statusTone = {
   },
 };
 
-const getItemCount = (order) => (order.items || []).reduce((total, item) => total + Number(item.quantity || 0), 0);
+const KITCHEN_ALERT_URL = `${process.env.PUBLIC_URL || ''}/sounds/kitchen-alert.wav`;
+
+const playFallbackKitchenTone = () => {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+
+  const audioContext = new AudioContext();
+  const playTone = (startTime, frequency, duration) => {
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, startTime);
+    gain.gain.setValueAtTime(0.001, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.42, startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + duration + 0.02);
+  };
+
+  const now = audioContext.currentTime;
+  playTone(now, 784, 0.18);
+  playTone(now + 0.22, 1046, 0.2);
+  playTone(now + 0.48, 1318, 0.24);
+  setTimeout(() => audioContext.close().catch(() => {}), 900);
+};
+
+const getCancelledQuantity = (item = {}) => Math.max(Number(item.cancelled_quantity || 0), 0);
+const getBillableQuantity = (item = {}) => Math.max(Number(item.quantity || 0) - getCancelledQuantity(item), 0);
+const isLossItem = (item = {}) => ['loss', 'no_matching_order_found'].includes(item.reallocation_status);
+const formatReallocationTarget = (item = {}) => {
+  if (!item.reallocated_to_order_id) return '';
+  const tableLabel = item.reallocated_to_table_label || item.reallocated_to_table || '';
+  return tableLabel ? `${tableLabel} (${item.reallocated_to_order_id})` : item.reallocated_to_order_id;
+};
+const getItemCount = (order) => (order.items || []).reduce((total, item) => total + getBillableQuantity(item), 0);
 
 const formatOrderTime = (value) => {
   if (!value) return '';
@@ -166,30 +202,11 @@ const KitchenOrderCard = memo(({
   if (typeof window === 'undefined') return;
 
   try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
-
-    const audioContext = new AudioContext();
-    const playTone = (startTime, frequency, duration) => {
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(frequency, startTime);
-      gain.gain.setValueAtTime(0.001, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.35, startTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
-      oscillator.connect(gain);
-      gain.connect(audioContext.destination);
-      oscillator.start(startTime);
-      oscillator.stop(startTime + duration + 0.02);
-    };
-
-    const now = audioContext.currentTime;
-    playTone(now, 880, 0.18);
-    playTone(now + 0.24, 1175, 0.22);
-    setTimeout(() => audioContext.close().catch(() => {}), 800);
+    const audio = new Audio(KITCHEN_ALERT_URL);
+    audio.volume = 1;
+    audio.play().catch(() => playFallbackKitchenTone());
   } catch (error) {
-    // Some browsers block audio before the first user interaction.
+    playFallbackKitchenTone();
   }
 };
 
@@ -205,11 +222,30 @@ const KitchenOrderCard = memo(({
   const [soundEnabled, setSoundEnabled] = useState(true);
   const statusSaveQueueRef = useRef({});
   const desiredStatusRef = useRef({});
- 
+
+
+		  const fetchOrders = useCallback(async () => {
+	    try {
+	      const response = await api.get(`/api/orders`, {
+	        withCredentials: true,
+	      });
+	      setOrders(response.data.filter((order) => (
+	        order.payment_status !== 'completed' && !['served', 'cancelled'].includes(order.status)
+	      )));
+	    } catch (error) {
+	      toast.error('Failed to load orders');
+	    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchOrders();
-  }, []);
+    const intervalId = window.setInterval(fetchOrders, 5000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [fetchOrders]);
 
   useEffect(() => {
     if (socket && user?.restaurant_id) {
@@ -226,12 +262,15 @@ const KitchenOrderCard = memo(({
   useEffect(() => {
     if (!socket) return;
 
-    const upsertOrder = (incomingOrder) => {
-      setOrders((prev) => {
-        const existing = prev.find((order) => order.order_id === incomingOrder.order_id);
-        if (existing) {
-          return prev.map((order) => order.order_id === incomingOrder.order_id ? incomingOrder : order);
-        }
+	    const upsertOrder = (incomingOrder) => {
+	      setOrders((prev) => {
+	        if (incomingOrder.payment_status === 'completed' || ['served', 'cancelled'].includes(incomingOrder.status)) {
+	          return prev.filter((order) => order.order_id !== incomingOrder.order_id);
+	        }
+	        const existing = prev.find((order) => order.order_id === incomingOrder.order_id);
+	        if (existing) {
+	          return prev.map((order) => order.order_id === incomingOrder.order_id ? incomingOrder : order);
+	        }
         return [incomingOrder, ...prev];
       });
     };
@@ -258,7 +297,15 @@ const KitchenOrderCard = memo(({
       }
     });
 
+    const handleItemChange = (payload) => {
+      if (payload?.source_order) upsertOrder(payload.source_order);
+      if (payload?.target_order) upsertOrder(payload.target_order);
+      if (payload?.message) toast.info(payload.message);
+    };
+
     socket.on('order_status_updated', upsertOrder);
+    socket.on('order_item_cancelled', handleItemChange);
+    socket.on('order_item_reallocated', handleItemChange);
     socket.on('order_deleted', (payload) => {
       setOrders((prev) => prev.filter((order) => order.order_id !== payload.order_id));
     });
@@ -267,22 +314,11 @@ const KitchenOrderCard = memo(({
       socket.off('new_order');
       socket.off('kitchen_notification');
       socket.off('order_status_updated', upsertOrder);
+      socket.off('order_item_cancelled', handleItemChange);
+      socket.off('order_item_reallocated', handleItemChange);
       socket.off('order_deleted');
     };
   }, [socket, soundEnabled]);
-
-  const fetchOrders = async () => {
-    try {
-      const response = await api.get(`/api/orders`, {
-        withCredentials: true,
-      });
-      setOrders(response.data.filter((order) => !['served', 'cancelled'].includes(order.status)));
-    } catch (error) {
-      toast.error('Failed to load orders');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const updateStatus = (orderId, status) => {
     const changedAt = new Date().toISOString();
@@ -346,9 +382,9 @@ const toggleSound = () => {
       return next;
     });
   };
-  const activeOrders = useMemo(() => (
-    orders
-      .filter((order) => !['served', 'cancelled'].includes(order.status))
+	  const activeOrders = useMemo(() => (
+	    orders
+	      .filter((order) => order.payment_status !== 'completed' && !['served', 'cancelled'].includes(order.status))
       .sort((a, b) => {
         const aPrepared = a.status === 'prepared';
         const bPrepared = b.status === 'prepared';
@@ -376,10 +412,10 @@ const toggleSound = () => {
 
   const getOrderProgress = useCallback((order) => {
     if (!order) return { ready: 0, total: 0 };
-    const total = getItemCount(order);
+    const total = (order.items || []).reduce((count, item) => count + getBillableQuantity(item), 0);
     const checkedForOrder = checkedItems[order.order_id] || {};
     const ready = (order.items || []).reduce((count, item, index) => (
-      count + (checkedForOrder[index] ? Number(item.quantity || 0) : 0)
+      count + ((checkedForOrder[index] || item.ready) ? getBillableQuantity(item) : 0)
     ), 0);
     return { ready, total };
   }, [checkedItems]);
@@ -717,27 +753,55 @@ const toggleSound = () => {
                         <div className="divide-y divide-slate-200">
                           {items.map((item) => {
                             const checked = Boolean((checkedItems[selectedOrder.order_id] || {})[item.itemIndex]);
+                            const cancelledQuantity = getCancelledQuantity(item);
+                            const billableQuantity = getBillableQuantity(item);
+                            const fullyCancelled = billableQuantity <= 0;
                             return (
                               <label
                                 key={`${selectedOrder.order_id}-${item.itemIndex}`}
                                 className={`flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-all duration-150 ${
-                                  checked
+                                  fullyCancelled
+                                    ? 'border-l-4 border-red-300 bg-red-50 text-red-900'
+                                    : checked
                                     ? 'border-l-4 border-emerald-500 bg-emerald-50 text-emerald-900'
                                     : 'text-slate-950 hover:bg-slate-50'
                                 }`}
                               >
                                 <input
                                   type="checkbox"
-                                  checked={checked}
+                                  checked={checked || item.ready || fullyCancelled}
                                   onChange={() => toggleItemChecked(selectedOrder.order_id, item.itemIndex)}
+                                  disabled={fullyCancelled}
                                   className="mt-0.5 h-6 w-6 rounded-lg border-slate-300 accent-emerald-600"
                                 />
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-3">
-                                    <span className="text-lg font-medium text-slate-950">{item.quantity}x</span>
-                                    <p className={`text-lg font-medium leading-tight ${checked ? 'text-slate-600 line-through opacity-70' : 'text-slate-950'}`}>
+                                    <span className="text-lg font-medium text-slate-950">{billableQuantity}x</span>
+                                    <p className={`text-lg font-medium leading-tight ${checked || fullyCancelled ? 'text-slate-600 line-through opacity-70' : 'text-slate-950'}`}>
                                       {item.name}
                                     </p>
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-2">
+                                    {cancelledQuantity > 0 && (
+                                      <Badge className="rounded-full bg-red-100 text-red-700">
+                                        {cancelledQuantity} Cancelled
+                                      </Badge>
+                                    )}
+                                    {item.reallocated_to_order_id && (
+                                      <Badge className="rounded-full bg-emerald-100 text-emerald-800">
+                                        Reallocated to {formatReallocationTarget(item)}
+                                      </Badge>
+                                    )}
+                                    {item.reallocated_from_order_id && (
+                                      <Badge className="rounded-full bg-blue-100 text-blue-800">
+                                        Received from {item.reallocated_from_table_label || item.reallocated_from_order_id}
+                                      </Badge>
+                                    )}
+                                    {isLossItem(item) && (
+                                      <Badge className="rounded-full bg-red-100 text-red-700">
+                                        Loss
+                                      </Badge>
+                                    )}
                                   </div>
                                   {item.instructions && (
                                     <p className={`mt-1 text-sm font-bold ${checked ? 'text-slate-500 line-through' : 'text-orange-600'}`}>

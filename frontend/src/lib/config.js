@@ -9,8 +9,9 @@ const getDefaultBackendUrl = () => {
 
   const { origin, hostname, protocol } = window.location;
   const isLocalhost = ['localhost', '127.0.0.1'].includes(hostname);
+  const isPrivateLanHost = /^(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})$/.test(hostname);
 
-  if (isLocalhost) {
+  if (isLocalhost || isPrivateLanHost) {
     return `${protocol}//${hostname}:8000`;
   }
 

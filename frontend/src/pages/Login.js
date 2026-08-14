@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -27,6 +27,7 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -35,6 +36,13 @@ const Login = () => {
     try {
       const user = await login(email, password);
       toast.success('Login successful!');
+
+      const requestedPath = location.state?.from?.pathname;
+      const attendanceKioskRoles = ['admin', 'billing', 'kitchen_billing', 'kitchen', 'waiter', 'pos'];
+      if (requestedPath === '/attendance-kiosk' && attendanceKioskRoles.includes(user.role)) {
+        navigate('/attendance-kiosk', { replace: true });
+        return;
+      }
       
       // Redirect based on role
       if (user.role === 'super_admin') {

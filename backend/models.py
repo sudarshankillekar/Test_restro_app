@@ -61,12 +61,15 @@ class MenuItemCreate(BaseModel):
     price: float
     description: Optional[str] = None
     image: Optional[str] = None
+    diet_type: Optional[str] = "veg"
 
 class MenuItemUpdate(BaseModel):
     name: Optional[str] = None
+    category_id: Optional[str] = None
     price: Optional[float] = None
     description: Optional[str] = None
     image: Optional[str] = None
+    diet_type: Optional[str] = None
     available: Optional[bool] = None
 
 class TableCreate(BaseModel):
@@ -115,9 +118,17 @@ class PosBillUpdate(BaseModel):
     discount: Optional[float] = None
     items: Optional[List[OrderItemUpdate]] = None
 
+class PosBillDeleteRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
 class OrderItemsUpdate(BaseModel):
     items: List[OrderItemUpdate]
-    
+
+class OrderItemCancelRequest(BaseModel):
+    quantity: int = Field(gt=0)
+    reason: Optional[str] = "Customer cancelled verbally"
+    allow_reallocation: bool = True
+
 class OrderResponse(BaseModel):
     order_id: str
     table_id: str
@@ -140,6 +151,50 @@ class CashAdjustmentCreate(BaseModel):
 
 class CashDrawerOpeningCreate(BaseModel):
     opening_balance: float
+
+class AttendanceSettingsUpdate(BaseModel):
+    shift_start: Optional[str] = None
+    shift_end: Optional[str] = None
+    grace_minutes: Optional[int] = None
+    overtime_after_hours: Optional[float] = None
+    confidence_threshold: Optional[float] = None
+    snapshot_audit_enabled: Optional[bool] = None
+    pin_fallback_enabled: Optional[bool] = None
+
+class AttendanceShiftCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    shift_start: str
+    shift_end: str
+    grace_minutes: Optional[int] = None
+    overtime_after_hours: Optional[float] = None
+    active: Optional[bool] = True
+
+class AttendanceShiftUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    shift_start: Optional[str] = None
+    shift_end: Optional[str] = None
+    grace_minutes: Optional[int] = None
+    overtime_after_hours: Optional[float] = None
+    active: Optional[bool] = None
+
+class AttendanceProfileShiftAssign(BaseModel):
+    staff_email: str
+    shift_id: Optional[str] = None
+
+class AttendanceEnrollRequest(BaseModel):
+    staff_email: str
+    descriptors: List[List[float]]
+    pin: Optional[str] = None
+    active: Optional[bool] = True
+    shift_id: Optional[str] = None
+    registration_audit: Optional[dict] = None
+
+class AttendancePunchRequest(BaseModel):
+    punch_type: str = "clock_in"  # clock_in, clock_out, break_in, break_out
+    descriptor: Optional[List[float]] = None
+    staff_email: Optional[str] = None
+    pin: Optional[str] = None
+    method: Optional[str] = "face"  # face, pin, manual
 
 class AnalyticsResponse(BaseModel):
     total_orders: int

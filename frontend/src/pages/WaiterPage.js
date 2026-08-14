@@ -6,6 +6,7 @@ import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { normalizeImageUrl } from '../lib/utils';
+import DietIndicator from '../components/DietIndicator';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -511,7 +512,10 @@ const WaiterDashboard = () => {
                             )}
                             <div className="space-y-2 p-3.5">
                               <div className="space-y-1">
-                                <h3 className="line-clamp-2 text-base font-bold leading-tight text-slate-900">{item.name}</h3>
+	                                <div className="flex items-start gap-2">
+	                                  <DietIndicator item={item} className="mt-1" />
+	                                  <h3 className="line-clamp-2 text-base font-bold leading-tight text-slate-900">{item.name}</h3>
+	                                </div>
                                 <p className="line-clamp-2 min-h-[2.25rem] text-xs text-slate-500 sm:text-sm">
                                   {item.description || 'Freshly prepared for your guests.'}
                                 </p>

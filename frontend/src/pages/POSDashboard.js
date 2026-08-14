@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  BellRing,
   CreditCard,
   FileText,
   Home,
@@ -24,6 +25,7 @@ import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { normalizeImageUrl } from '../lib/utils';
+import DietIndicator from '../components/DietIndicator';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -147,10 +149,26 @@ const printHtml = (html, title) => {
   popup.document.close();
 };
 
+const ASSISTANCE_BELL_URL = `${process.env.PUBLIC_URL || ''}/sounds/assistance-bell.wav`;
+const NOTIFICATION_REMINDER_MS = 2 * 60 * 1000;
+
+const getTimestampMs = (value) => {
+  const timestamp = new Date(value || 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const clearReminderTimers = (timers) => {
+  timers.current.forEach((timerId) => window.clearTimeout(timerId));
+  timers.current.clear();
+};
+
 const POSDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { socket, joinRoom } = useSocket();
+  const assistanceBellRef = useRef(null);
+  const assistanceReminderRef = useRef(new Map());
+  const assistanceReminderTimersRef = useRef(new Map());
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
@@ -161,6 +179,8 @@ const POSDashboard = () => {
   const [showAllBills, setShowAllBills] = useState(false);
   const [billsDialogOpen, setBillsDialogOpen] = useState(false);
   const [editingBill, setEditingBill] = useState(null);
+  const [deletingBill, setDeletingBill] = useState(null);
+  const [deleteBillReason, setDeleteBillReason] = useState('');
   const [billEditForm, setBillEditForm] = useState({
     customer_name: '',
     phone: '',
@@ -191,6 +211,8 @@ const POSDashboard = () => {
   const [mobileTab, setMobileTab] = useState('pos');
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [cartDialogOpen, setCartDialogOpen] = useState(false);
+  const [assistanceRequests, setAssistanceRequests] = useState([]);
+  const [assistanceResolvingId, setAssistanceResolvingId] = useState('');
 
   const loadSummary = useCallback(async () => {
     const response = await api.get('/api/pos/summary', { withCredentials: true });
@@ -216,6 +238,17 @@ const POSDashboard = () => {
     setCompletedBills(response.data || []);
   }, []);
 
+  const loadAssistanceRequests = useCallback(async ({ silent = false } = {}) => {
+    try {
+      const response = await api.get('/api/assistance-requests', { withCredentials: true });
+      setAssistanceRequests(response.data || []);
+    } catch (error) {
+      if (!silent) {
+        toast.error(error.response?.data?.detail || 'Failed to load assistance requests');
+      }
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -229,13 +262,27 @@ const POSDashboard = () => {
       setMenuItems(menuResponse.data || []);
       setTables(tablesResponse.data || []);
       setRestaurantProfile(profileResponse.data || {});
-      await Promise.all([loadSummary(), loadCompletedBills()]);
+      await Promise.all([loadSummary(), loadCompletedBills(), loadAssistanceRequests({ silent: true })]);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to load POS');
     } finally {
       setLoading(false);
     }
-  }, [loadSummary, loadCompletedBills]);
+  }, [loadSummary, loadCompletedBills, loadAssistanceRequests]);
+
+  const playAssistanceBell = useCallback(() => {
+    try {
+      const audio = assistanceBellRef.current || new Audio(ASSISTANCE_BELL_URL);
+      assistanceBellRef.current = audio;
+      audio.currentTime = 0;
+      audio.volume = 1;
+      audio.play().catch(() => {
+        // Browsers may block sound until the POS screen has been interacted with.
+      });
+    } catch (error) {
+      // Keep assistance requests visible even if audio playback is unavailable.
+    }
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -249,11 +296,109 @@ const POSDashboard = () => {
 
   useEffect(() => {
     if (!socket) return undefined;
+    const handleAssistanceRequested = (payload) => {
+      if (payload?.request_id) {
+        assistanceReminderRef.current.set(payload.request_id, Date.now());
+      }
+      playAssistanceBell();
+      setAssistanceRequests((prev) => {
+        const existing = prev.find((request) => request.request_id === payload.request_id);
+        if (existing) {
+          return prev.map((request) => request.request_id === payload.request_id ? payload : request);
+        }
+        return [payload, ...prev];
+      });
+      loadAssistanceRequests({ silent: true });
+      toast.warning(`${payload.table_label || 'A table'} is requesting assistance`);
+    };
+    const handleAssistanceResolved = (payload) => {
+      setAssistanceRequests((prev) => prev.filter((request) => request.request_id !== payload.request_id));
+      loadAssistanceRequests({ silent: true });
+    };
+
     socket.on('cash_drawer_updated', loadSummary);
+    socket.on('assistance_requested', handleAssistanceRequested);
+    socket.on('assistance_resolved', handleAssistanceResolved);
     return () => {
       socket.off('cash_drawer_updated', loadSummary);
+      socket.off('assistance_requested', handleAssistanceRequested);
+      socket.off('assistance_resolved', handleAssistanceResolved);
     };
-  }, [socket, loadSummary]);
+  }, [socket, loadSummary, loadAssistanceRequests, playAssistanceBell]);
+
+  useEffect(() => {
+    const activeKeys = new Set();
+
+    const scheduleAssistanceReminder = (request) => {
+      const key = request.request_id;
+      if (!key || assistanceReminderTimersRef.current.has(key)) return;
+
+      const timerId = window.setTimeout(() => {
+        assistanceReminderTimersRef.current.delete(key);
+        setAssistanceRequests((currentRequests) => {
+          const activeRequest = currentRequests.find((item) => item.request_id === key);
+          if (activeRequest) {
+            playAssistanceBell();
+            assistanceReminderRef.current.set(key, Date.now());
+            toast.warning(`${activeRequest.table_label || 'A table'} is still requesting assistance`);
+            scheduleAssistanceReminder(activeRequest);
+          }
+          return currentRequests;
+        });
+      }, NOTIFICATION_REMINDER_MS);
+
+      assistanceReminderTimersRef.current.set(key, timerId);
+    };
+
+    assistanceRequests.forEach((request) => {
+      const key = request.request_id;
+      if (!key) return;
+      activeKeys.add(key);
+      if (!assistanceReminderRef.current.has(key)) {
+        assistanceReminderRef.current.set(key, getTimestampMs(request.requested_at) || Date.now());
+      }
+      scheduleAssistanceReminder(request);
+    });
+
+    Array.from(assistanceReminderTimersRef.current.keys()).forEach((key) => {
+      if (!activeKeys.has(key)) {
+        window.clearTimeout(assistanceReminderTimersRef.current.get(key));
+        assistanceReminderTimersRef.current.delete(key);
+        assistanceReminderRef.current.delete(key);
+      }
+    });
+  }, [assistanceRequests, playAssistanceBell]);
+
+  useEffect(() => () => {
+    clearReminderTimers(assistanceReminderTimersRef);
+  }, []);
+
+  useEffect(() => {
+    if (loading) return undefined;
+
+    loadAssistanceRequests({ silent: true });
+    const intervalId = window.setInterval(() => {
+      loadAssistanceRequests({ silent: true });
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [loading, loadAssistanceRequests]);
+
+  const resolveAssistanceRequest = async (requestId) => {
+    if (!requestId || assistanceResolvingId) return;
+
+    setAssistanceResolvingId(requestId);
+    try {
+      await api.patch(`/api/assistance-requests/${requestId}/resolve`, {}, { withCredentials: true });
+      setAssistanceRequests((prev) => prev.filter((request) => request.request_id !== requestId));
+      loadAssistanceRequests({ silent: true });
+      toast.success('Assistance request resolved');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to resolve assistance request');
+    } finally {
+      setAssistanceResolvingId('');
+    }
+  };
 
   const visibleItems = useMemo(() => {
     const searchTerm = search.trim().toLowerCase();
@@ -632,14 +777,27 @@ const POSDashboard = () => {
     }
   };
 
-  const deleteBill = async (bill) => {
-    if (!bill?.bill_id) return;
-    if (!window.confirm(`Delete ${bill.bill_id}? This will remove the bill and its POS order.`)) return;
+  const openDeleteBillDialog = (bill) => {
+    setDeletingBill(bill);
+    setDeleteBillReason('');
+  };
 
-    setBillActionLoading(`delete-${bill.bill_id}`);
+  const deleteBill = async () => {
+    if (!deletingBill?.bill_id) return;
+    const reason = deleteBillReason.trim();
+    if (!reason) {
+      toast.error('Please enter a reason before deleting the bill.');
+      return;
+    }
+
+    setBillActionLoading(`delete-${deletingBill.bill_id}`);
     try {
-      await api.delete(`/api/pos/completed-bills/${encodeURIComponent(bill.bill_id)}`);
+      await api.delete(`/api/pos/completed-bills/${encodeURIComponent(deletingBill.bill_id)}`, {
+        data: { reason },
+      });
       toast.success('Bill deleted.');
+      setDeletingBill(null);
+      setDeleteBillReason('');
       await Promise.all([loadCompletedBills(), loadSummary()]);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to delete bill');
@@ -748,6 +906,47 @@ const POSDashboard = () => {
             </div>
           )}
         </section>
+
+        {assistanceRequests.length > 0 && (
+          <section className="shrink-0 border-y border-red-200 bg-red-50/95 px-3 py-2 sm:px-4 md:px-6">
+            <div className="mx-auto flex max-w-7xl items-center gap-2 overflow-x-auto">
+              <div className="flex shrink-0 items-center gap-2 pr-1 text-red-700">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-red-100">
+                  <BellRing className="h-4 w-4" />
+                </span>
+                <div>
+                  <p className="text-sm font-black leading-tight">Assistance Requested</p>
+                  <p className="text-[11px] font-bold leading-tight text-red-600">
+                    {assistanceRequests.length} active
+                  </p>
+                </div>
+              </div>
+              {assistanceRequests.map((assistanceRequest) => (
+                <div
+                  key={assistanceRequest.request_id}
+                  className="flex shrink-0 items-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2 shadow-sm"
+                >
+                  <div className="min-w-[120px]">
+                    <p className="assistance-request-flicker text-sm font-black leading-tight text-red-600">
+                      {assistanceRequest.table_label || `Table ${assistanceRequest.table_id}`}
+                    </p>
+                    <p className="truncate text-[11px] font-semibold leading-tight text-[#645d5a]">
+                      {assistanceRequest.customer_name || 'Customer'} needs help
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={assistanceResolvingId === assistanceRequest.request_id}
+                    onClick={() => resolveAssistanceRequest(assistanceRequest.request_id)}
+                    className="h-8 rounded-lg border border-red-200 px-3 text-xs font-black text-red-600 disabled:opacity-60"
+                  >
+                    {assistanceResolvingId === assistanceRequest.request_id ? 'Resolving' : 'Resolved'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="min-h-0 min-w-0 flex-1 overflow-hidden px-3 py-2 sm:px-4 md:px-6">
           <div className={`grid h-full min-h-0 min-w-0 gap-5 ${summaryCollapsed ? 'xl:grid-cols-[minmax(0,1fr)]' : 'lg:grid-cols-[300px,minmax(0,1fr)] xl:grid-cols-[320px,minmax(0,1fr)]'}`}>
@@ -970,7 +1169,10 @@ const POSDashboard = () => {
                     <div className="flex min-w-0 flex-1 flex-col p-2">
                       <div className="flex items-start justify-between gap-1 sm:gap-2">
                         <div className="min-w-0">
-                          <h3 className="line-clamp-2 min-h-[2rem] text-xs font-black leading-tight sm:text-sm">{item.name}</h3>
+	                          <div className="flex items-start gap-1.5">
+	                            <DietIndicator item={item} className="mt-0.5" />
+	                            <h3 className="line-clamp-2 min-h-[2rem] text-xs font-black leading-tight sm:text-sm">{item.name}</h3>
+	                          </div>
                           <p className="mt-1 text-sm font-black text-[#d92d0b] sm:text-lg">{formatCurrency(item.price)}</p>
                         </div>
                         {cartItem && <Badge className="rounded-full bg-green-100 px-1.5 text-xs text-green-700 hover:bg-green-100">{cartItem.quantity}</Badge>}
@@ -1033,7 +1235,10 @@ const POSDashboard = () => {
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
-                          <p className="line-clamp-2 text-sm font-black">{item.name}</p>
+	                          <div className="flex items-start gap-1.5">
+	                            <DietIndicator item={item} className="mt-0.5" />
+	                            <p className="line-clamp-2 text-sm font-black">{item.name}</p>
+	                          </div>
                           <button type="button" onClick={() => updateQuantity(item.item_id, 0)} className="text-[#645d5a]">
                             <X className="h-4 w-4" />
                           </button>
@@ -1201,7 +1406,10 @@ const POSDashboard = () => {
                           )}
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
-                              <p className="line-clamp-2 text-sm font-black">{item.name}</p>
+	                              <div className="flex items-start gap-1.5">
+	                                <DietIndicator item={item} className="mt-0.5" />
+	                                <p className="line-clamp-2 text-sm font-black">{item.name}</p>
+	                              </div>
                               <button type="button" onClick={() => updateQuantity(item.item_id, 0)} className="text-[#645d5a]">
                                 <X className="h-4 w-4" />
                               </button>
@@ -1379,7 +1587,7 @@ const POSDashboard = () => {
                               variant="outline"
                               disabled={isDeleting}
                               className="h-9 rounded-xl px-2 font-black text-red-600 hover:bg-red-50 hover:text-red-700"
-                              onClick={() => deleteBill(bill)}
+                              onClick={() => openDeleteBillDialog(bill)}
                             >
                               {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
                               {!isDeleting && 'Delete'}
@@ -1405,6 +1613,68 @@ const POSDashboard = () => {
                 )}
               </>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deletingBill)} onOpenChange={(open) => {
+        if (!open && !billActionLoading.startsWith('delete-')) {
+          setDeletingBill(null);
+          setDeleteBillReason('');
+        }
+      }}>
+        <DialogContent className="rounded-2xl sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Trash2 className="h-5 w-5" />
+              Delete Bill
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-800">
+              <p className="font-black">This will remove {deletingBill?.bill_id} and its POS order.</p>
+              <p className="mt-1">The reason is mandatory and will reflect in the admin analytics audit.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="delete-bill-reason">Reason <span className="text-red-600">*</span></Label>
+              <Textarea
+                id="delete-bill-reason"
+                value={deleteBillReason}
+                onChange={(event) => setDeleteBillReason(event.target.value)}
+                placeholder="Example: Wrong bill generated, duplicate bill, payment entered by mistake"
+                className="min-h-28 resize-none rounded-xl"
+                maxLength={500}
+              />
+              <p className="text-xs text-[#645d5a]">{deleteBillReason.trim().length}/500 characters</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-xl font-black"
+                disabled={billActionLoading === `delete-${deletingBill?.bill_id}`}
+                onClick={() => {
+                  setDeletingBill(null);
+                  setDeleteBillReason('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="h-11 rounded-xl font-black"
+                disabled={!deleteBillReason.trim() || billActionLoading === `delete-${deletingBill?.bill_id}`}
+                onClick={deleteBill}
+              >
+                {billActionLoading === `delete-${deletingBill?.bill_id}` ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-2 h-4 w-4" />
+                )}
+                Delete Bill
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

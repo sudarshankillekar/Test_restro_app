@@ -22,6 +22,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import RestaurantRegistration from './pages/RestaurantRegistration';
 import WaiterDashboard from './pages/WaiterPage';
+import AttendanceDashboard from './pages/AttendanceDashboard';
 
 
 function AppRouter() {
@@ -87,10 +88,35 @@ function AppRouter() {
         }
       />
       <Route
-       path="/waiter"
+        path="/waiter"
         element={
           <ProtectedRoute allowedRoles={['waiter', 'admin']}>
             <WaiterDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/attendance"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'billing', 'kitchen_billing', 'kitchen', 'waiter', 'pos']}>
+            <AttendanceDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/attendance-kiosk"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'billing', 'kitchen_billing', 'kitchen', 'waiter', 'pos']}>
+            <AttendanceDashboard kioskOnly />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="/attendance-kiosk/:kioskToken" element={<AttendanceDashboard kioskOnly publicKiosk />} />
+      <Route
+        path="/admin/attendance"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'billing', 'kitchen_billing']}>
+            <AttendanceDashboard />
           </ProtectedRoute>
         }
       />

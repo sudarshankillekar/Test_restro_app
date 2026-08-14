@@ -44,6 +44,34 @@ const statusTone = {
   },
 };
 
+const KITCHEN_ALERT_URL = `${process.env.PUBLIC_URL || ''}/sounds/kitchen-alert.wav`;
+
+const playFallbackKitchenTone = () => {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+
+  const audioContext = new AudioContext();
+  const playTone = (startTime, frequency, duration) => {
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, startTime);
+    gain.gain.setValueAtTime(0.001, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.4, startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + duration + 0.02);
+  };
+
+  const now = audioContext.currentTime;
+  playTone(now, 784, 0.18);
+  playTone(now + 0.22, 1046, 0.2);
+  playTone(now + 0.48, 1318, 0.24);
+  setTimeout(() => audioContext.close().catch(() => {}), 900);
+};
+
 const activeStatuses = ['pending', 'accepted', 'prepared'];
 
 const escapeHtml = (value = '') => (
@@ -103,30 +131,11 @@ const playKitchenAlert = () => {
   if (typeof window === 'undefined') return;
 
   try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
-
-    const audioContext = new AudioContext();
-    const playTone = (startTime, frequency, duration) => {
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(frequency, startTime);
-      gain.gain.setValueAtTime(0.001, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.32, startTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
-      oscillator.connect(gain);
-      gain.connect(audioContext.destination);
-      oscillator.start(startTime);
-      oscillator.stop(startTime + duration + 0.02);
-    };
-
-    const now = audioContext.currentTime;
-    playTone(now, 880, 0.16);
-    playTone(now + 0.22, 1175, 0.2);
-    setTimeout(() => audioContext.close().catch(() => {}), 700);
+    const audio = new Audio(KITCHEN_ALERT_URL);
+    audio.volume = 1;
+    audio.play().catch(() => playFallbackKitchenTone());
   } catch (error) {
-    // Browsers can block audio before the first user interaction.
+    playFallbackKitchenTone();
   }
 };
 
@@ -271,7 +280,9 @@ const KitchenTVDisplay = () => {
   const fetchOrders = useCallback(async () => {
     try {
       const response = await api.get('/api/orders', { withCredentials: true });
-      setOrders(response.data.filter((order) => activeStatuses.includes(order.status)));
+	      setOrders(response.data.filter((order) => (
+	        order.payment_status !== 'completed' && activeStatuses.includes(order.status)
+	      )));
       setLastUpdated(new Date());
     } catch (error) {
       toast.error('Failed to load kitchen TV orders');
@@ -298,11 +309,11 @@ const KitchenTVDisplay = () => {
   useEffect(() => {
     if (!socket) return undefined;
 
-    const upsertOrder = (incomingOrder) => {
-      setOrders((prev) => {
-        if (!activeStatuses.includes(incomingOrder.status)) {
-          return prev.filter((order) => order.order_id !== incomingOrder.order_id);
-        }
+	    const upsertOrder = (incomingOrder) => {
+	      setOrders((prev) => {
+	        if (incomingOrder.payment_status === 'completed' || !activeStatuses.includes(incomingOrder.status)) {
+	          return prev.filter((order) => order.order_id !== incomingOrder.order_id);
+	        }
 
         const existing = prev.some((order) => order.order_id === incomingOrder.order_id);
         if (existing) {
@@ -343,9 +354,9 @@ const KitchenTVDisplay = () => {
     };
   }, [socket, soundEnabled]);
 
-  const activeOrders = useMemo(() => (
-    orders
-      .filter((order) => activeStatuses.includes(order.status))
+	  const activeOrders = useMemo(() => (
+	    orders
+	      .filter((order) => order.payment_status !== 'completed' && activeStatuses.includes(order.status))
       .sort((a, b) => {
         const statusRank = { pending: 0, accepted: 1, prepared: 2 };
         const rankDelta = (statusRank[a.status] ?? 3) - (statusRank[b.status] ?? 3);

@@ -14,6 +14,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
+import DietIndicator from '../components/DietIndicator';
 
 const formatCurrency = (value = 0) => new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -54,24 +55,53 @@ const formatPaymentMethod = (method) => {
   return method.toUpperCase();
 };
 
+const ASSISTANCE_BELL_URL = `${process.env.PUBLIC_URL || ''}/sounds/assistance-bell.wav`;
+const BILL_REQUEST_SOUND_URL = `${process.env.PUBLIC_URL || ''}/sounds/bill-request.mp3`;
+const NOTIFICATION_REMINDER_MS = 2 * 60 * 1000;
+
+const getTimestampMs = (value) => {
+  const timestamp = new Date(value || 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const clearReminderTimers = (timers) => {
+  timers.current.forEach((timerId) => window.clearTimeout(timerId));
+  timers.current.clear();
+};
+
+const getCancelledQuantity = (item = {}) => Math.max(Number(item.cancelled_quantity || 0), 0);
+const getBillableQuantity = (item = {}) => Math.max(Number(item.quantity || 0) - getCancelledQuantity(item), 0);
+const isLossItem = (item = {}) => ['loss', 'no_matching_order_found'].includes(item.reallocation_status);
+const formatReallocationTarget = (item = {}) => {
+  if (!item.reallocated_to_order_id) return '';
+  const tableLabel = item.reallocated_to_table_label || item.reallocated_to_table || '';
+  return tableLabel ? `${tableLabel} (${item.reallocated_to_order_id})` : item.reallocated_to_order_id;
+};
+const getOrderBillableItemCount = (order = {}) => (
+  (order.items || []).reduce((total, item) => total + getBillableQuantity(item), 0)
+);
+
 const summarizeBillItems = (orders = []) => {
   const grouped = new Map();
 
   orders.forEach((order) => {
     (order.items || []).forEach((item) => {
+      const billableQuantity = getBillableQuantity(item);
+      if (billableQuantity <= 0) return;
+
       const key = `${item.item_id || item.name}-${item.price}`;
       const existing = grouped.get(key);
       if (existing) {
-        existing.quantity += item.quantity;
-        existing.amount += item.quantity * item.price;
+        existing.quantity += billableQuantity;
+        existing.amount += billableQuantity * item.price;
         return;
       }
 
       grouped.set(key, {
         item_id: item.item_id,
         name: item.name,
-        quantity: item.quantity,
-        amount: item.quantity * item.price,
+        quantity: billableQuantity,
+        amount: billableQuantity * item.price,
       });
     });
   });
@@ -153,9 +183,16 @@ const BillingDashboard = ({ embedded = false }) => {
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const completedPaymentKeysRef = useRef(new Set());
   const paymentInFlightRef = useRef(false);
+  const assistanceBellRef = useRef(null);
+  const billRequestSoundRef = useRef(null);
+  const assistanceReminderRef = useRef(new Map());
+  const billReminderRef = useRef(new Map());
+  const assistanceReminderTimersRef = useRef(new Map());
+  const billReminderTimersRef = useRef(new Map());
   const [discount, setDiscount] = useState(0);
   const [editingOrder, setEditingOrder] = useState(null);
   const [editingItems, setEditingItems] = useState([]);
+  const [cancellingItemKey, setCancellingItemKey] = useState('');
   const [restaurantProfile, setRestaurantProfile] = useState({
     name: '',
     gst_number: '',
@@ -178,6 +215,9 @@ const BillingDashboard = ({ embedded = false }) => {
   const [transactionSummary, setTransactionSummary] = useState(createEmptyTransactionSummary);
   const [transactionPeriod, setTransactionPeriod] = useState('daily');
   const [completedBillRecords, setCompletedBillRecords] = useState([]);
+  const [deletingBill, setDeletingBill] = useState(null);
+  const [deleteBillReason, setDeleteBillReason] = useState('');
+  const [deleteBillLoading, setDeleteBillLoading] = useState('');
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
@@ -238,6 +278,45 @@ const BillingDashboard = ({ embedded = false }) => {
     }
   };
 
+  const loadAssistanceRequests = useCallback(async ({ silent = false } = {}) => {
+    try {
+      const response = await api.get('/api/assistance-requests', { withCredentials: true });
+      setAssistanceRequests(response.data || []);
+    } catch (error) {
+      if (!silent) {
+        toast.error(error.response?.data?.detail || 'Failed to load assistance requests');
+      }
+    }
+  }, []);
+
+  const playAssistanceBell = useCallback(() => {
+    try {
+      const audio = assistanceBellRef.current || new Audio(ASSISTANCE_BELL_URL);
+      assistanceBellRef.current = audio;
+      audio.currentTime = 0;
+      audio.volume = 1;
+      audio.play().catch(() => {
+        // Browsers may block sound until the billing counter has been interacted with.
+      });
+    } catch (error) {
+      // Keep assistance requests visible even if audio playback is unavailable.
+    }
+  }, []);
+
+  const playBillRequestSound = useCallback(() => {
+    try {
+      const audio = billRequestSoundRef.current || new Audio(BILL_REQUEST_SOUND_URL);
+      billRequestSoundRef.current = audio;
+      audio.currentTime = 0;
+      audio.volume = 1;
+      audio.play().catch(() => {
+        // Browsers may block sound until the billing counter has been interacted with.
+      });
+    } catch (error) {
+      // Keep bill request alerts visible even if audio playback is unavailable.
+    }
+  }, []);
+
   useEffect(() => {
     const bootstrap = async () => {
       try {
@@ -277,6 +356,17 @@ const BillingDashboard = ({ embedded = false }) => {
   }, [loadTransactionSummary]);
 
   useEffect(() => {
+    if (loading) return undefined;
+
+    loadAssistanceRequests({ silent: true });
+    const intervalId = window.setInterval(() => {
+      loadAssistanceRequests({ silent: true });
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [loading, loadAssistanceRequests]);
+
+  useEffect(() => {
     if (counterDialogOpen) {
       loadCounterCatalog();
     }
@@ -301,9 +391,18 @@ const BillingDashboard = ({ embedded = false }) => {
       });
     };
     const handleBillRequested = (payload) => {
+      const reminderKey = payload?.table_id || payload?.order_id || (payload?.order_ids || []).join('-');
+      if (reminderKey) {
+        billReminderRef.current.set(reminderKey, Date.now());
+      }
+      playBillRequestSound();
       toast.info(`Bill requested for ${payload.table_label || 'a table'}`);
     };
     const handleAssistanceRequested = (payload) => {
+      if (payload?.request_id) {
+        assistanceReminderRef.current.set(payload.request_id, Date.now());
+      }
+      playAssistanceBell();
       setAssistanceRequests((prev) => {
         const existing = prev.find((request) => request.request_id === payload.request_id);
         if (existing) {
@@ -311,14 +410,23 @@ const BillingDashboard = ({ embedded = false }) => {
         }
         return [payload, ...prev];
       });
+      loadAssistanceRequests({ silent: true });
       toast.warning(`${payload.table_label || 'A table'} is requesting assistance`);
     };
     const handleAssistanceResolved = (payload) => {
       setAssistanceRequests((prev) => prev.filter((request) => request.request_id !== payload.request_id));
+      loadAssistanceRequests({ silent: true });
+    };
+    const handleItemChange = (payload) => {
+      if (payload?.source_order) upsertOrder(payload.source_order);
+      if (payload?.target_order) upsertOrder(payload.target_order);
+      if (payload?.message) toast.info(payload.message);
     };
 
     socket.on('new_order', upsertOrder);
     socket.on('order_status_updated', upsertOrder);
+    socket.on('order_item_cancelled', handleItemChange);
+    socket.on('order_item_reallocated', handleItemChange);
     socket.on('bill_requested', handleBillRequested);
     socket.on('assistance_requested', handleAssistanceRequested);
     socket.on('assistance_resolved', handleAssistanceResolved);
@@ -330,13 +438,15 @@ const BillingDashboard = ({ embedded = false }) => {
     return () => {
       socket.off('new_order', upsertOrder);
       socket.off('order_status_updated', upsertOrder);
+      socket.off('order_item_cancelled', handleItemChange);
+      socket.off('order_item_reallocated', handleItemChange);
       socket.off('bill_requested', handleBillRequested);
       socket.off('assistance_requested', handleAssistanceRequested);
       socket.off('assistance_resolved', handleAssistanceResolved);
       socket.off('order_deleted');
       socket.off('cash_drawer_updated', loadTransactionSummary);
     };
-  }, [socket, loadTransactionSummary]);
+  }, [socket, loadTransactionSummary, loadAssistanceRequests, playAssistanceBell, playBillRequestSound]);
 
   const resolveAssistanceRequest = async (requestId) => {
     if (!requestId || assistanceResolvingId) return;
@@ -345,6 +455,7 @@ const BillingDashboard = ({ embedded = false }) => {
     try {
       await api.patch(`/api/assistance-requests/${requestId}/resolve`, {}, { withCredentials: true });
       setAssistanceRequests((prev) => prev.filter((request) => request.request_id !== requestId));
+      loadAssistanceRequests({ silent: true });
       toast.success('Assistance request resolved');
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to resolve assistance request');
@@ -369,10 +480,18 @@ const BillingDashboard = ({ embedded = false }) => {
           customer_name: order.customer_name,
           order_type: order.order_type || 'dine_in',
           bill_requested: Boolean(order.bill_requested),
+          bill_requested_at: order.bill_requested_at,
           orders: [],
         };
       }
       accumulator[key].bill_requested = accumulator[key].bill_requested || Boolean(order.bill_requested);
+      if (order.bill_requested && order.bill_requested_at) {
+        const currentRequestedAt = getTimestampMs(accumulator[key].bill_requested_at);
+        const nextRequestedAt = getTimestampMs(order.bill_requested_at);
+        if (!currentRequestedAt || nextRequestedAt > currentRequestedAt) {
+          accumulator[key].bill_requested_at = order.bill_requested_at;
+        }
+      }
       accumulator[key].orders.push(order);
       return accumulator;
     }, {});
@@ -399,6 +518,109 @@ const BillingDashboard = ({ embedded = false }) => {
     if (!selectedGroup) return null;
     return activeReadyGroups.find((group) => group.table_id === selectedGroup.table_id) || selectedGroup;
   }, [activeReadyGroups, selectedGroup]);
+
+  useEffect(() => {
+    const activeKeys = new Set();
+
+    const scheduleAssistanceReminder = (request) => {
+      const key = request.request_id;
+      if (!key || assistanceReminderTimersRef.current.has(key)) return;
+
+      const timerId = window.setTimeout(() => {
+        assistanceReminderTimersRef.current.delete(key);
+        setAssistanceRequests((currentRequests) => {
+          const activeRequest = currentRequests.find((item) => item.request_id === key);
+          if (activeRequest) {
+            playAssistanceBell();
+            assistanceReminderRef.current.set(key, Date.now());
+            toast.warning(`${activeRequest.table_label || 'A table'} is still requesting assistance`);
+            scheduleAssistanceReminder(activeRequest);
+          }
+          return currentRequests;
+        });
+      }, NOTIFICATION_REMINDER_MS);
+
+      assistanceReminderTimersRef.current.set(key, timerId);
+    };
+
+    assistanceRequests.forEach((request) => {
+      const key = request.request_id;
+      if (!key) return;
+      activeKeys.add(key);
+      if (!assistanceReminderRef.current.has(key)) {
+        assistanceReminderRef.current.set(key, getTimestampMs(request.requested_at) || Date.now());
+      }
+      scheduleAssistanceReminder(request);
+    });
+
+    Array.from(assistanceReminderTimersRef.current.keys()).forEach((key) => {
+      if (!activeKeys.has(key)) {
+        window.clearTimeout(assistanceReminderTimersRef.current.get(key));
+        assistanceReminderTimersRef.current.delete(key);
+        assistanceReminderRef.current.delete(key);
+      }
+    });
+  }, [assistanceRequests, playAssistanceBell]);
+
+  useEffect(() => {
+    const activeKeys = new Set();
+
+    const scheduleBillReminder = (group) => {
+      const key = group.table_id || group.orders.map((order) => order.order_id).join('-');
+      if (!key || billReminderTimersRef.current.has(key)) return;
+
+      const timerId = window.setTimeout(() => {
+        billReminderTimersRef.current.delete(key);
+        setOrders((currentOrders) => {
+          const stillActiveOrders = currentOrders.filter((order) => (
+            (order.table_id === group.table_id || group.orders.some((groupOrder) => groupOrder.order_id === order.order_id))
+            && order.bill_requested
+            && order.payment_status !== 'completed'
+            && isReadyForBilling(order)
+          ));
+
+          if (stillActiveOrders.length > 0) {
+            playBillRequestSound();
+            billReminderRef.current.set(key, Date.now());
+            toast.info(`Bill is still requested for ${group.table_label || 'a table'}`);
+            scheduleBillReminder({
+              ...group,
+              orders: stillActiveOrders,
+            });
+          }
+
+          return currentOrders;
+        });
+      }, NOTIFICATION_REMINDER_MS);
+
+      billReminderTimersRef.current.set(key, timerId);
+    };
+
+    activeReadyGroups
+      .filter((group) => group.bill_requested)
+      .forEach((group) => {
+        const key = group.table_id || group.orders.map((order) => order.order_id).join('-');
+        if (!key) return;
+        activeKeys.add(key);
+        if (!billReminderRef.current.has(key)) {
+          billReminderRef.current.set(key, getTimestampMs(group.bill_requested_at) || Date.now());
+        }
+        scheduleBillReminder(group);
+      });
+
+    Array.from(billReminderTimersRef.current.keys()).forEach((key) => {
+      if (!activeKeys.has(key)) {
+        window.clearTimeout(billReminderTimersRef.current.get(key));
+        billReminderTimersRef.current.delete(key);
+        billReminderRef.current.delete(key);
+      }
+    });
+  }, [activeReadyGroups, playBillRequestSound]);
+
+  useEffect(() => () => {
+    clearReminderTimers(assistanceReminderTimersRef);
+    clearReminderTimers(billReminderTimersRef);
+  }, []);
 
   const calculateBill = (group) => {
     if (!group) {
@@ -565,6 +787,36 @@ const BillingDashboard = ({ embedded = false }) => {
         <div class="strong"><span>Total</span><span>Rs. ${total.toFixed(2)}</span></div>
       </div>
     `, `${restaurantName} - ${bill.bill_id}`);
+  };
+
+  const openDeleteBillDialog = (bill) => {
+    setDeletingBill(bill);
+    setDeleteBillReason('');
+  };
+
+  const deleteCompletedBill = async () => {
+    if (!deletingBill?.bill_id) return;
+    const reason = deleteBillReason.trim();
+    if (!reason) {
+      toast.error('Please enter a reason before deleting the bill.');
+      return;
+    }
+
+    setDeleteBillLoading(deletingBill.bill_id);
+    try {
+      await api.delete(`/api/payments/completed/${encodeURIComponent(deletingBill.bill_id)}`, {
+        data: { reason },
+        withCredentials: true,
+      });
+      toast.success('Bill deleted.');
+      setDeletingBill(null);
+      setDeleteBillReason('');
+      await Promise.all([loadTransactionSummary(), refreshOrders()]);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to delete bill');
+    } finally {
+      setDeleteBillLoading('');
+    }
   };
 
   const submitCounterOrder = async (shouldPrint = false) => {
@@ -793,6 +1045,55 @@ const BillingDashboard = ({ embedded = false }) => {
     }
   };
 
+  const cancelEditingItem = async (item, itemIndex) => {
+    if (!editingOrder) return;
+
+    const billableQuantity = getBillableQuantity(item);
+    if (billableQuantity <= 0) {
+      toast.error('This item is already cancelled.');
+      return;
+    }
+
+    const quantityText = window.prompt(`Cancel how many ${item.name}?`, String(billableQuantity));
+    if (quantityText === null) return;
+    const quantity = Number(quantityText);
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > billableQuantity) {
+      toast.error(`Enter a quantity between 1 and ${billableQuantity}.`);
+      return;
+    }
+
+    const reason = window.prompt('Cancellation reason', 'Customer cancelled verbally');
+    if (reason === null) return;
+
+    const loadingKey = `${editingOrder.order_id}-${itemIndex}`;
+    setCancellingItemKey(loadingKey);
+    try {
+      const response = await api.patch(`/api/orders/${editingOrder.order_id}/items/${itemIndex}/cancel`, {
+        quantity,
+        reason: reason || 'Customer cancelled verbally',
+        allow_reallocation: true,
+      });
+
+      const { source_order: sourceOrder, target_order: targetOrder, message } = response.data || {};
+      setOrders((prev) => prev
+        .map((order) => {
+          if (sourceOrder && order.order_id === sourceOrder.order_id) return sourceOrder;
+          if (targetOrder && order.order_id === targetOrder.order_id) return targetOrder;
+          return order;
+        })
+        .filter((order) => !['cancelled'].includes(order.status)));
+      if (sourceOrder) {
+        setEditingOrder(sourceOrder);
+        setEditingItems(sourceOrder.items || []);
+      }
+      toast.success(message || 'Item cancelled');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to cancel item');
+    } finally {
+      setCancellingItemKey('');
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: '#F3F4F6' }}>
@@ -986,22 +1287,22 @@ const BillingDashboard = ({ embedded = false }) => {
                     </div>
                   </div>
                 </DialogHeader>
-                <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-y-auto md:grid-cols-[240px,minmax(0,1fr)] xl:grid-cols-[240px,minmax(0,1fr),290px] xl:overflow-hidden 2xl:grid-cols-[270px,minmax(0,1fr),310px]">
-                  <div className="border-b border-border bg-white md:border-b-0 md:border-r">
-                    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4">
-                      <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
-                        <div className="mb-3 flex items-center gap-2">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">1</span>
-                          <h3 className="text-base font-bold">Order Type</h3>
+                <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-y-auto sm:grid-cols-[210px,minmax(0,1fr)] sm:grid-rows-[minmax(0,1fr),auto] sm:overflow-hidden md:grid-cols-[220px,minmax(0,1fr)] xl:grid-cols-[240px,minmax(0,1fr),290px] xl:grid-rows-1 2xl:grid-cols-[270px,minmax(0,1fr),310px]">
+                  <div className="border-b border-border bg-white sm:border-b-0 sm:border-r">
+                    <div className="flex h-full min-h-0 flex-col gap-2 overflow-y-auto px-3 py-3 xl:gap-3 xl:px-4 xl:py-4">
+                      <div className="rounded-xl border border-border bg-white p-2.5 shadow-sm xl:rounded-2xl xl:p-3">
+                        <div className="mb-2 flex items-center gap-2 xl:mb-3">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-600 xl:h-6 xl:w-6 xl:text-xs">1</span>
+                          <h3 className="text-sm font-bold xl:text-base">Order Type</h3>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-2 gap-2 xl:gap-3">
                           <button
                             type="button"
                             onClick={() => setCounterOrderType('dine_in')}
-                            className={`rounded-xl border p-3 text-center transition-colors ${counterOrderType === 'dine_in' ? 'border-primary bg-orange-50 text-primary shadow-sm' : 'border-border bg-white text-slate-800 hover:bg-slate-50'}`}
+                            className={`rounded-xl border px-2 py-2 text-center text-sm transition-colors xl:p-3 ${counterOrderType === 'dine_in' ? 'border-primary bg-orange-50 text-primary shadow-sm' : 'border-border bg-white text-slate-800 hover:bg-slate-50'}`}
                           >
-                            <ShoppingCart className="mx-auto h-6 w-6" />
-                            <span className="mt-1.5 block font-bold">Dine-In</span>
+                            <ShoppingCart className="mx-auto h-5 w-5 xl:h-6 xl:w-6" />
+                            <span className="mt-1 block font-bold xl:mt-1.5">Dine-In</span>
                           </button>
                           <button
                             type="button"
@@ -1009,27 +1310,27 @@ const BillingDashboard = ({ embedded = false }) => {
                               setCounterOrderType('takeaway');
                               setCounterTableId('');
                             }}
-                            className={`rounded-xl border p-3 text-center transition-colors ${counterOrderType === 'takeaway' ? 'border-primary bg-orange-50 text-primary shadow-sm' : 'border-border bg-white text-slate-800 hover:bg-slate-50'}`}
+                            className={`rounded-xl border px-2 py-2 text-center text-sm transition-colors xl:p-3 ${counterOrderType === 'takeaway' ? 'border-primary bg-orange-50 text-primary shadow-sm' : 'border-border bg-white text-slate-800 hover:bg-slate-50'}`}
                           >
-                            <Wallet className="mx-auto h-6 w-6" />
-                            <span className="mt-1.5 block font-bold">Takeaway</span>
+                            <Wallet className="mx-auto h-5 w-5 xl:h-6 xl:w-6" />
+                            <span className="mt-1 block font-bold xl:mt-1.5">Takeaway</span>
                           </button>
                         </div>
                       </div>
 
                       {counterOrderType === 'dine_in' && (
-                        <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
-                          <div className="mb-3 flex items-center gap-2">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">2</span>
-                            <h3 className="text-base font-bold">Select Table</h3>
+                        <div className="rounded-xl border border-border bg-white p-2.5 shadow-sm xl:rounded-2xl xl:p-3">
+                          <div className="mb-2 flex items-center gap-2 xl:mb-3">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-600 xl:h-6 xl:w-6 xl:text-xs">2</span>
+                            <h3 className="text-sm font-bold xl:text-base">Select Table</h3>
                           </div>
-                          <div className="grid grid-cols-4 gap-2">
+                          <div className="grid grid-cols-3 gap-2">
                             {tables.slice(0, 12).map((table) => (
                               <button
                                 key={table.table_id}
                                 type="button"
                                 onClick={() => setCounterTableId(table.table_id)}
-                                className={`h-10 rounded-xl border text-sm font-bold transition-colors ${counterTableId === table.table_id ? 'border-primary bg-primary text-white shadow-sm' : 'border-border bg-white text-slate-900 hover:bg-slate-50'}`}
+                                className={`h-9 rounded-xl border text-sm font-bold transition-colors xl:h-10 ${counterTableId === table.table_id ? 'border-primary bg-primary text-white shadow-sm' : 'border-border bg-white text-slate-900 hover:bg-slate-50'}`}
                               >
                                 T{table.table_number}
                               </button>
@@ -1052,33 +1353,33 @@ const BillingDashboard = ({ embedded = false }) => {
                         </div>
                       )}
 
-                      <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
-                        <div className="grid gap-3">
+                      <div className="rounded-xl border border-border bg-white p-2.5 shadow-sm xl:rounded-2xl xl:p-3">
+                        <div className="grid gap-2 xl:gap-3">
                           <div className="space-y-2">
-                            <Label htmlFor="counter-customer-name">Customer Name (Optional)</Label>
+                            <Label htmlFor="counter-customer-name" className="text-xs xl:text-sm">Customer Name</Label>
                           <Input
                             id="counter-customer-name"
                             value={counterCustomerName}
                             onChange={(event) => setCounterCustomerName(event.target.value)}
                             placeholder="Enter customer name"
-                            className="rounded-full"
+                            className="h-9 rounded-full xl:h-10"
                           />
                           </div>
 
                           <div className="space-y-2">
-                            <Label htmlFor="counter-phone">Phone Number (Optional)</Label>
+                            <Label htmlFor="counter-phone" className="text-xs xl:text-sm">Phone Number</Label>
                           <Input
                             id="counter-phone"
                             value={counterPhone}
                             onChange={(event) => setCounterPhone(event.target.value)}
                             placeholder="Enter phone number"
-                            className="rounded-full"
+                            className="h-9 rounded-full xl:h-10"
                           />
                           </div>
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
+                      <div className="hidden rounded-2xl border border-border bg-white p-3 shadow-sm xl:block">
                         <h3 className="text-base font-bold">Selected</h3>
                         <div className="mt-3 space-y-2 text-sm">
                           <div className="flex items-center justify-between gap-3">
@@ -1096,14 +1397,14 @@ const BillingDashboard = ({ embedded = false }) => {
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700">
+                      <div className="hidden rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 xl:block">
                         Tip: Tap any item card to add instantly. Use + for repeat items.
                       </div>
                     </div>
                   </div>
 
                   <div className="flex min-h-0 flex-col bg-white xl:border-r">
-                    <div className="shrink-0 space-y-3 border-b border-border px-4 py-3 sm:px-5">
+                    <div className="shrink-0 space-y-2 border-b border-border px-3 py-3 sm:px-4 xl:space-y-3 xl:px-5">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <div className="relative flex-1">
                           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1111,7 +1412,7 @@ const BillingDashboard = ({ embedded = false }) => {
                             value={counterSearch}
                             onChange={(event) => setCounterSearch(event.target.value)}
                             placeholder="Search items (e.g. Pizza, Burger, Coke...)"
-                            className="h-11 rounded-xl pl-11 pr-11 text-base"
+                            className="h-10 rounded-xl pl-11 pr-11 text-sm xl:h-11 xl:text-base"
                           />
                           {counterSearch && (
                             <button
@@ -1125,7 +1426,7 @@ const BillingDashboard = ({ embedded = false }) => {
                         </div>
 
                         <Select value={counterCategory} onValueChange={setCounterCategory}>
-                          <SelectTrigger className="h-11 w-full rounded-xl border-slate-200 bg-white sm:w-44">
+                          <SelectTrigger className="h-10 w-full rounded-xl border-slate-200 bg-white text-sm sm:w-40 xl:h-11 xl:w-44">
                             <SelectValue placeholder="Filter" />
                           </SelectTrigger>
                           <SelectContent>
@@ -1143,7 +1444,7 @@ const BillingDashboard = ({ embedded = false }) => {
                         <Button
                           type="button"
                           variant={counterCategory === 'all' ? 'default' : 'outline'}
-                          className="shrink-0 rounded-xl px-6"
+                          className="h-9 shrink-0 rounded-xl px-4 text-sm xl:px-6"
                           onClick={() => setCounterCategory('all')}
                         >
                           All
@@ -1153,7 +1454,7 @@ const BillingDashboard = ({ embedded = false }) => {
                             key={category.category_id}
                             type="button"
                             variant={counterCategory === category.category_id ? 'default' : 'outline'}
-                            className="shrink-0 rounded-xl px-4"
+                            className="h-9 shrink-0 rounded-xl px-3 text-sm xl:px-4"
                             onClick={() => setCounterCategory(category.category_id)}
                           >
                             {category.name}
@@ -1166,7 +1467,7 @@ const BillingDashboard = ({ embedded = false }) => {
                       </p>
                     </div>
 
-                    <div className="max-h-[68dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 lg:max-h-[70dvh] 2xl:max-h-none">
+                    <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4 xl:px-5">
                       {counterCatalogLoading ? (
                         <div className="rounded-[24px] border border-dashed border-border p-10 text-center">
                           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
@@ -1188,13 +1489,16 @@ const BillingDashboard = ({ embedded = false }) => {
                                 key={item.item_id}
                                 className={`overflow-hidden rounded-2xl border-border transition-colors ${cartItem ? 'border-primary/40 bg-[#FFF8F4]' : 'bg-white'}`}
                               >
-                                <CardContent className="flex h-full flex-col p-3">
+                                <CardContent className="flex h-full flex-col p-2.5 xl:p-3">
                                   <button type="button" className="min-w-0 text-left" onClick={() => addCounterItem(item)}>
-                                    <p className="min-h-[2.6rem] overflow-hidden text-base font-semibold leading-snug text-slate-950">{item.name}</p>
+	                                    <div className="flex min-h-[2.6rem] items-start gap-2 overflow-hidden">
+	                                      <DietIndicator item={item} className="mt-1" />
+	                                      <p className="line-clamp-2 text-sm font-semibold leading-snug text-slate-950 xl:text-base">{item.name}</p>
+	                                    </div>
                                   </button>
 
                                   <div className="mt-3 flex items-center justify-between gap-3">
-                                    <span className="text-lg font-bold text-primary">{formatCurrency(item.price)}</span>
+                                    <span className="text-base font-bold text-primary xl:text-lg">{formatCurrency(item.price)}</span>
                                     {cartItem && (
                                       <Badge className="rounded-full bg-emerald-100 text-emerald-700">{cartItem.quantity}</Badge>
                                     )}
@@ -1204,7 +1508,7 @@ const BillingDashboard = ({ embedded = false }) => {
                                     type="button"
                                     onClick={() => addCounterItem(item)}
                                     variant="outline"
-                                    className="mt-3 h-10 w-full rounded-xl border-orange-100 bg-orange-50 text-base font-bold text-primary hover:bg-orange-100"
+                                    className="mt-2 h-9 w-full rounded-xl border-orange-100 bg-orange-50 text-sm font-bold text-primary hover:bg-orange-100 xl:mt-3 xl:h-10 xl:text-base"
                                   >
                                     <Plus className="mr-2 h-4 w-4" />
                                     Add
@@ -1218,12 +1522,12 @@ const BillingDashboard = ({ embedded = false }) => {
                     </div>
                   </div>
 
-                  <div className="flex min-h-0 flex-col overflow-hidden border-t border-border bg-white md:col-span-2 xl:col-span-1 xl:border-t-0">
-                    <div className="shrink-0 border-b border-border px-4 py-3 sm:px-5">
+                  <div className="flex min-h-0 flex-col overflow-hidden border-t border-border bg-white sm:col-span-2 sm:max-h-[30dvh] xl:col-span-1 xl:max-h-none xl:border-t-0">
+                    <div className="shrink-0 border-b border-border px-3 py-2.5 sm:px-4 xl:px-5 xl:py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-center gap-3">
                           <ShoppingCart className="h-5 w-5" />
-                          <h3 className="text-lg font-bold tracking-tight">Your Order ({cartItemCount})</h3>
+                          <h3 className="text-base font-bold tracking-tight xl:text-lg">Your Order ({cartItemCount})</h3>
                         </div>
                         {counterCart.length > 0 && (
                           <Button
@@ -1242,13 +1546,13 @@ const BillingDashboard = ({ embedded = false }) => {
                       </p>
                     </div>
 
-                    <div className="max-h-[42dvh] min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 lg:max-h-[34dvh] xl:max-h-none">
-                      <div className="space-y-4">
+                    <div className="max-h-[32dvh] min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:max-h-[14dvh] sm:px-4 xl:max-h-none xl:px-5 xl:py-4">
+                      <div className="space-y-3 xl:space-y-4">
                         {counterCart.length === 0 && (
-                          <div className="rounded-2xl border border-dashed border-border bg-white p-5 text-center">
-                            <ShoppingCart className="mx-auto h-10 w-10 text-muted-foreground" />
-                            <p className="mt-3 text-sm font-medium text-foreground">No items added yet</p>
-                          <p className="text-sm text-muted-foreground">
+                          <div className="rounded-2xl border border-dashed border-border bg-white p-3 text-center xl:p-5">
+                            <ShoppingCart className="mx-auto h-8 w-8 text-muted-foreground xl:h-10 xl:w-10" />
+                            <p className="mt-2 text-sm font-medium text-foreground xl:mt-3">No items added yet</p>
+                          <p className="hidden text-sm text-muted-foreground xl:block">
                               Choose items from the center panel to start this counter order.
                           </p>
                           </div>
@@ -1309,8 +1613,8 @@ const BillingDashboard = ({ embedded = false }) => {
                       </div>
                     </div>
 
-                    <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] sm:px-5">
-                      <div className="mb-3 flex items-center justify-between text-lg font-bold">
+                    <div className="sticky bottom-0 shrink-0 border-t border-border bg-white px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] sm:px-4 xl:px-5 xl:py-3">
+                      <div className="mb-2 flex items-center justify-between text-base font-bold xl:mb-3 xl:text-lg">
                         <span>Total</span>
                         <span className="text-primary">{formatCurrency(counterCartTotal)}</span>
                       </div>
@@ -1318,7 +1622,7 @@ const BillingDashboard = ({ embedded = false }) => {
                         type="button"
                         disabled={counterSubmitting || counterCart.length === 0}
                         onClick={() => submitCounterOrder(false)}
-                        className="h-12 w-full rounded-xl bg-primary text-base font-bold hover:bg-[#C54E2C]"
+                        className="h-11 w-full rounded-xl bg-primary text-base font-bold hover:bg-[#C54E2C] xl:h-12"
                       >
                         {counterSubmitting ? (
                           <>
@@ -1548,87 +1852,103 @@ const BillingDashboard = ({ embedded = false }) => {
                   const bill = calculateBill(group);
                   return (
                     <Card key={group.table_id} className="rounded-2xl border-slate-200 shadow-none">
-                      <CardHeader>
+                      <CardHeader className="px-4 py-3">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <CardTitle className="text-lg">{group.table_label}</CardTitle>
-                            <p className="text-sm text-muted-foreground">{group.customer_name}</p>
+                            <CardTitle className="text-base">{group.table_label}</CardTitle>
+                            <p className="text-xs text-muted-foreground">{group.customer_name}</p>
                           </div>
                           <div className="flex flex-wrap justify-end gap-2">
                             {group.bill_requested && (
-                              <span className="bill-request-flicker rounded-full bg-red-50 px-3 py-1 text-xs font-black uppercase tracking-[0.12em] text-red-600">
+                              <span className="bill-request-flicker rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.1em] text-red-600">
                                 Bill Requested
                               </span>
                             )}
-                            <Badge className="rounded-full bg-emerald-100 text-emerald-700">
+                            <Badge className="rounded-full bg-emerald-100 text-xs text-emerald-700">
                               {group.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
                             </Badge>
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent className="space-y-4">
+                      <CardContent className="space-y-3 px-4 pb-4 pt-0">
                         <Accordion type="single" collapsible className="space-y-2">
                           {group.orders.map((order) => (
                             <AccordionItem
                               key={order.order_id}
                               value={order.order_id}
-                              className="overflow-hidden rounded-xl border border-border bg-accent/60 px-0"
+                              className="overflow-hidden rounded-xl border border-border bg-white px-0"
                             >
-                              <div className="space-y-3 p-3">
-                                <div className="flex flex-wrap gap-2">
+                              <div className="flex items-center gap-2 p-2.5">
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-semibold text-slate-900">{order.order_id}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {getOrderBillableItemCount(order)} item{getOrderBillableItemCount(order) !== 1 ? 's' : ''} • {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </p>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1.5">
                                   <Button
                                     type="button"
                                     variant="outline"
-                                    size="sm"
-                                    className="h-10 rounded-full px-4 text-sm font-semibold shadow-sm"
+                                    size="icon"
+                                    className="h-9 w-9 rounded-full shadow-sm"
                                     onClick={() => openEditOrder(order)}
+                                    title="Edit order"
+                                    aria-label={`Edit order ${order.order_id}`}
                                   >
-                                    <Pencil className="mr-1 h-3.5 w-3.5" />
-                                    Edit
+                                    <Pencil className="h-4 w-4" />
                                   </Button>
                                   <Button
                                     type="button"
                                     variant="outline"
-                                    size="sm"
-                                    className="h-10 rounded-full px-4 text-sm font-semibold shadow-sm"
+                                    size="icon"
+                                    className="h-9 w-9 rounded-full shadow-sm"
                                     onClick={() => printOrderTicket(order)}
+                                    title="Print order"
+                                    aria-label={`Print order ${order.order_id}`}
                                   >
-                                    <Printer className="mr-1 h-3.5 w-3.5" />
-                                    Print
+                                    <Printer className="h-4 w-4" />
                                   </Button>
-                                  <AccordionTrigger className="h-10 flex-none rounded-full border border-input bg-background px-4 py-0 text-sm font-semibold text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground hover:no-underline [&>svg]:ml-2 [&>svg]:h-5 [&>svg]:w-5">
+                                  <AccordionTrigger className="h-9 flex-none rounded-full border border-input bg-background px-3 py-0 text-xs font-semibold text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground hover:no-underline [&>svg]:ml-1.5 [&>svg]:h-4 [&>svg]:w-4">
                                     Details
                                   </AccordionTrigger>
                                 </div>
-                                <div className="min-w-0 rounded-lg bg-white/70 px-3 py-2">
-                                  <p className="break-all font-medium">{order.order_id}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {order.items.length} item{order.items.length > 1 ? 's' : ''} • {new Date(order.created_at).toLocaleString()}
-                                  </p>
-                                </div>
                               </div>
-                              <AccordionContent className="px-3 pb-3 pt-0">
+                              <AccordionContent className="border-t bg-slate-50/60 px-2.5 pb-2.5 pt-2">
                                 <div className="space-y-2">
-                                  {(order.items || []).map((item, index) => (
-                                    <div
-                                      key={`${order.order_id}-bill-item-${index}`}
-                                      className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm"
-                                    >
-                                      <span className="min-w-0 truncate">
-                                        {item.quantity}x {item.name}
-                                      </span>
-                                      <span className="shrink-0 font-medium">
-                                        {formatCurrency(Number(item.price || 0) * Number(item.quantity || 0))}
-                                      </span>
-                                    </div>
-                                  ))}
+                                  {(order.items || []).map((item, index) => {
+                                    const cancelledQuantity = getCancelledQuantity(item);
+                                    const billableQuantity = getBillableQuantity(item);
+                                    return (
+                                      <div
+                                        key={`${order.order_id}-bill-item-${index}`}
+                                        className={`flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-sm ${billableQuantity <= 0 ? 'opacity-70' : ''}`}
+                                      >
+                                        <span className={`min-w-0 truncate ${billableQuantity <= 0 ? 'line-through' : ''}`}>
+                                          {billableQuantity}x {item.name}
+                                          {cancelledQuantity > 0 && (
+                                            <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-bold text-red-600">
+                                              {cancelledQuantity} cancelled
+                                            </span>
+                                          )}
+                                          {isLossItem(item) && (
+                                            <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
+                                              Loss
+                                            </span>
+                                          )}
+                                        </span>
+                                        <span className="shrink-0 font-medium">
+                                          {formatCurrency(Number(item.price || 0) * billableQuantity)}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </AccordionContent>
                             </AccordionItem>
                           ))}
                         </Accordion>
 
-                        <div className="space-y-2 border-t pt-2">
+                        <div className="space-y-1.5 border-t pt-2 text-sm">
                           <div className="flex justify-between">
                             <span>Subtotal</span>
                             <span>{formatCurrency(bill.subtotal)}</span>
@@ -1660,7 +1980,7 @@ const BillingDashboard = ({ embedded = false }) => {
                               placeholder="0"
                             />
                           </div>
-                          <div className="flex justify-between border-t pt-2 text-lg font-bold">
+                          <div className="flex justify-between border-t pt-2 text-base font-bold">
                             <span>Total</span>
                             <span className="text-primary">{formatCurrency(bill.total)}</span>
                           </div>
@@ -1683,7 +2003,7 @@ const BillingDashboard = ({ embedded = false }) => {
                                   setPaymentMethod(option.value);
                                   setPaymentMethodError('');
                                 }}
-                                className={`rounded-full border px-3 py-3 text-sm font-semibold transition-colors ${
+                              className={`rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${
                                   paymentMethod === option.value
                                     ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-sm'
                                     : 'border-border bg-white text-slate-700 hover:bg-slate-50'
@@ -1796,31 +2116,31 @@ const BillingDashboard = ({ embedded = false }) => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                 {activeCounterOrders.map((order) => (
-                  <Card key={order.order_id} className="rounded-2xl border-border">
-                    <CardHeader>
+                  <Card key={order.order_id} className="rounded-2xl border-border shadow-sm">
+                    <CardHeader className="px-4 py-3">
                       <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <CardTitle className="text-lg">{order.table_label || order.order_id}</CardTitle>
-                          <p className="text-sm text-muted-foreground">{order.customer_name}</p>
+                        <div className="min-w-0">
+                          <CardTitle className="truncate text-base">{order.table_label || order.order_id}</CardTitle>
+                          <p className="truncate text-xs text-muted-foreground">{order.customer_name}</p>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Badge className="rounded-full bg-accent text-foreground">
+                        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                          <Badge className="rounded-full bg-accent px-2 py-0.5 text-xs text-foreground">
                             {order.order_type === 'takeaway' ? 'Takeaway' : 'Dine-In'}
                           </Badge>
-                          <Badge className="rounded-full bg-slate-100 text-slate-700">
+                          <Badge className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                             {order.status}
                           </Badge>
                         </div>
                       </div>
                     </CardHeader>
-                    <CardContent className="space-y-3">
+                    <CardContent className="space-y-2.5 px-4 pb-4 pt-0">
                       {(order.items || []).map((item, index) => (
-                        <div key={`${order.order_id}-${index}`} className="flex items-center justify-between rounded-xl bg-accent/60 p-3 text-sm">
-                          <span>{item.quantity}x {item.name}</span>
-                          <span>{formatCurrency(item.quantity * item.price)}</span>
+                        <div key={`${order.order_id}-${index}`} className="flex items-center justify-between gap-3 rounded-lg bg-accent/60 px-3 py-2 text-sm">
+                          <span className="min-w-0 truncate">{item.quantity}x {item.name}</span>
+                          <span className="shrink-0 font-medium">{formatCurrency(item.quantity * item.price)}</span>
                         </div>
                       ))}
-                      <div className="flex items-center justify-between border-t pt-3">
+                      <div className="flex items-center justify-between border-t pt-2 text-sm">
                         <span className="font-medium">Order Total</span>
                         <span className="font-bold text-primary">{formatCurrency(order.total)}</span>
                       </div>
@@ -1828,20 +2148,22 @@ const BillingDashboard = ({ embedded = false }) => {
                         <Button
                           type="button"
                           variant="outline"
-                          className="flex-1 rounded-full"
+                          size="sm"
+                          className="h-9 flex-1 rounded-full text-sm"
                           onClick={() => printOrderTicket(order)}
                         >
-                          <Printer className="mr-2 h-4 w-4" />
-                          Print Order
+                          <Printer className="mr-1.5 h-4 w-4" />
+                          Print
                         </Button>
                         <Button
                           type="button"
                           variant="outline"
-                          className="flex-1 rounded-full"
+                          size="sm"
+                          className="h-9 flex-1 rounded-full text-sm"
                           onClick={() => openEditOrder(order)}
                         >
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Edit Order
+                          <Pencil className="mr-1.5 h-4 w-4" />
+                          Edit
                         </Button>
                       </div>
                     </CardContent>
@@ -1922,10 +2244,26 @@ const BillingDashboard = ({ embedded = false }) => {
                     <span className="text-sm">Payment Mode</span>
                     <span className="text-sm font-medium">{formatPaymentMethod(bill.payment?.payment_method)}</span>
                   </div>
-                  <Button onClick={() => printBill(bill)} variant="outline" className="w-full rounded-full">
-                    <Receipt className="mr-2 h-4 w-4" />
-                    Print Bill
-                  </Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button onClick={() => printBill(bill)} variant="outline" className="rounded-full">
+                      <Receipt className="mr-2 h-4 w-4" />
+                      Print Bill
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={deleteBillLoading === bill.bill_id}
+                      className="rounded-full text-red-600 hover:bg-red-50 hover:text-red-700"
+                      onClick={() => openDeleteBillDialog(bill)}
+                    >
+                      {deleteBillLoading === bill.bill_id ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="mr-2 h-4 w-4" />
+                      )}
+                      Delete
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -1945,6 +2283,68 @@ const BillingDashboard = ({ embedded = false }) => {
         </div>
       </div>
 
+      <Dialog open={Boolean(deletingBill)} onOpenChange={(open) => {
+        if (!open && !deleteBillLoading) {
+          setDeletingBill(null);
+          setDeleteBillReason('');
+        }
+      }}>
+        <DialogContent className="rounded-2xl sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Trash2 className="h-5 w-5" />
+              Delete Bill
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-800">
+              <p className="font-bold">This will remove {deletingBill?.bill_id} and its linked order details.</p>
+              <p className="mt-1">The reason is mandatory and will reflect in admin analytics.</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="billing-delete-bill-reason">Reason <span className="text-red-600">*</span></Label>
+              <Textarea
+                id="billing-delete-bill-reason"
+                value={deleteBillReason}
+                onChange={(event) => setDeleteBillReason(event.target.value)}
+                placeholder="Example: Wrong bill generated, duplicate bill, payment entered by mistake"
+                className="min-h-28 resize-none rounded-xl"
+                maxLength={500}
+              />
+              <p className="text-xs text-slate-500">{deleteBillReason.trim().length}/500 characters</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-xl font-semibold"
+                disabled={deleteBillLoading === deletingBill?.bill_id}
+                onClick={() => {
+                  setDeletingBill(null);
+                  setDeleteBillReason('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="h-11 rounded-xl font-semibold"
+                disabled={!deleteBillReason.trim() || deleteBillLoading === deletingBill?.bill_id}
+                onClick={deleteCompletedBill}
+              >
+                {deleteBillLoading === deletingBill?.bill_id ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-2 h-4 w-4" />
+                )}
+                Delete Bill
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(editingOrder)} onOpenChange={(open) => {
         if (!open) {
           setEditingOrder(null);
@@ -1956,12 +2356,35 @@ const BillingDashboard = ({ embedded = false }) => {
             <DialogTitle>Edit Order {editingOrder?.order_id}</DialogTitle>
           </DialogHeader>
           <div className="max-h-[70vh] space-y-3 overflow-y-auto py-2">
-            {editingItems.map((item) => (
-              <div key={item.item_id} className="space-y-2 rounded-xl border border-border p-3">
+            {editingItems.map((item, itemIndex) => {
+              const cancelledQuantity = getCancelledQuantity(item);
+              const billableQuantity = getBillableQuantity(item);
+              const loadingKey = `${editingOrder?.order_id}-${itemIndex}`;
+              return (
+              <div key={`${item.item_id}-${itemIndex}`} className={`space-y-2 rounded-xl border border-border p-3 ${billableQuantity <= 0 ? 'bg-red-50/50' : ''}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-medium">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">{formatCurrency(item.price)} each</p>
+                    <p className={`font-medium ${billableQuantity <= 0 ? 'line-through text-muted-foreground' : ''}`}>{item.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatCurrency(item.price)} each
+                      {cancelledQuantity > 0 && ` • ${cancelledQuantity} cancelled`}
+                    </p>
+                    {item.reallocated_to_order_id && (
+                      <p className="mt-1 text-xs font-bold text-emerald-700">
+                        Reallocated to {formatReallocationTarget(item)}
+                      </p>
+                    )}
+                    {item.reallocated_from_order_id && (
+                      <p className="mt-1 text-xs font-bold text-blue-700">
+                        Received from {item.reallocated_from_table_label || item.reallocated_from_order_id}
+                      </p>
+                    )}
+                    {isLossItem(item) && (
+                      <p className="mt-1 text-xs font-bold text-red-700">
+                        Marked as loss
+                        {item.loss_amount ? ` • ${formatCurrency(item.loss_amount)}` : ''}
+                      </p>
+                    )}
                   </div>
                   <Button
                     type="button"
@@ -1969,6 +2392,7 @@ const BillingDashboard = ({ embedded = false }) => {
                     size="sm"
                     className="rounded-full text-destructive"
                     onClick={() => updateEditingQuantity(item.item_id, 0)}
+                    disabled={billableQuantity <= 0}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -1980,25 +2404,38 @@ const BillingDashboard = ({ embedded = false }) => {
                     size="sm"
                     className="rounded-full"
                     onClick={() => updateEditingQuantity(item.item_id, item.quantity - 1)}
+                    disabled={billableQuantity <= 0}
                   >
                     -
                   </Button>
-                  <div className="min-w-[3rem] text-center font-semibold">{item.quantity}</div>
+                  <div className="min-w-[3rem] text-center font-semibold">{billableQuantity}</div>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     className="rounded-full"
                     onClick={() => updateEditingQuantity(item.item_id, item.quantity + 1)}
+                    disabled={billableQuantity <= 0}
                   >
                     +
                   </Button>
                   <div className="ml-auto font-semibold text-primary">
-                    {formatCurrency(item.quantity * item.price)}
+                    {formatCurrency(billableQuantity * item.price)}
                   </div>
                 </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full rounded-full border-red-200 text-red-600 hover:bg-red-50"
+                  disabled={billableQuantity <= 0 || cancellingItemKey === loadingKey}
+                  onClick={() => cancelEditingItem(item, itemIndex)}
+                >
+                  {cancellingItemKey === loadingKey ? 'Cancelling...' : 'Cancel Item'}
+                </Button>
               </div>
-            ))}
+              );
+            })}
             <Button onClick={saveOrderChanges} className="w-full rounded-full bg-primary hover:bg-[#C54E2C]">
               Save Order Changes
             </Button>

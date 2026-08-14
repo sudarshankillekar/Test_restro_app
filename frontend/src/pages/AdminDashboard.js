@@ -13,7 +13,8 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizeImageUrl } from '../lib/utils';
-import { ChefHat, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload, Pencil } from 'lucide-react';
+import DietIndicator, { DIET_TYPES } from '../components/DietIndicator';
+import { ChefHat, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload, Pencil, UserCheck, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
@@ -37,6 +38,15 @@ const STAFF_ROLE_OPTIONS = [
   { value: 'waiter', label: 'Waiter', accessKey: 'waiter_enabled' },
   { value: 'pos', label: 'POS Only', accessKey: 'pos_enabled' },
 ];
+const MENU_DIET_OPTIONS = ['veg', 'non_veg', 'egg', 'vegan'];
+const getCancelledQuantity = (item = {}) => Math.max(Number(item.cancelled_quantity || 0), 0);
+const getBillableQuantity = (item = {}) => Math.max(Number(item.quantity || 0) - getCancelledQuantity(item), 0);
+const isLossItem = (item = {}) => ['loss', 'no_matching_order_found'].includes(item.reallocation_status);
+const formatReallocationTarget = (item = {}) => {
+  if (!item.reallocated_to_order_id) return '';
+  const tableLabel = item.reallocated_to_table_label || item.reallocated_to_table || '';
+  return tableLabel ? `${tableLabel} (${item.reallocated_to_order_id})` : item.reallocated_to_order_id;
+};
 
 const normalizeAccessConfig = (config = {}) => ({
   ...DEFAULT_ACCESS_CONFIG,
@@ -66,6 +76,7 @@ const AdminDashboard = () => {
     price: '',
     description: '',
     image: '',
+    diet_type: 'veg',
   });
   const [categoryImportFile, setCategoryImportFile] = useState(null);
   const [itemImportFile, setItemImportFile] = useState(null);
@@ -79,6 +90,7 @@ const AdminDashboard = () => {
     price: '',
     description: '',
     image: '',
+    diet_type: 'veg',
   });
   
   // Tables state
@@ -107,6 +119,8 @@ const AdminDashboard = () => {
     parcel_charge: 0,
     access_config: DEFAULT_ACCESS_CONFIG,
   });
+  const [attendanceKioskLink, setAttendanceKioskLink] = useState('');
+  const [attendanceKioskLoading, setAttendanceKioskLoading] = useState(false);
 
   useEffect(() => {
     if (activeTab === 'analytics') fetchAnalytics();
@@ -114,6 +128,7 @@ const AdminDashboard = () => {
     if (activeTab === 'tables') fetchTables();
     if (activeTab === 'staff') fetchStaff();
     if (['tables', 'staff', 'settings'].includes(activeTab)) fetchRestaurantProfile();
+    if (activeTab === 'settings') fetchAttendanceKioskLink();
   }, [activeTab, period]);
 
   useEffect(() => {
@@ -199,7 +214,7 @@ const AdminDashboard = () => {
         { ...newItem, price: parseFloat(newItem.price) }
       );
       toast.success('Menu item created');
-      setNewItem({ name: '', category_id: '', price: '', description: '', image: '' });
+      setNewItem({ name: '', category_id: '', price: '', description: '', image: '', diet_type: 'veg' });
       fetchMenu();
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to create menu item'));
@@ -307,6 +322,7 @@ const AdminDashboard = () => {
       price: String(item.price ?? ''),
       description: item.description || '',
       image: item.image || '',
+      diet_type: item.diet_type || 'veg',
     });
   };
 
@@ -327,6 +343,7 @@ const AdminDashboard = () => {
         price: parseFloat(editingMenuItemDraft.price),
         description: editingMenuItemDraft.description,
         image: editingMenuItemDraft.image,
+        diet_type: editingMenuItemDraft.diet_type || 'veg',
       });
       toast.success('Menu item updated');
       setEditingMenuItem(null);
@@ -445,6 +462,38 @@ const AdminDashboard = () => {
       });
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to load restaurant settings'));
+    }
+  };
+
+  const fetchAttendanceKioskLink = async () => {
+    try {
+      const response = await api.get('/api/attendance/kiosk-link', { withCredentials: true });
+      setAttendanceKioskLink(response.data.url || '');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to load attendance kiosk link'));
+    }
+  };
+
+  const copyAttendanceKioskLink = async () => {
+    if (!attendanceKioskLink) return;
+    try {
+      await navigator.clipboard.writeText(attendanceKioskLink);
+      toast.success('Attendance kiosk link copied');
+    } catch (error) {
+      toast.error('Copy failed. Select and copy the link manually.');
+    }
+  };
+
+  const regenerateAttendanceKioskLink = async () => {
+    try {
+      setAttendanceKioskLoading(true);
+      const response = await api.post('/api/attendance/kiosk-link/regenerate', {}, { withCredentials: true });
+      setAttendanceKioskLink(response.data.url || '');
+      toast.success('New attendance kiosk link generated');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to regenerate attendance kiosk link'));
+    } finally {
+      setAttendanceKioskLoading(false);
     }
   };
 
@@ -606,15 +655,25 @@ const AdminDashboard = () => {
               )}
             </div>
           </div>
-          <Button
-            onClick={handleLogout}
-            variant="outline"
-            className="rounded-full border-border"
-            data-testid="logout-button"
-          >
-            <LogOut className="w-4 h-4 mr-2" />
-            Logout
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={() => navigate('/admin/attendance')}
+              variant="outline"
+              className="rounded-full border-border"
+            >
+              <UserCheck className="w-4 h-4 mr-2" />
+              Attendance
+            </Button>
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              className="rounded-full border-border"
+              data-testid="logout-button"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Logout
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -714,12 +773,33 @@ const AdminDashboard = () => {
                       {searchedOrder.payment?.bill_id && <span>Bill: {searchedOrder.payment.bill_id}</span>}
                     </div>
                     <div className="space-y-2 rounded-xl bg-white p-3">
-                      {(searchedOrder.items || []).map((item, idx) => (
-                        <div key={`${searchedOrder.order_id}-${idx}`} className="flex items-center justify-between gap-3 text-sm">
-                          <span className="min-w-0 truncate">{item.quantity}x {item.name}</span>
-                          <span className="font-medium">₹{(item.quantity * item.price).toFixed(2)}</span>
-                        </div>
-                      ))}
+	                      {(searchedOrder.items || []).map((item, idx) => {
+	                        const billableQuantity = getBillableQuantity(item);
+	                        const cancelledQuantity = getCancelledQuantity(item);
+	                        return (
+	                          <div key={`${searchedOrder.order_id}-${idx}`} className="flex items-center justify-between gap-3 text-sm">
+	                            <span className={`min-w-0 truncate ${billableQuantity <= 0 ? 'line-through text-muted-foreground' : ''}`}>
+	                              {billableQuantity}x {item.name}
+	                              {cancelledQuantity > 0 && (
+	                                <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-bold text-red-600">
+	                                  {cancelledQuantity} cancelled
+	                                </span>
+	                              )}
+	                              {isLossItem(item) && (
+	                                <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
+	                                  Loss
+	                                </span>
+	                              )}
+	                              {item.reallocated_to_order_id && (
+	                                <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">
+	                                  Reallocated to {formatReallocationTarget(item)}
+	                                </span>
+	                              )}
+	                            </span>
+	                            <span className="font-medium">₹{(billableQuantity * item.price).toFixed(2)}</span>
+	                          </div>
+	                        );
+	                      })}
                     </div>
                     <Button variant="destructive" className="rounded-full" onClick={deleteOrder}>
                       Delete Order
@@ -770,19 +850,32 @@ const AdminDashboard = () => {
                     <p className="text-4xl font-bold font-mono">{analytics.empty_tables || 0}</p>
                   </CardContent>
                 </Card>
-                <Card className="border-border rounded-2xl">
-                  <CardHeader>
-                    <CardTitle className="text-sm text-muted-foreground">Most Selling Item</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-xl font-bold">{analytics.best_seller?.name || 'No sales yet'}</p>
-                    {analytics.best_seller && (
-                      <p className="text-sm text-muted-foreground">{analytics.best_seller.quantity} qty sold</p>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            )}
+	                <Card className="border-border rounded-2xl">
+	                  <CardHeader>
+	                    <CardTitle className="text-sm text-muted-foreground">Most Selling Item</CardTitle>
+	                  </CardHeader>
+	                  <CardContent>
+	                    <p className="text-xl font-bold">{analytics.best_seller?.name || 'No sales yet'}</p>
+	                    {analytics.best_seller && (
+	                      <p className="text-sm text-muted-foreground">{analytics.best_seller.quantity} qty sold</p>
+	                    )}
+	                  </CardContent>
+	                </Card>
+	                <Card className="border-border rounded-2xl">
+	                  <CardHeader>
+	                    <CardTitle className="text-sm text-muted-foreground">Cancellation Loss</CardTitle>
+	                  </CardHeader>
+	                  <CardContent>
+	                    <p className="text-4xl font-bold font-mono text-rose-600">
+	                      ₹{(analytics.cancellation_loss?.amount || 0).toFixed(2)}
+	                    </p>
+	                    <p className="mt-1 text-sm text-muted-foreground">
+	                      {analytics.cancellation_loss?.quantity || 0} item{(analytics.cancellation_loss?.quantity || 0) === 1 ? '' : 's'} lost
+	                    </p>
+	                  </CardContent>
+	                </Card>
+	              </div>
+	            )}
 
             {analytics && (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
@@ -843,6 +936,53 @@ const AdminDashboard = () => {
                 </CardContent>
               </Card>
             )}
+
+            <Card className="border-border rounded-2xl">
+              <CardHeader>
+                <CardTitle>Deleted Bills Audit</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {analytics?.deleted_bills?.length ? (
+                  <div className="space-y-3">
+                    {analytics.deleted_bills.map((entry) => {
+                      const payment = entry.payment || {};
+                      const orderIds = entry.order_ids || [];
+                      return (
+                        <div key={entry.deleted_bill_id || `${entry.bill_id}-${entry.deleted_at}`} className="rounded-2xl border border-red-100 bg-red-50/60 p-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-semibold text-red-900">{entry.bill_id}</p>
+                                <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-red-700">
+                                  Deleted
+                                </span>
+                              </div>
+                              <p className="mt-1 break-words text-sm text-red-900">{entry.reason}</p>
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {entry.deleted_by_name || 'Staff'} • {new Date(entry.deleted_at).toLocaleString()}
+                              </p>
+                              {orderIds.length > 0 && (
+                                <p className="mt-1 break-words text-xs text-muted-foreground">
+                                  Orders: {orderIds.join(', ')}
+                                </p>
+                              )}
+                            </div>
+                            <div className="shrink-0 text-left sm:text-right">
+                              <p className="text-lg font-bold text-red-700">₹{Number(payment.total || 0).toFixed(2)}</p>
+                              <p className="text-xs font-bold text-muted-foreground">{(payment.payment_method || 'N/A').toUpperCase()}</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                    No deleted bills found for this period.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             <Card className="border-border rounded-2xl">
               <CardHeader>
@@ -990,19 +1130,37 @@ const AdminDashboard = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Price</Label>
-                    <Input
-                      type="number"
-                      value={newItem.price}
+	            <div className="space-y-2">
+	              <Label>Price</Label>
+	              <Input
+	                type="number"
+	                      value={newItem.price}
                       onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
                       className="rounded-full"
-                      data-testid="item-price-input"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Image URL</Label>
-                    <Input
+	                      data-testid="item-price-input"
+	                    />
+	                  </div>
+	                  <div className="space-y-2">
+	                    <Label>Section</Label>
+	                    <Select value={newItem.diet_type} onValueChange={(val) => setNewItem({ ...newItem, diet_type: val })}>
+	                      <SelectTrigger className="rounded-full" data-testid="item-diet-type-select">
+	                        <SelectValue />
+	                      </SelectTrigger>
+	                      <SelectContent>
+	                        {MENU_DIET_OPTIONS.map((dietType) => (
+	                          <SelectItem key={dietType} value={dietType}>
+	                            <span className="inline-flex items-center gap-2">
+	                              <DietIndicator item={{ diet_type: dietType }} />
+	                              {DIET_TYPES[dietType].label}
+	                            </span>
+	                          </SelectItem>
+	                        ))}
+	                      </SelectContent>
+	                    </Select>
+	                  </div>
+	                  <div className="space-y-2">
+	                    <Label>Image URL</Label>
+	                    <Input
                       value={newItem.image}
                       onChange={(e) => setNewItem({ ...newItem, image: e.target.value })}
                       className="rounded-full"
@@ -1067,7 +1225,10 @@ const AdminDashboard = () => {
                               <CardContent className="p-4 space-y-3 h-full flex flex-col">
                                 <div className="min-w-0">
                                   <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{category.name}</p>
-                                  <h3 className="font-semibold text-lg break-words">{item.name}</h3>
+	                                  <div className="flex items-start gap-2">
+	                                    <DietIndicator item={item} className="mt-1.5" />
+	                                    <h3 className="font-semibold text-lg break-words">{item.name}</h3>
+	                                  </div>
                                   <p className="text-sm text-muted-foreground break-words min-h-10">{item.description || 'No description added'}</p>
                                 </div>
                                 <div className="flex items-center justify-between gap-3 mt-auto">
@@ -1119,7 +1280,10 @@ const AdminDashboard = () => {
                         <Card key={item.item_id} className="border-border rounded-2xl h-full">
                           <CardContent className="p-4 space-y-3 h-full flex flex-col">
                             <div className="min-w-0">
-                              <h3 className="font-semibold text-lg break-words">{item.name}</h3>
+	                              <div className="flex items-start gap-2">
+	                                <DietIndicator item={item} className="mt-1.5" />
+	                                <h3 className="font-semibold text-lg break-words">{item.name}</h3>
+	                              </div>
                               <p className="text-sm text-muted-foreground break-words min-h-10">{item.description || 'No description added'}</p>
                             </div>
                             <div className="flex items-center justify-between gap-3 mt-auto">
@@ -1358,6 +1522,58 @@ const AdminDashboard = () => {
           <TabsContent value="settings" className="space-y-6">
             <Card className="border-border rounded-2xl">
               <CardHeader>
+                <CardTitle>Entrance Attendance Kiosk</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Open this link on the restaurant entrance tablet. It works without admin login and is tied only to this restaurant.
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    value={attendanceKioskLink}
+                    readOnly
+                    className="rounded-full bg-accent"
+                    placeholder="Kiosk link will appear here"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-full"
+                    onClick={copyAttendanceKioskLink}
+                    disabled={!attendanceKioskLink}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-full"
+                    onClick={() => attendanceKioskLink && window.open(attendanceKioskLink, '_blank', 'noopener,noreferrer')}
+                    disabled={!attendanceKioskLink}
+                  >
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    Open
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-full"
+                    onClick={regenerateAttendanceKioskLink}
+                    disabled={attendanceKioskLoading}
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Regenerate
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Regenerate the link if the tablet is lost or the link was shared outside the restaurant.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border rounded-2xl">
+              <CardHeader>
                 <CardTitle>Restaurant Settings</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1527,11 +1743,32 @@ const AdminDashboard = () => {
                 step="0.01"
                 value={editingMenuItemDraft.price}
                 onChange={(e) => setEditingMenuItemDraft({ ...editingMenuItemDraft, price: e.target.value })}
-                className="rounded-full"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Image URL</Label>
+	                className="rounded-full"
+	              />
+	            </div>
+	            <div className="space-y-2">
+	              <Label>Section</Label>
+	              <Select
+	                value={editingMenuItemDraft.diet_type}
+	                onValueChange={(val) => setEditingMenuItemDraft({ ...editingMenuItemDraft, diet_type: val })}
+	              >
+	                <SelectTrigger className="rounded-full">
+	                  <SelectValue />
+	                </SelectTrigger>
+	                <SelectContent>
+	                  {MENU_DIET_OPTIONS.map((dietType) => (
+	                    <SelectItem key={dietType} value={dietType}>
+	                      <span className="inline-flex items-center gap-2">
+	                        <DietIndicator item={{ diet_type: dietType }} />
+	                        {DIET_TYPES[dietType].label}
+	                      </span>
+	                    </SelectItem>
+	                  ))}
+	                </SelectContent>
+	              </Select>
+	            </div>
+	            <div className="space-y-2">
+	              <Label>Image URL</Label>
               <Input
                 value={editingMenuItemDraft.image}
                 onChange={(e) => setEditingMenuItemDraft({ ...editingMenuItemDraft, image: e.target.value })}

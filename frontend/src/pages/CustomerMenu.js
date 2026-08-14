@@ -4,13 +4,16 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '../components/ui/drawer';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { normalizeImageUrl } from '../lib/utils';
-import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles, Receipt, ArrowRight, BellRing } from 'lucide-react';
+import DietIndicator, { DIET_TYPES } from '../components/DietIndicator';
+import { ShoppingCart, Plus, Minus, Loader2, ChefHat, Sparkles, Receipt, ArrowRight, BellRing, SlidersHorizontal, BookOpen } from 'lucide-react';
 
 const formatCurrency = (value = 0) => `₹${Number(value || 0).toFixed(2)}`;
+const DIET_FILTERS = ['veg', 'non_veg', 'egg', 'vegan'];
 
 const orderStatusConfig = {
   pending: { label: 'Pending', className: 'bg-slate-100 text-slate-700' },
@@ -30,11 +33,16 @@ const CustomerMenu = () => {
   const [submitting, setSubmitting] = useState(false);
   const [brokenImages, setBrokenImages] = useState({});
   const [cartOpen, setCartOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [openCategoryIds, setOpenCategoryIds] = useState([]);
   const [orderedItemsOpen, setOrderedItemsOpen] = useState(false);
   const [orderedOrders, setOrderedOrders] = useState([]);
   const [orderedOrdersLoading, setOrderedOrdersLoading] = useState(false);
   const [assistanceRequest, setAssistanceRequest] = useState(null);
   const [requestingAssistance, setRequestingAssistance] = useState(false);
+  const [dietFilters, setDietFilters] = useState({ veg: true, non_veg: true, egg: true, vegan: true });
+  const [sortOption, setSortOption] = useState('none');
   const [expandedDescriptions, setExpandedDescriptions] = useState({});
 
   useEffect(() => {
@@ -121,9 +129,11 @@ const CustomerMenu = () => {
 
     setRequestingAssistance(true);
     try {
-      const response = await api.post('/api/customer/assistance', {
-        customer_session_token: sessionToken,
-      });
+      const response = await api.post(
+        '/api/customer/assistance',
+        { customer_session_token: sessionToken },
+        { params: { customer_session_token: sessionToken } }
+      );
       setAssistanceRequest(response.data);
       toast.success('Staff assistance requested.');
     } catch (error) {
@@ -189,10 +199,101 @@ const CustomerMenu = () => {
     }
   };
 
+  const getItemDietType = (item) => (DIET_TYPES[item?.diet_type] ? item.diet_type : 'veg');
+  const availableDietFilterKeys = DIET_FILTERS.filter((filterKey) => (
+    menuItems.some((item) => getItemDietType(item) === filterKey)
+  ));
+  const visibleDietFilterKeys = availableDietFilterKeys.length > 0 ? availableDietFilterKeys : ['veg'];
+
+  const filteredMenuItems = menuItems.filter((item) => {
+    const itemDietType = getItemDietType(item);
+    return Boolean(dietFilters[itemDietType]);
+  }).sort((left, right) => {
+    if (sortOption === 'price_low_high') {
+      return Number(left.price || 0) - Number(right.price || 0);
+    }
+    if (sortOption === 'price_high_low') {
+      return Number(right.price || 0) - Number(left.price || 0);
+    }
+    return 0;
+  });
+
   const accordionCategories = categories.map((category) => ({
     ...category,
-    items: menuItems.filter((item) => item.category_id === category.category_id),
+    items: filteredMenuItems.filter((item) => item.category_id === category.category_id),
   })).filter((category) => category.items.length > 0);
+
+  useEffect(() => {
+    if (accordionCategories.length === 0) {
+      setOpenCategoryIds([]);
+      return;
+    }
+
+    setOpenCategoryIds((current) => {
+      const visibleIds = accordionCategories.map((category) => category.category_id);
+      const stillVisible = current.filter((categoryId) => visibleIds.includes(categoryId));
+      return stillVisible.length > 0 ? stillVisible : visibleIds.slice(0, 2);
+    });
+  }, [accordionCategories.length, categories.length, menuItems.length, dietFilters.veg, dietFilters.non_veg, dietFilters.egg, dietFilters.vegan, sortOption]);
+
+  const toggleDietFilter = (filterKey) => {
+    setDietFilters((current) => {
+      const visibleKeys = visibleDietFilterKeys.length > 0 ? visibleDietFilterKeys : DIET_FILTERS;
+      const allVisibleActive = visibleKeys.every((key) => current[key]);
+      const onlyThisVisibleActive = visibleKeys.every((key) => (
+        key === filterKey ? current[key] : !current[key]
+      ));
+
+      if (allVisibleActive) {
+        return DIET_FILTERS.reduce((next, key) => ({
+          ...next,
+          [key]: key === filterKey,
+        }), {});
+      }
+
+      if (onlyThisVisibleActive) {
+        return DIET_FILTERS.reduce((next, key) => ({
+          ...next,
+          [key]: visibleKeys.includes(key),
+        }), {});
+      }
+
+      return {
+        ...current,
+        [filterKey]: !current[filterKey],
+      };
+    });
+  };
+
+  const showAllDietFilters = () => {
+    const visibleKeys = visibleDietFilterKeys.length > 0 ? visibleDietFilterKeys : DIET_FILTERS;
+    setDietFilters(DIET_FILTERS.reduce((next, key) => ({
+      ...next,
+      [key]: visibleKeys.includes(key),
+    }), {}));
+  };
+
+  const clearFiltersAndSort = () => {
+    showAllDietFilters();
+    setSortOption('none');
+  };
+
+  const jumpToCategory = (categoryId) => {
+    setOpenCategoryIds((current) => (
+      current.includes(categoryId) ? current : [...current, categoryId]
+    ));
+    setCategoryOpen(false);
+    window.setTimeout(() => {
+      const titleElement = document.getElementById(`menu-category-title-${categoryId}`);
+      if (!titleElement) return;
+      const stickyHeaderHeight = document.querySelector('[data-customer-menu-header]')?.offsetHeight || 0;
+      const top = titleElement.getBoundingClientRect().top + window.scrollY - stickyHeaderHeight - 16;
+      window.scrollTo({
+        top: Math.max(top, 0),
+        behavior: 'smooth',
+      });
+    }, 120);
+  };
 
   const markImageBroken = (itemId) => {
     setBrokenImages((prev) => ({ ...prev, [itemId]: true }));
@@ -221,7 +322,7 @@ const CustomerMenu = () => {
   return (
     <div className="min-h-screen pb-28 sm:pb-32" style={{ background: '#F9F8F6' }}>
       {/* Header */}
-      <div className="bg-white border-b border-border sticky top-0 z-10">
+      <div className="bg-white border-b border-border sticky top-0 z-10" data-customer-menu-header>
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center gap-3">
             <ChefHat className="w-8 h-8 text-primary" />
@@ -274,20 +375,55 @@ const CustomerMenu = () => {
           </div>
         </div>
 
-        <Accordion
-          type="multiple"
-          defaultValue={accordionCategories.slice(0, 2).map((category) => category.category_id)}
-          className="space-y-4"
-        >
-          {accordionCategories.map((category) => (
+        <div className="mb-5 flex items-center gap-2 overflow-x-auto pb-1">
+          <button
+            type="button"
+            onClick={() => setFilterOpen(true)}
+            className="inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-white px-3 py-2 text-sm font-semibold text-foreground shadow-sm transition hover:bg-accent"
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Filters
+          </button>
+          {visibleDietFilterKeys.map((filterKey) => {
+            const filterConfig = DIET_TYPES[filterKey];
+            const active = dietFilters[filterKey];
+
+            return (
+              <button
+                key={filterKey}
+                type="button"
+                aria-pressed={active}
+                onClick={() => toggleDietFilter(filterKey)}
+                className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-sm transition ${
+                  active
+                    ? filterConfig.activeClass
+                    : 'border-border bg-white text-muted-foreground'
+                }`}
+              >
+                <DietIndicator item={{ diet_type: filterKey }} />
+                {filterConfig.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {accordionCategories.length > 0 ? (
+          <Accordion
+            type="multiple"
+            value={openCategoryIds}
+            onValueChange={setOpenCategoryIds}
+            className="space-y-4"
+          >
+            {accordionCategories.map((category) => (
             <AccordionItem
               key={category.category_id}
               value={category.category_id}
+              id={`menu-category-${category.category_id}`}
               className="rounded-[28px] border border-border bg-white px-5 shadow-[0_10px_30px_rgba(0,0,0,0.04)]"
             >
               <AccordionTrigger className="py-5 no-underline hover:no-underline">
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-4 pr-4">
-                  <div className="min-w-0">
+                  <div id={`menu-category-title-${category.category_id}`} className="min-w-0 scroll-mt-24">
                     <h3 className="text-left text-xl font-semibold tracking-tight">{category.name}</h3>
                     <p className="text-left text-sm text-muted-foreground">{category.items.length} items</p>
                   </div>
@@ -392,7 +528,10 @@ const CustomerMenu = () => {
                           )}
                            <div className="flex flex-col gap-2 p-3.5">
                             <div className="min-w-0">
-                              <h4 className="line-clamp-2 break-words text-base font-semibold leading-tight">{item.name}</h4>
+	                              <div className="flex items-start gap-2">
+	                                <DietIndicator item={item} className="mt-1" />
+	                                <h4 className="line-clamp-2 break-words text-base font-semibold leading-tight">{item.name}</h4>
+	                              </div>
                               {item.description && (
                                  <div className="mt-1 space-y-1.5">
                                   <p
@@ -424,18 +563,133 @@ const CustomerMenu = () => {
                 </div>
               </AccordionContent>
             </AccordionItem>
-          ))}
-        </Accordion>
-
-        {accordionCategories.length === 0 && (
-          <Card className="rounded-[28px] border border-border bg-white p-8 text-center shadow-[0_10px_30px_rgba(0,0,0,0.04)]">
-            <h3 className="text-xl font-semibold tracking-tight">Menu not available</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              No available menu items were found for this restaurant yet.
-            </p>
-          </Card>
+            ))}
+          </Accordion>
+        ) : (
+          <div className="rounded-[24px] border border-border bg-white p-6 text-center text-sm font-medium text-muted-foreground shadow-sm">
+            {menuItems.length > 0 ? 'No items match the selected filters.' : 'No available menu items were found for this restaurant yet.'}
+          </div>
         )}
+
       </div>
+
+      <Drawer open={filterOpen} onOpenChange={setFilterOpen}>
+        <DrawerContent className="mx-auto max-h-[88dvh] max-w-3xl rounded-t-[28px] border-border bg-[#F6F7FA]">
+          <DrawerHeader className="border-b border-border px-5 pb-4 pt-2 text-left">
+            <DrawerTitle className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+              Filters and Sorting
+            </DrawerTitle>
+            <DrawerDescription>
+              Refine the menu items shown for this table.
+            </DrawerDescription>
+          </DrawerHeader>
+
+          <div className="space-y-5 overflow-y-auto px-5 py-5">
+            <section className="rounded-[26px] bg-white p-5 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+              <h3 className="mb-4 text-xl font-semibold tracking-tight text-slate-900">Sort by</h3>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {[
+                  { value: 'price_low_high', label: 'Price - low to high' },
+                  { value: 'price_high_low', label: 'Price - high to low' },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={sortOption === option.value}
+                    onClick={() => setSortOption((current) => (current === option.value ? 'none' : option.value))}
+                    className={`rounded-2xl border px-4 py-3 text-left text-base font-semibold shadow-sm transition sm:text-lg ${
+                      sortOption === option.value
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-white text-slate-800 hover:bg-accent'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-[26px] bg-white p-5 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+              <h3 className="mb-4 text-xl font-semibold tracking-tight text-slate-900">Food preference</h3>
+              <div className="flex flex-wrap gap-3">
+                {visibleDietFilterKeys.map((filterKey) => {
+                  const filterConfig = DIET_TYPES[filterKey];
+                  const active = dietFilters[filterKey];
+
+                  return (
+                    <button
+                      key={filterKey}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => toggleDietFilter(filterKey)}
+                      className={`inline-flex min-h-12 items-center gap-2 rounded-2xl border px-4 text-base font-semibold shadow-sm transition ${
+                        active
+                          ? filterConfig.activeClass
+                          : 'border-border bg-white text-slate-500 hover:bg-accent'
+                      }`}
+                    >
+                      <DietIndicator item={{ diet_type: filterKey }} />
+                      {filterConfig.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+
+          <DrawerFooter className="grid grid-cols-2 gap-3 border-t border-border bg-white px-5 pb-5 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={clearFiltersAndSort}
+              className="h-12 rounded-2xl text-base font-semibold"
+            >
+              Clear
+            </Button>
+            <Button
+              type="button"
+              onClick={() => setFilterOpen(false)}
+              className="h-12 rounded-2xl bg-primary text-base font-semibold text-white hover:bg-[#C54E2C]"
+            >
+              Apply
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+
+      <Dialog open={categoryOpen} onOpenChange={setCategoryOpen}>
+        <DialogContent className="max-h-[78dvh] max-w-[min(88vw,430px)] overflow-hidden rounded-[30px] border-0 bg-[#02070C] p-0 text-white shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Menu categories</DialogTitle>
+            <DialogDescription>Select a category to jump to that item section.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[78dvh] overflow-y-auto px-7 py-7">
+            <div className="space-y-1">
+              {accordionCategories.map((category) => {
+                const active = openCategoryIds.includes(category.category_id);
+
+                return (
+                  <button
+                    key={category.category_id}
+                    type="button"
+                    onClick={() => jumpToCategory(category.category_id)}
+                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-2xl px-2 py-3 text-left transition hover:bg-white/10 ${
+                      active ? 'text-white' : 'text-white/72'
+                    }`}
+                  >
+                    <span className={`truncate text-xl sm:text-2xl ${active ? 'font-bold' : 'font-medium'}`}>
+                      {category.name}
+                    </span>
+                    <span className={`text-xl sm:text-2xl ${active ? 'font-bold' : 'font-medium'}`}>
+                      {category.items.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Drawer open={orderedItemsOpen} onOpenChange={setOrderedItemsOpen}>
         <DrawerContent className="mx-auto max-h-[88dvh] max-w-3xl rounded-t-[28px] border-border bg-[#FCFBF8]">
@@ -486,7 +740,10 @@ const CustomerMenu = () => {
                           className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 rounded-2xl bg-accent px-3 py-3"
                         >
                           <div className="min-w-0">
-                            <p className="break-words text-sm font-semibold">{item.name}</p>
+	                            <div className="flex items-start gap-2">
+	                              <DietIndicator item={item} className="mt-0.5" />
+	                              <p className="break-words text-sm font-semibold">{item.name}</p>
+	                            </div>
                             <p className="text-xs text-muted-foreground">Quantity: {item.quantity}</p>
                             {item.instructions && (
                               <p className="mt-1 break-words text-xs italic text-muted-foreground">
@@ -575,7 +832,10 @@ const CustomerMenu = () => {
                   <div key={item.item_id} className="rounded-[22px] border border-border bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.04)]">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <h4 className="break-words text-base font-semibold">{item.name}</h4>
+	                        <div className="flex items-start gap-2">
+	                          <DietIndicator item={item} className="mt-1" />
+	                          <h4 className="break-words text-base font-semibold">{item.name}</h4>
+	                        </div>
                         <p className="mt-1 text-sm text-muted-foreground">₹{item.price} each</p>
                       </div>
                       <p className="shrink-0 text-lg font-bold text-primary">
@@ -636,6 +896,20 @@ const CustomerMenu = () => {
             </DrawerContent>
           </Drawer>
         </>
+      )}
+
+      {accordionCategories.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setCategoryOpen(true)}
+          className={`fixed right-4 z-30 flex h-20 w-20 flex-col items-center justify-center rounded-full bg-[#02070C] text-white shadow-[0_18px_44px_rgba(0,0,0,0.35)] transition hover:scale-[1.02] active:scale-95 sm:right-6 ${
+            cartItemCount > 0 ? 'bottom-32 sm:bottom-36' : 'bottom-6'
+          }`}
+          aria-label="Show menu categories"
+        >
+          <BookOpen className="h-6 w-6" />
+          <span className="mt-1 text-xs font-black tracking-wide">MENU</span>
+        </button>
       )}
     </div>
   );

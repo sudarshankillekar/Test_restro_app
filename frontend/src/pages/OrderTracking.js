@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { CheckCircle, Clock, ChefHat, Download, Package, Loader2, Star, Plus, Receipt } from 'lucide-react';
+import DietIndicator from '../components/DietIndicator';
 
 
 const statusConfig = {
@@ -16,23 +17,39 @@ const statusConfig = {
   cancelled: { color: 'bg-destructive', icon: Clock, label: 'Cancelled' },
 };
 
+const getCancelledQuantity = (item = {}) => Math.max(Number(item.cancelled_quantity || 0), 0);
+const getBillableQuantity = (item = {}) => Math.max(Number(item.quantity || 0) - getCancelledQuantity(item), 0);
+const getBillableItems = (items = []) => (
+  (items || [])
+    .map((item) => ({
+      ...item,
+      quantity: getBillableQuantity(item),
+      amount: Number(item.price || 0) * getBillableQuantity(item),
+    }))
+    .filter((item) => item.quantity > 0)
+);
+
 const summarizeBillItems = (orders = []) => {
   const grouped = new Map();
 
   orders.forEach((orderItem) => {
     (orderItem.items || []).forEach((item) => {
+      const billableQuantity = getBillableQuantity(item);
+      if (billableQuantity <= 0) return;
+
       const key = `${item.item_id || item.name}-${item.price}`;
       const existing = grouped.get(key);
       if (existing) {
-        existing.quantity += item.quantity;
-        existing.amount += item.quantity * item.price;
+        existing.quantity += billableQuantity;
+        existing.amount += billableQuantity * item.price;
         return;
       }
 
       grouped.set(key, {
         name: item.name,
-        quantity: item.quantity,
-        amount: item.quantity * item.price,
+        quantity: billableQuantity,
+        amount: billableQuantity * item.price,
+        diet_type: item.diet_type || 'veg',
       });
     });
   });
@@ -125,17 +142,19 @@ const OrderTracking = () => {
   const canRequestBill = !isPaid && order.status !== 'cancelled' && allTableOrdersReadyForBill;
   const paidBillItems = billSummary?.payment ? summarizeBillItems(billSummary.orders) : [];
   const displayItems = billSummary?.payment
-    ? paidBillItems.map((item) => ({
-      name: item.name,
-      quantity: item.quantity,
-      amount: item.amount,
-    }))
-    : order.items.map((item) => ({
-      name: item.name,
-      quantity: item.quantity,
-      instructions: item.instructions,
-      amount: item.price * item.quantity,
-    }));
+	    ? paidBillItems.map((item) => ({
+	      name: item.name,
+	      quantity: item.quantity,
+	      amount: item.amount,
+	      diet_type: item.diet_type || 'veg',
+	    }))
+	    : getBillableItems(order.items).map((item) => ({
+	      name: item.name,
+	      quantity: item.quantity,
+	      instructions: item.instructions,
+	      amount: item.amount,
+	      diet_type: item.diet_type || 'veg',
+	    }));
   const downloadBill = () => {
     if (!billSummary?.payment) {
       toast.error('Bill is not available yet.');
@@ -283,7 +302,10 @@ const OrderTracking = () => {
                 {displayItems.map((item, idx) => (
                   <div key={idx} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl bg-accent p-3">
                     <div className="min-w-0">
-                      <p className="font-medium">{item.name}</p>
+	                      <div className="flex items-start gap-2">
+	                        <DietIndicator item={item} className="mt-1" />
+	                        <p className="font-medium">{item.name}</p>
+	                      </div>
                       <p className="text-sm text-muted-foreground">Quantity: {item.quantity}</p>
                       {item.instructions && (
                         <p className="text-xs text-muted-foreground italic">Note: {item.instructions}</p>
@@ -414,12 +436,29 @@ const OrderTracking = () => {
               <div>
                 <h3 className="font-semibold mb-3">All Active Orders For This Table</h3>
                 <div className="space-y-3">
-                  {activeTableOrders.map((tableOrder) => (
+	                  {activeTableOrders.map((tableOrder) => {
+	                    const tableOrderItems = getBillableItems(tableOrder.items);
+
+	                    return (
                     <div key={tableOrder.order_id} className="rounded-xl border border-border bg-white p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="font-semibold">{tableOrder.order_id}</p>
-                          <p className="text-sm text-muted-foreground">{new Date(tableOrder.created_at).toLocaleString()}</p>
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+                        <div className="min-w-0 space-y-1">
+                          {tableOrderItems.length > 0 ? (
+                            tableOrderItems.map((item, itemIndex) => (
+	                              <p
+	                                key={`${item.item_id || item.name}-${itemIndex}`}
+	                                className="flex items-start gap-2 break-words text-sm font-normal text-foreground"
+	                              >
+	                                <DietIndicator item={item} className="mt-0.5" />
+	                                <span>
+		                                  {item.name}
+		                                  {item.quantity > 1 ? ` x${item.quantity}` : ''}
+	                                </span>
+	                              </p>
+                            ))
+                          ) : (
+                            <p className="text-sm font-normal text-muted-foreground">Items unavailable</p>
+                          )}
                         </div>
                         <div className="text-right">
                           <Badge className={`${statusConfig[tableOrder.status]?.color} text-white rounded-md px-3 py-1`}>
@@ -432,7 +471,8 @@ const OrderTracking = () => {
                         <p className="mt-2 text-xs text-amber-700">Add-on order</p>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
