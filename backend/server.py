@@ -377,7 +377,7 @@ def format_export_datetime(value) -> str:
         except ValueError:
             return value
     if isinstance(value, datetime):
-        return to_aware_utc(value).astimezone(BUSINESS_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+        return to_aware_utc(value).astimezone(BUSINESS_TIMEZONE).strftime("%d/%m/%Y, %I:%M:%S %p IST")
     return str(value)
 
 
@@ -2507,8 +2507,8 @@ async def export_attendance_logs(
         "Shift",
         "Shift Start",
         "Shift End",
-        "Clock In",
-        "Clock Out",
+        "Clock In (IST)",
+        "Clock Out (IST)",
         "Break Minutes",
         "Work Minutes",
         "Work Hours",

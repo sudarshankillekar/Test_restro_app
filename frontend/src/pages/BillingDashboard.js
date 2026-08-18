@@ -55,6 +55,49 @@ const formatPaymentMethod = (method) => {
   return method.toUpperCase();
 };
 
+const parseBackendDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+    const isoWithoutTimezone = /^\d{4}-\d{2}-\d{2}T/.test(trimmed) && !hasExplicitTimezone;
+    const date = new Date(isoWithoutTimezone ? `${trimmed}Z` : trimmed);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatDateTimeIST = (value) => {
+  const date = parseBackendDate(value);
+  if (!date) return '-';
+
+  return `${new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Kolkata',
+  }).format(date)} IST`;
+};
+
+const formatTimeIST = (value) => {
+  const date = parseBackendDate(value);
+  if (!date) return '-';
+
+  return new Intl.DateTimeFormat('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Kolkata',
+  }).format(date);
+};
+
 const ASSISTANCE_BELL_URL = `${process.env.PUBLIC_URL || ''}/sounds/assistance-bell.wav`;
 const BILL_REQUEST_SOUND_URL = `${process.env.PUBLIC_URL || ''}/sounds/bill-request.mp3`;
 const NOTIFICATION_REMINDER_MS = 2 * 60 * 1000;
@@ -77,6 +120,7 @@ const formatReallocationTarget = (item = {}) => {
   const tableLabel = item.reallocated_to_table_label || item.reallocated_to_table || '';
   return tableLabel ? `${tableLabel} (${item.reallocated_to_order_id})` : item.reallocated_to_order_id;
 };
+const getBillCreatedAt = (bill = {}) => bill.payment?.created_at || bill.created_at || bill.orders?.[0]?.payment?.created_at;
 const getOrderBillableItemCount = (order = {}) => (
   (order.items || []).reduce((total, item) => total + getBillableQuantity(item), 0)
 );
@@ -713,7 +757,7 @@ const BillingDashboard = ({ embedded = false }) => {
       <p>${order.table_label || order.table_id}</p>
       <p>Customer: ${order.customer_name}</p>
       <p>Phone: ${order.phone || 'N/A'}</p>
-      <p>Created At: ${new Date(order.created_at || Date.now()).toLocaleString()}</p>
+      <p>Created At: ${formatDateTimeIST(order.created_at || new Date())}</p>
       <table>
         <thead>
           <tr>
@@ -749,6 +793,8 @@ const BillingDashboard = ({ embedded = false }) => {
     const total = Number.isFinite(parsedTotal) && parsedTotal > subtotal - discount
       ? parsedTotal
       : recalculatedTotal; 
+    const billGeneratedAt = getBillCreatedAt(bill);
+    const printedAt = new Date();
     const itemsHtml = summarizedItems.map((item) => `
       <tr>
         <td>${item.name}</td>
@@ -767,7 +813,8 @@ const BillingDashboard = ({ embedded = false }) => {
       <p>${bill.table_label}</p>
       <p>Customer: ${bill.customer_name}</p>
       <p>Payment Method: ${formatPaymentMethod(payment.payment_method)}</p>
-      <p>Printed At: ${new Date().toLocaleString()}</p>
+      <p>Bill Generated At: ${formatDateTimeIST(billGeneratedAt)}</p>
+      <p>Printed At: ${formatDateTimeIST(printedAt)}</p>
       <table>
         <thead>
           <tr>
@@ -1818,7 +1865,7 @@ const BillingDashboard = ({ embedded = false }) => {
                           <div className="min-w-0">
                             <p className="font-medium text-slate-900">{entry.reason}</p>
                             <p className="mt-1 text-xs text-slate-500">{entry.created_by_name || 'Staff'}</p>
-                            <p className="mt-1 text-xs text-slate-400">{new Date(entry.created_at).toLocaleString()}</p>
+                            <p className="mt-1 text-xs text-slate-400">{formatDateTimeIST(entry.created_at)}</p>
                           </div>
                           <p className={Number(entry.amount || 0) >= 0 ? 'text-sm font-semibold text-emerald-600' : 'text-sm font-semibold text-rose-600'}>
                             {formatCurrency(entry.amount)}
@@ -1882,7 +1929,7 @@ const BillingDashboard = ({ embedded = false }) => {
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate text-sm font-semibold text-slate-900">{order.order_id}</p>
                                   <p className="text-xs text-muted-foreground">
-                                    {getOrderBillableItemCount(order)} item{getOrderBillableItemCount(order) !== 1 ? 's' : ''} • {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {getOrderBillableItemCount(order)} item{getOrderBillableItemCount(order) !== 1 ? 's' : ''} • {formatTimeIST(order.created_at)}
                                   </p>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1.5">
@@ -2208,6 +2255,7 @@ const BillingDashboard = ({ embedded = false }) => {
                     <div>
                       <CardTitle className="text-lg">{bill.table_label}</CardTitle>
                       <p className="text-sm text-muted-foreground">{bill.customer_name}</p>
+                      <p className="text-xs text-muted-foreground">Bill created: {formatDateTimeIST(getBillCreatedAt(bill))}</p>
                     </div>
                     <Badge className="rounded-full bg-primary">Paid</Badge>
                   </div>

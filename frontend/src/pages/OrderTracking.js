@@ -29,6 +29,37 @@ const getBillableItems = (items = []) => (
     .filter((item) => item.quantity > 0)
 );
 
+const parseBackendDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+    const isoWithoutTimezone = /^\d{4}-\d{2}-\d{2}T/.test(trimmed) && !hasExplicitTimezone;
+    const date = new Date(isoWithoutTimezone ? `${trimmed}Z` : trimmed);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatDateTimeIST = (value) => {
+  const date = parseBackendDate(value);
+  if (!date) return '-';
+
+  return `${new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Kolkata',
+  }).format(date)} IST`;
+};
+
 const summarizeBillItems = (orders = []) => {
   const grouped = new Map();
 
@@ -197,7 +228,7 @@ const OrderTracking = () => {
           <p>${order.table_label || `Table ${order.table_id}`}</p>
           <p>Customer: ${order.customer_name}</p>
           <p>Payment Method: ${(payment.payment_method || 'N/A').toUpperCase()}</p>
-          <p>Generated At: ${new Date(payment.created_at || Date.now()).toLocaleString()}</p>
+          <p>Generated At: ${formatDateTimeIST(payment.created_at || new Date())}</p>
           <table>
             <thead>
               <tr><th>Item</th><th>Qty</th><th>Amount</th></tr>

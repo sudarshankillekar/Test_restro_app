@@ -83,9 +83,33 @@ const formatReallocationTarget = (item = {}) => {
 };
 const getItemCount = (order) => (order.items || []).reduce((total, item) => total + getBillableQuantity(item), 0);
 
+const parseBackendDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+    const isoWithoutTimezone = /^\d{4}-\d{2}-\d{2}T/.test(trimmed) && !hasExplicitTimezone;
+    const date = new Date(isoWithoutTimezone ? `${trimmed}Z` : trimmed);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const getBackendTimestampMs = (value) => parseBackendDate(value)?.getTime() ?? 0;
+
 const formatOrderTime = (value) => {
-  if (!value) return '';
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const date = parseBackendDate(value);
+  if (!date) return '';
+
+  return new Intl.DateTimeFormat('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Kolkata',
+  }).format(date);
 };
 
 const getKitchenOrderLabel = (order) => {
@@ -392,7 +416,7 @@ const toggleSound = () => {
         const statusRank = { pending: 0, accepted: 1, prepared: 2 };
         const rankDelta = (statusRank[a.status] ?? 3) - (statusRank[b.status] ?? 3);
         if (rankDelta !== 0) return rankDelta;
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        return getBackendTimestampMs(a.created_at) - getBackendTimestampMs(b.created_at);
       })
   ), [orders]);
 
@@ -504,11 +528,11 @@ const toggleSound = () => {
           const aIsPrepared = a.status === 'prepared';
           const bIsPrepared = b.status === 'prepared';
           if (aIsPrepared !== bIsPrepared) return aIsPrepared ? 1 : -1;
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          return getBackendTimestampMs(a.created_at) - getBackendTimestampMs(b.created_at);
         });
         const earliestQueueTime = sortedOrders
           .filter((order) => ['pending', 'accepted'].includes(order.status))
-          .map((order) => new Date(order.created_at).getTime())[0] ?? Number.MAX_SAFE_INTEGER;
+          .map((order) => getBackendTimestampMs(order.created_at))[0] ?? Number.MAX_SAFE_INTEGER;
         const counts = sortedOrders.reduce((acc, order) => {
           acc[order.status] = (acc[order.status] || 0) + 1;
           return acc;
@@ -523,15 +547,15 @@ const toggleSound = () => {
       })
       .sort((a, b) => {
         if (a.earliestQueueTime !== b.earliestQueueTime) return a.earliestQueueTime - b.earliestQueueTime;
-        const oldestA = Math.min(...a.orders.map((order) => new Date(order.created_at).getTime()));
-        const oldestB = Math.min(...b.orders.map((order) => new Date(order.created_at).getTime()));
+        const oldestA = Math.min(...a.orders.map((order) => getBackendTimestampMs(order.created_at)));
+        const oldestB = Math.min(...b.orders.map((order) => getBackendTimestampMs(order.created_at)));
         return oldestA - oldestB;
       });
   }, [orders]);
     const queueTokenMap = useMemo(() => {
     const queueOrders = orders
       .filter((order) => !['served', 'cancelled'].includes(order.status))
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      .sort((a, b) => getBackendTimestampMs(a.created_at) - getBackendTimestampMs(b.created_at));
 
     return queueOrders.reduce((tokens, order, index) => {
       tokens[order.order_id] = index + 1;

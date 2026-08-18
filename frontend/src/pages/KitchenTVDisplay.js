@@ -87,19 +87,43 @@ const getItemCount = (order) => (
   (order.items || []).reduce((total, item) => total + Number(item.quantity || 0), 0)
 );
 
+const parseBackendDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+    const isoWithoutTimezone = /^\d{4}-\d{2}-\d{2}T/.test(trimmed) && !hasExplicitTimezone;
+    const date = new Date(isoWithoutTimezone ? `${trimmed}Z` : trimmed);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const getBackendTimestampMs = (value) => parseBackendDate(value)?.getTime() ?? 0;
+
 const getKitchenOrderLabel = (order) => {
   const label = order?.table_label || order?.table_id || '';
   return label.replace(/^Takeaway\s+Takeaway\b/i, 'Takeaway');
 };
 
 const formatOrderTime = (value) => {
-  if (!value) return '';
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const date = parseBackendDate(value);
+  if (!date) return '';
+
+  return new Intl.DateTimeFormat('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Kolkata',
+  }).format(date);
 };
 
 const formatElapsed = (value, now) => {
   if (!value) return 'New';
-  const startedAt = new Date(value).getTime();
+  const startedAt = getBackendTimestampMs(value);
   if (!Number.isFinite(startedAt)) return 'New';
   const minutes = Math.max(0, Math.floor((now - startedAt) / 60000));
   if (minutes < 1) return 'Just now';
@@ -361,13 +385,13 @@ const KitchenTVDisplay = () => {
         const statusRank = { pending: 0, accepted: 1, prepared: 2 };
         const rankDelta = (statusRank[a.status] ?? 3) - (statusRank[b.status] ?? 3);
         if (rankDelta !== 0) return rankDelta;
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        return getBackendTimestampMs(a.created_at) - getBackendTimestampMs(b.created_at);
       })
   ), [orders]);
 
   const queueTokenMap = useMemo(() => (
     [...activeOrders]
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      .sort((a, b) => getBackendTimestampMs(a.created_at) - getBackendTimestampMs(b.created_at))
       .reduce((tokens, order, index) => {
         tokens[order.order_id] = index + 1;
         return tokens;
