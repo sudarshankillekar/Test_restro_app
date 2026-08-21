@@ -14,7 +14,7 @@ import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizeImageUrl } from '../lib/utils';
 import DietIndicator, { DIET_TYPES } from '../components/DietIndicator';
-import { ChefHat, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload, Pencil, UserCheck, Copy, ExternalLink, RefreshCw } from 'lucide-react';
+import { BarChart3, ChefHat, FileSpreadsheet, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload, Pencil, UserCheck, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
@@ -55,6 +55,48 @@ const normalizeAccessConfig = (config = {}) => ({
 
 const getErrorMessage = (error, fallback) => error.response?.data?.detail || fallback;
 
+const getIndiaDateInputValue = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
+const shiftDateInputValue = (dateValue, days) => {
+  const date = new Date(`${dateValue}T00:00:00+05:30`);
+  date.setDate(date.getDate() + days);
+  return getIndiaDateInputValue(date);
+};
+
+const getReportPresetRange = (period) => {
+  const today = getIndiaDateInputValue();
+  if (period === 'weekly') {
+    return { start_date: shiftDateInputValue(today, -6), end_date: today };
+  }
+  if (period === 'monthly') {
+    return { start_date: `${today.slice(0, 8)}01`, end_date: today };
+  }
+  return { start_date: today, end_date: today };
+};
+
+const formatReportValue = (report) => {
+  if (!report) return '-';
+  if (report.value_type === 'currency') {
+    return `₹${Number(report.value || 0).toFixed(2)}`;
+  }
+  if (report.value_type === 'percent') {
+    return `${Number(report.value || 0).toFixed(2)}%`;
+  }
+  if (report.value_type === 'decimal') {
+    return Number(report.value || 0).toFixed(2);
+  }
+  return String(report.value ?? '-');
+};
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -66,6 +108,12 @@ const AdminDashboard = () => {
   const [exportFilters, setExportFilters] = useState({ start_date: '', end_date: '' });
   const [orderSearchId, setOrderSearchId] = useState('');
   const [searchedOrder, setSearchedOrder] = useState(null);
+  const [reports, setReports] = useState(null);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportFilters, setReportFilters] = useState({
+    period: 'daily',
+    ...getReportPresetRange('daily'),
+  });
   // Menu state
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
@@ -127,9 +175,10 @@ const AdminDashboard = () => {
     if (activeTab === 'menu') fetchMenu();
     if (activeTab === 'tables') fetchTables();
     if (activeTab === 'staff') fetchStaff();
+    if (activeTab === 'reports') fetchReports();
     if (['tables', 'staff', 'settings'].includes(activeTab)) fetchRestaurantProfile();
     if (activeTab === 'settings') fetchAttendanceKioskLink();
-  }, [activeTab, period]);
+  }, [activeTab, period, reportFilters.period, reportFilters.start_date, reportFilters.end_date]);
 
   useEffect(() => {
     localStorage.setItem(ADMIN_TAB_KEY, activeTab);
@@ -149,6 +198,21 @@ const AdminDashboard = () => {
       setAnalytics(response.data);
     } catch (error) {
       toast.error('Failed to load analytics');
+    }
+  };
+
+  const fetchReports = async () => {
+    setReportsLoading(true);
+    try {
+      const response = await api.get('/api/reports/summary', {
+        params: reportFilters,
+        withCredentials: true,
+      });
+      setReports(response.data);
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to load reports'));
+    } finally {
+      setReportsLoading(false);
     }
   };
 
@@ -408,6 +472,38 @@ const AdminDashboard = () => {
       toast.success('Sales export downloaded');
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to export sales data'));
+    }
+  };
+
+  const exportReports = async (report = null) => {
+    if (!reportFilters.start_date || !reportFilters.end_date) {
+      toast.error('Please select both start and end dates.');
+      return;
+    }
+    if (reportFilters.end_date < reportFilters.start_date) {
+      toast.error('End date must be on or after start date.');
+      return;
+    }
+    try {
+      const response = await api.get('/api/reports/export', {
+        params: {
+          ...reportFilters,
+          ...(report?.id ? { report_id: report.id } : {}),
+        },
+        withCredentials: true,
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      const disposition = response.headers['content-disposition'] || '';
+      const filenameMatch = disposition.match(/filename="([^"]+)"/);
+      link.href = url;
+      link.download = filenameMatch?.[1] || `reports-${report?.id || 'all'}-${reportFilters.start_date}-to-${reportFilters.end_date}.xlsx`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      toast.success(`${report?.title || 'Reports'} export downloaded`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to export reports'));
     }
   };
 
@@ -695,6 +791,10 @@ const AdminDashboard = () => {
             <TabsTrigger value="staff" className="rounded-full" data-testid="tab-staff">
               <ChefHat className="w-4 h-4 mr-2" />
               Staff
+            </TabsTrigger>
+            <TabsTrigger value="reports" className="rounded-full" data-testid="tab-reports">
+              <FileSpreadsheet className="w-4 h-4 mr-2" />
+              Reports
             </TabsTrigger>
             <TabsTrigger value="settings" className="rounded-full" data-testid="tab-settings">
               <Settings className="w-4 h-4 mr-2" />
@@ -1517,6 +1617,314 @@ const AdminDashboard = () => {
                 </Card>
               ))}
             </div>
+          </TabsContent>
+
+          <TabsContent value="reports" className="space-y-6">
+            <Card className="border-border rounded-2xl">
+              <CardHeader>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <FileSpreadsheet className="h-5 w-5 text-primary" />
+                      Reports
+                    </CardTitle>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Must-have restaurant reports for the selected business period.
+                    </p>
+                  </div>
+                  <Button onClick={() => exportReports()} variant="outline" className="rounded-full">
+                    <Download className="w-4 h-4 mr-2" />
+                    Export All
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label>Period</Label>
+                    <Select
+                      value={reportFilters.period}
+                      onValueChange={(value) => setReportFilters((current) => ({
+                        ...current,
+                        period: value,
+                        ...getReportPresetRange(value),
+                      }))}
+                    >
+                      <SelectTrigger className="rounded-full" data-testid="reports-period-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Start Date</Label>
+                    <Input
+                      type="date"
+                      value={reportFilters.start_date}
+                      onChange={(event) => setReportFilters((current) => ({ ...current, start_date: event.target.value }))}
+                      className="rounded-full"
+                      data-testid="reports-start-date-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>End Date</Label>
+                    <Input
+                      type="date"
+                      value={reportFilters.end_date}
+                      onChange={(event) => setReportFilters((current) => ({ ...current, end_date: event.target.value }))}
+                      className="rounded-full"
+                      data-testid="reports-end-date-input"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button onClick={fetchReports} className="w-full rounded-full bg-primary hover:bg-[#C54E2C]">
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Refresh Reports
+                    </Button>
+                  </div>
+                </div>
+                {reports && (
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Showing {reports.period} reports from {reports.start_date} to {reports.end_date}.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {reportsLoading && (
+              <Card className="border-border rounded-2xl">
+                <CardContent className="flex items-center justify-center gap-2 p-10 text-muted-foreground">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Loading reports...
+                </CardContent>
+              </Card>
+            )}
+
+            {!reportsLoading && reports?.reports?.length > 0 && (
+              <>
+                <Accordion
+                  type="multiple"
+                  defaultValue={['Sales', 'Billing', 'Payments', 'Orders', 'Menu', 'Control', 'Tables', 'Customers']}
+                  className="space-y-3"
+                >
+                  {['Sales', 'Billing', 'Payments', 'Orders', 'Menu', 'Control', 'Tables', 'Customers'].map((category) => {
+                    const categoryReports = reports.reports.filter((report) => report.category === category);
+                    if (!categoryReports.length) return null;
+                    return (
+                      <AccordionItem key={category} value={category} className="rounded-2xl border border-border bg-white px-4 shadow-sm">
+                        <AccordionTrigger className="py-4 hover:no-underline">
+                          <div className="flex w-full items-center justify-between gap-3 pr-3">
+                            <div className="flex items-center gap-2">
+                              <BarChart3 className="h-4 w-4 text-primary" />
+                              <h3 className="text-lg font-bold">{category}</h3>
+                            </div>
+                            <span className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-muted-foreground">
+                              {categoryReports.length} report{categoryReports.length === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                            {categoryReports.map((report) => (
+                              <Card key={report.id} className="border-border rounded-2xl">
+                                <CardContent className="flex h-full flex-col p-5">
+                                  <div className="flex-1">
+                                    <p className="text-sm font-medium text-muted-foreground">{report.title}</p>
+                                    <p className={`mt-2 break-words font-mono text-3xl font-bold ${report.value_type === 'currency' ? 'text-success' : 'text-foreground'}`}>
+                                      {formatReportValue(report)}
+                                    </p>
+                                    {report.note && (
+                                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{report.note}</p>
+                                    )}
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-4 rounded-full"
+                                    onClick={() => exportReports(report)}
+                                    data-testid={`export-report-${report.id}`}
+                                  >
+                                    <Download className="mr-2 h-3.5 w-3.5" />
+                                    Export
+                                  </Button>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    );
+                  })}
+                </Accordion>
+
+                <Card className="border-border rounded-2xl">
+                  <CardHeader>
+                    <CardTitle>All {reports.reports.length} Reports</CardTitle>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto">
+                    <table className="w-full min-w-[760px] text-left text-sm">
+                      <thead className="border-y bg-accent text-xs uppercase text-muted-foreground">
+                        <tr>
+                          <th className="px-4 py-3">Category</th>
+                          <th className="px-4 py-3">Report</th>
+                          <th className="px-4 py-3">Value</th>
+                          <th className="px-4 py-3">Notes</th>
+                          <th className="px-4 py-3">Export</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reports.reports.map((report) => (
+                          <tr key={`row-${report.id}`} className="border-b">
+                            <td className="px-4 py-3 font-medium">{report.category}</td>
+                            <td className="px-4 py-3">{report.title}</td>
+                            <td className="px-4 py-3 font-mono font-bold">{formatReportValue(report)}</td>
+                            <td className="px-4 py-3 text-muted-foreground">{report.note || '-'}</td>
+                            <td className="px-4 py-3">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="rounded-full"
+                                onClick={() => exportReports(report)}
+                              >
+                                <Download className="mr-2 h-3.5 w-3.5" />
+                                Download
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-border rounded-2xl">
+                  <CardHeader>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <CardTitle>Customer Contact Captures</CardTitle>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Names and phone numbers collected from QR scans, counter orders, and waiter orders.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-full"
+                        onClick={() => exportReports(reports.reports.find((report) => report.id === 'customer_contacts'))}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Export Contacts
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto">
+                    {(reports.details?.customer_contacts || []).length > 0 ? (
+                      <table className="w-full min-w-[900px] text-left text-sm">
+                        <thead className="border-y bg-accent text-xs uppercase text-muted-foreground">
+                          <tr>
+                            <th className="px-4 py-3">Source</th>
+                            <th className="px-4 py-3">Customer</th>
+                            <th className="px-4 py-3">Phone</th>
+                            <th className="px-4 py-3">Table</th>
+                            <th className="px-4 py-3">Order</th>
+                            <th className="px-4 py-3">Captured At</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(reports.details?.customer_contacts || []).slice(0, 10).map((contact, index) => (
+                            <tr key={`${contact.source}-${contact.phone}-${contact.order_id}-${index}`} className="border-b">
+                              <td className="px-4 py-3 font-medium">{contact.source}</td>
+                              <td className="px-4 py-3">{contact.customer_name || '-'}</td>
+                              <td className="px-4 py-3">{contact.phone || '-'}</td>
+                              <td className="px-4 py-3">{contact.table || '-'}</td>
+                              <td className="px-4 py-3 font-mono text-xs">{contact.order_id || '-'}</td>
+                              <td className="px-4 py-3 text-muted-foreground">{contact.captured_at || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                        No customer names or phone numbers captured in this period.
+                      </p>
+                    )}
+                    {(reports.details?.customer_contacts || []).length > 10 && (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Showing latest 10 contacts here. Export Contacts downloads the full list.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+                  <Card className="border-border rounded-2xl">
+                    <CardHeader>
+                      <CardTitle>Top Items</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {(reports.details?.top_items || []).slice(0, 5).map((item) => (
+                        <div key={item.name} className="flex items-center justify-between rounded-xl bg-accent p-3">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold">{item.name}</p>
+                            <p className="text-xs text-muted-foreground">{item.quantity} qty</p>
+                          </div>
+                          <p className="font-bold text-primary">₹{Number(item.revenue || 0).toFixed(2)}</p>
+                        </div>
+                      ))}
+                      {(!reports.details?.top_items || reports.details.top_items.length === 0) && (
+                        <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No item sales yet.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border rounded-2xl">
+                    <CardHeader>
+                      <CardTitle>Top Categories</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {(reports.details?.top_categories || []).slice(0, 5).map((category) => (
+                        <div key={category.category} className="flex items-center justify-between rounded-xl bg-accent p-3">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold">{category.category}</p>
+                            <p className="text-xs text-muted-foreground">{category.quantity} qty</p>
+                          </div>
+                          <p className="font-bold text-primary">₹{Number(category.revenue || 0).toFixed(2)}</p>
+                        </div>
+                      ))}
+                      {(!reports.details?.top_categories || reports.details.top_categories.length === 0) && (
+                        <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No category sales yet.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-border rounded-2xl">
+                    <CardHeader>
+                      <CardTitle>Top Tables</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {(reports.details?.top_tables || []).slice(0, 5).map((table) => (
+                        <div key={table.table} className="flex items-center justify-between rounded-xl bg-accent p-3">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold">{table.table}</p>
+                            <p className="text-xs text-muted-foreground">{table.orders} order{table.orders === 1 ? '' : 's'}</p>
+                          </div>
+                          <p className="font-bold text-primary">₹{Number(table.revenue || 0).toFixed(2)}</p>
+                        </div>
+                      ))}
+                      {(!reports.details?.top_tables || reports.details.top_tables.length === 0) && (
+                        <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No table sales yet.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-6">

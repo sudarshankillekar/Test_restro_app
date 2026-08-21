@@ -826,6 +826,60 @@ def build_date_match(start_date: Optional[str] = None, end_date: Optional[str] =
     return match
 
 
+def build_report_period_match(
+    period: str = "daily",
+    report_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    safe_period = period if period in {"daily", "weekly", "monthly"} else "daily"
+    if start_date or end_date:
+        if not start_date or not end_date:
+            raise HTTPException(status_code=400, detail="Both start date and end date are required.")
+        try:
+            start_day = datetime.fromisoformat(start_date).date()
+            end_day = datetime.fromisoformat(end_date).date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+        if end_day < start_day:
+            raise HTTPException(status_code=400, detail="End date must be on or after start date.")
+
+        start_dt = datetime.combine(start_day, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE)
+        end_dt = datetime.combine(end_day + timedelta(days=1), datetime.min.time(), tzinfo=BUSINESS_TIMEZONE)
+        return {
+            "$gte": start_dt.astimezone(timezone.utc),
+            "$lt": end_dt.astimezone(timezone.utc),
+        }, start_day.isoformat(), end_day.isoformat(), safe_period, end_day.isoformat()
+
+    if report_date:
+        try:
+            anchor_date = datetime.fromisoformat(report_date).date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid report date format. Use YYYY-MM-DD.")
+    else:
+        anchor_date = datetime.now(BUSINESS_TIMEZONE).date()
+
+    if safe_period == "weekly":
+        start_date = anchor_date - timedelta(days=6)
+        end_date = anchor_date + timedelta(days=1)
+    elif safe_period == "monthly":
+        start_date = anchor_date.replace(day=1)
+        if start_date.month == 12:
+            end_date = start_date.replace(year=start_date.year + 1, month=1)
+        else:
+            end_date = start_date.replace(month=start_date.month + 1)
+    else:
+        start_date = anchor_date
+        end_date = anchor_date + timedelta(days=1)
+
+    start_dt = datetime.combine(start_date, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE)
+    end_dt = datetime.combine(end_date, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE)
+    return {
+        "$gte": start_dt.astimezone(timezone.utc),
+        "$lt": end_dt.astimezone(timezone.utc),
+    }, start_date.isoformat(), (end_date - timedelta(days=1)).isoformat(), safe_period, anchor_date.isoformat()
+
+
 def to_socket_payload(data):
     return jsonable_encoder(data)
 
@@ -5095,6 +5149,401 @@ async def get_payment(order_id: str, request: Request):
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     return payment
+
+
+def make_report_card(report_id: str, category: str, title: str, value, value_type: str = "number", note: str = ""):
+    return {
+        "id": report_id,
+        "category": category,
+        "title": title,
+        "value": value,
+        "value_type": value_type,
+        "note": note,
+    }
+
+
+def safe_report_float(value) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def format_report_export_value(report) -> str:
+    value = report["value"]
+    if report["value_type"] == "currency":
+        return f"Rs. {safe_report_float(value):.2f}"
+    if report["value_type"] == "percent":
+        return f"{safe_report_float(value):.2f}%"
+    return str(value)
+
+
+def make_report_export_filename(report, payload) -> str:
+    label = report.get("id") if report else "all"
+    safe_label = "".join(char.lower() if char.isalnum() else "-" for char in label).strip("-")
+    safe_label = safe_label or "report"
+    return f"reports-{safe_label}-{payload['period']}-{payload['start_date']}-to-{payload['end_date']}.xlsx"
+
+
+async def build_admin_reports_payload(
+    restaurant_id: str,
+    period: str = "daily",
+    report_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    date_filter, start_date, end_date, safe_period, anchor_date = build_report_period_match(
+        period,
+        report_date,
+        start_date,
+        end_date,
+    )
+    payment_query = {
+        "restaurant_id": restaurant_id,
+        "status": "completed",
+        "created_at": date_filter,
+    }
+    order_query = {
+        "restaurant_id": restaurant_id,
+        "created_at": date_filter,
+    }
+
+    payments_task = db.payments.find(payment_query, {"_id": 0}).sort("created_at", -1).to_list(10000)
+    orders_task = db.orders.find(order_query, {"_id": 0}).sort("created_at", -1).to_list(10000)
+    tables_task = db.tables.find({"restaurant_id": restaurant_id}, {"_id": 0}).to_list(1000)
+    menu_items_task = db.menu_items.find({"restaurant_id": restaurant_id}, {"_id": 0}).to_list(5000)
+    categories_task = db.menu_categories.find({"restaurant_id": restaurant_id}, {"_id": 0}).to_list(1000)
+    cancellations_task = db.order_item_cancellations.find({
+        "restaurant_id": restaurant_id,
+        "cancelled_at": date_filter,
+    }, {"_id": 0}).to_list(10000)
+    deleted_bills_task = db.deleted_bills.find({
+        "restaurant_id": restaurant_id,
+        "deleted_at": date_filter,
+    }, {"_id": 0}).to_list(5000)
+    adjustments_task = db.cash_adjustments.find({
+        "restaurant_id": restaurant_id,
+        "created_at": date_filter,
+    }, {"_id": 0}).to_list(5000)
+    customer_sessions_task = db.customer_sessions.find({
+        "restaurant_id": restaurant_id,
+        "created_at": date_filter,
+    }, {"_id": 0}).sort("created_at", -1).to_list(10000)
+
+    payments, orders, tables, menu_items, categories, cancellations, deleted_bills, adjustments, customer_sessions = await asyncio.gather(
+        payments_task,
+        orders_task,
+        tables_task,
+        menu_items_task,
+        categories_task,
+        cancellations_task,
+        deleted_bills_task,
+        adjustments_task,
+        customer_sessions_task,
+    )
+
+    table_lookup = {
+        table.get("table_id"): f"Table {table.get('table_number')}" if table.get("table_number") is not None else table.get("table_id")
+        for table in tables
+    }
+    linked_order_ids = sorted({
+        order_id
+        for payment in payments
+        for order_id in (payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else []))
+        if order_id
+    })
+    paid_orders = []
+    if linked_order_ids:
+        paid_orders = await db.orders.find(
+            {"restaurant_id": restaurant_id, "order_id": {"$in": linked_order_ids}},
+            {"_id": 0}
+        ).to_list(len(linked_order_ids))
+
+    category_names = {category.get("category_id"): category.get("name", "Uncategorized") for category in categories}
+    menu_lookup = {
+        item.get("item_id"): {
+            "category": category_names.get(item.get("category_id"), "Uncategorized"),
+            "diet_type": item.get("diet_type", "veg"),
+        }
+        for item in menu_items
+    }
+
+    gross_sales = round(sum(safe_report_float(payment.get("subtotal")) for payment in payments), 2)
+    total_revenue = round(sum(safe_report_float(payment.get("total")) for payment in payments), 2)
+    total_discounts = round(sum(safe_report_float(payment.get("discount")) for payment in payments), 2)
+    tax_collected = round(sum(safe_report_float(payment.get("tax")) for payment in payments), 2)
+    service_charges = round(sum(safe_report_float(payment.get("service_charge")) for payment in payments), 2)
+    parcel_charges = round(sum(safe_report_float(payment.get("parcel_charge")) for payment in payments), 2)
+    completed_bills = len(payments)
+    avg_bill_value = round(total_revenue / completed_bills, 2) if completed_bills else 0
+
+    payment_totals = {"cash": 0.0, "upi": 0.0, "card": 0.0, "other": 0.0}
+    for payment in payments:
+        method = (payment.get("payment_method") or "other").lower()
+        method_key = method if method in payment_totals else "other"
+        payment_totals[method_key] = round(payment_totals[method_key] + safe_report_float(payment.get("total")), 2)
+
+    all_orders_count = len(orders)
+    dine_in_orders = sum(1 for order in orders if order.get("order_type") != "takeaway")
+    takeaway_orders = sum(1 for order in orders if order.get("order_type") == "takeaway")
+    qr_orders = sum(1 for order in orders if order.get("order_source") == "customer_qr")
+    counter_orders = sum(1 for order in orders if order.get("order_source") == "billing_counter")
+
+    item_sales = {}
+    category_sales = {}
+    table_sales = {}
+    diet_sales = {"veg": {"quantity": 0, "revenue": 0.0}, "non_veg": {"quantity": 0, "revenue": 0.0}, "egg": {"quantity": 0, "revenue": 0.0}, "vegan": {"quantity": 0, "revenue": 0.0}}
+    total_items_sold = 0
+    total_item_lines = 0
+
+    for order in paid_orders:
+        table_label = order.get("table_label") or (f"Table {order.get('table_number')}" if order.get("table_number") else order.get("table_id") or "Takeaway")
+        order_total = calculate_order_items_total(order.get("items", []))
+        table_sales.setdefault(table_label, {"table": table_label, "orders": 0, "revenue": 0.0})
+        table_sales[table_label]["orders"] += 1
+        table_sales[table_label]["revenue"] = round(table_sales[table_label]["revenue"] + order_total, 2)
+
+        for item in order.get("items", []):
+            quantity = get_item_billable_quantity(item)
+            if quantity <= 0:
+                continue
+            price = safe_report_float(item.get("price"))
+            revenue = round(quantity * price, 2)
+            total_items_sold += quantity
+            total_item_lines += 1
+            item_name = item.get("name") or "Unnamed Item"
+            item_sales.setdefault(item_name, {"name": item_name, "quantity": 0, "revenue": 0.0})
+            item_sales[item_name]["quantity"] += quantity
+            item_sales[item_name]["revenue"] = round(item_sales[item_name]["revenue"] + revenue, 2)
+
+            menu_meta = menu_lookup.get(item.get("item_id"), {})
+            category_name = menu_meta.get("category") or "Uncategorized"
+            category_sales.setdefault(category_name, {"category": category_name, "quantity": 0, "revenue": 0.0})
+            category_sales[category_name]["quantity"] += quantity
+            category_sales[category_name]["revenue"] = round(category_sales[category_name]["revenue"] + revenue, 2)
+
+            diet_type = item.get("diet_type") or menu_meta.get("diet_type") or "veg"
+            if diet_type not in diet_sales:
+                diet_type = "veg"
+            diet_sales[diet_type]["quantity"] += quantity
+            diet_sales[diet_type]["revenue"] = round(diet_sales[diet_type]["revenue"] + revenue, 2)
+
+    top_items = sorted(item_sales.values(), key=lambda item: (-item["quantity"], -item["revenue"], item["name"]))[:10]
+    top_categories = sorted(category_sales.values(), key=lambda item: (-item["revenue"], -item["quantity"], item["category"]))[:10]
+    top_tables = sorted(table_sales.values(), key=lambda item: (-item["revenue"], -item["orders"], item["table"]))[:10]
+    top_item = top_items[0] if top_items else None
+    top_category = top_categories[0] if top_categories else None
+
+    cancellation_loss_amount = round(sum(safe_report_float(entry.get("loss_amount")) for entry in cancellations), 2)
+    cancelled_quantity = sum(int(entry.get("quantity_cancelled") or entry.get("loss_quantity") or 0) for entry in cancellations)
+    deleted_bill_amount = round(sum(safe_report_float((entry.get("payment") or {}).get("total")) for entry in deleted_bills), 2)
+    cash_adjustment_total = round(sum(safe_report_float(entry.get("amount")) for entry in adjustments), 2)
+
+    active_table_ids = await db.orders.distinct("table_id", {
+        "restaurant_id": restaurant_id,
+        "order_type": {"$ne": "takeaway"},
+        "payment_status": {"$ne": "completed"},
+        "status": {"$nin": ["served", "cancelled"]},
+    })
+    total_tables = len(tables)
+    occupied_tables = len([table for table in tables if table.get("table_id") in active_table_ids])
+    table_utilization = round((occupied_tables / total_tables) * 100, 2) if total_tables else 0
+    customers = {
+        (order.get("phone") or order.get("customer_name") or "").strip().lower()
+        for order in orders
+        if (order.get("phone") or order.get("customer_name") or "").strip()
+    }
+    unique_customers = len(customers)
+    default_customer_names = {"walk-in customer", "takeaway customer", "customer"}
+    customer_contacts = []
+    contact_source_counts = {"QR Scan": 0, "Counter Order": 0, "Waiter Dashboard": 0}
+
+    def should_include_customer_contact(name: str, phone: str) -> bool:
+        clean_name = (name or "").strip()
+        clean_phone = (phone or "").strip()
+        return bool(clean_phone) or bool(clean_name and clean_name.lower() not in default_customer_names)
+
+    def add_customer_contact(source: str, name: str, phone: str, table_id: str = "", table_label: str = "", order_id: str = "", captured_at=None):
+        if not should_include_customer_contact(name, phone):
+            return
+        customer_contacts.append({
+            "source": source,
+            "customer_name": (name or "").strip(),
+            "phone": (phone or "").strip(),
+            "table": table_label or table_lookup.get(table_id) or table_id or "Takeaway",
+            "order_id": order_id or "",
+            "captured_at": format_export_datetime(captured_at),
+            "_captured_at": captured_at,
+        })
+        contact_source_counts[source] = contact_source_counts.get(source, 0) + 1
+
+    for session in customer_sessions:
+        add_customer_contact(
+            "QR Scan",
+            session.get("customer_name", ""),
+            session.get("phone", ""),
+            table_id=session.get("table_id", ""),
+            captured_at=session.get("created_at"),
+        )
+
+    for order in orders:
+        order_source = order.get("order_source")
+        if order_source not in {"billing_counter", "waiter"}:
+            continue
+        add_customer_contact(
+            "Waiter Dashboard" if order_source == "waiter" else "Counter Order",
+            order.get("customer_name", ""),
+            order.get("phone", ""),
+            table_id=order.get("table_id", ""),
+            table_label=order.get("table_label", ""),
+            order_id=order.get("order_id", ""),
+            captured_at=order.get("created_at"),
+        )
+
+    customer_contacts.sort(
+        key=lambda contact: to_aware_utc(contact["_captured_at"]) if isinstance(contact.get("_captured_at"), datetime) else datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    for contact in customer_contacts:
+        contact.pop("_captured_at", None)
+
+    avg_items_per_bill = round(total_items_sold / completed_bills, 2) if completed_bills else 0
+
+    reports = [
+        make_report_card("gross_sales", "Sales", "Gross Sales", gross_sales, "currency", "Subtotal before taxes, charges, and discounts."),
+        make_report_card("net_sales", "Sales", "Net Sales / Revenue", total_revenue, "currency", "Completed payment total."),
+        make_report_card("discounts", "Sales", "Discounts Given", total_discounts, "currency", "Total discount applied on completed bills."),
+        make_report_card("tax_collected", "Sales", "Tax Collected", tax_collected, "currency", "Tax collected from completed bills."),
+        make_report_card("service_charges", "Sales", "Service Charges", service_charges, "currency", "Service charges collected."),
+        make_report_card("parcel_charges", "Sales", "Parcel Charges", parcel_charges, "currency", "Takeaway parcel charges collected."),
+        make_report_card("completed_bills", "Billing", "Completed Bills", completed_bills, "number", "Paid bills generated in the selected period."),
+        make_report_card("avg_bill_value", "Billing", "Average Bill Value", avg_bill_value, "currency", "Net sales divided by completed bills."),
+        make_report_card("cash_sales", "Payments", "Cash Sales", payment_totals["cash"], "currency", "Completed cash payments."),
+        make_report_card("upi_sales", "Payments", "UPI Sales", payment_totals["upi"], "currency", "Completed UPI payments."),
+        make_report_card("card_sales", "Payments", "Card Sales", payment_totals["card"], "currency", "Completed card payments."),
+        make_report_card("total_orders", "Orders", "Total Orders", all_orders_count, "number", "Orders created in the selected period."),
+        make_report_card("dine_in_orders", "Orders", "Dine-In Orders", dine_in_orders, "number", "Dine-in orders created."),
+        make_report_card("takeaway_orders", "Orders", "Takeaway Orders", takeaway_orders, "number", "Takeaway orders created."),
+        make_report_card("qr_orders", "Orders", "QR Customer Orders", qr_orders, "number", "Orders placed from customer QR menu."),
+        make_report_card("counter_orders", "Orders", "Counter Orders", counter_orders, "number", "Orders created from billing counter."),
+        make_report_card("avg_items_per_bill", "Menu", "Average Items Per Bill", avg_items_per_bill, "decimal", "Billable item quantity divided by completed bills."),
+        make_report_card("items_sold", "Menu", "Items Sold", total_items_sold, "number", "Billable menu item quantity sold."),
+        make_report_card("top_item", "Menu", "Top Selling Item", top_item["name"] if top_item else "No sales yet", "text", f"{top_item['quantity']} qty / Rs. {top_item['revenue']:.2f}" if top_item else ""),
+        make_report_card("top_category", "Menu", "Top Category", top_category["category"] if top_category else "No sales yet", "text", f"{top_category['quantity']} qty / Rs. {top_category['revenue']:.2f}" if top_category else ""),
+        make_report_card("cancellation_loss", "Control", "Cancellation Loss", cancellation_loss_amount, "currency", f"{cancelled_quantity} cancelled item quantity."),
+        make_report_card("deleted_bills", "Control", "Deleted Bills", len(deleted_bills), "number", f"Deleted bill value: Rs. {deleted_bill_amount:.2f}."),
+        make_report_card("cash_adjustments", "Control", "Cash Adjustments", cash_adjustment_total, "currency", "Net cash adjustment amount."),
+        make_report_card("table_utilization", "Tables", "Current Table Occupancy", table_utilization, "percent", f"{occupied_tables}/{total_tables} tables occupied right now."),
+        make_report_card("unique_customers", "Customers", "Unique Customers", unique_customers, "number", "Unique customer names or phone numbers in orders."),
+        make_report_card(
+            "customer_contacts",
+            "Customers",
+            "Customer Contact Captures",
+            len(customer_contacts),
+            "number",
+            f"QR: {contact_source_counts.get('QR Scan', 0)}, Counter: {contact_source_counts.get('Counter Order', 0)}, Waiter: {contact_source_counts.get('Waiter Dashboard', 0)}.",
+        ),
+    ]
+
+    return {
+        "period": safe_period,
+        "selected_date": anchor_date,
+        "start_date": start_date,
+        "end_date": end_date,
+        "reports": reports,
+        "details": {
+            "top_items": top_items,
+            "top_categories": top_categories,
+            "top_tables": top_tables,
+            "payment_breakdown": payment_totals,
+            "diet_sales": diet_sales,
+            "customer_contacts": customer_contacts,
+        },
+    }
+
+
+@api_router.get("/reports/summary")
+async def get_admin_reports(
+    request: Request,
+    period: str = "daily",
+    report_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    return await build_admin_reports_payload(restaurant_id, period, report_date, start_date, end_date)
+
+
+@api_router.get("/reports/export")
+async def export_admin_reports(
+    request: Request,
+    period: str = "daily",
+    report_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    report_id: Optional[str] = None,
+):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    payload = await build_admin_reports_payload(restaurant_id, period, report_date, start_date, end_date)
+    selected_report = None
+    export_reports = payload["reports"]
+    if report_id:
+        selected_report = next((report for report in payload["reports"] if report["id"] == report_id), None)
+        if not selected_report:
+            raise HTTPException(status_code=404, detail="Report not found")
+        export_reports = [selected_report]
+
+    if selected_report and selected_report["id"] == "customer_contacts":
+        rows = [
+            [
+                payload["period"].title(),
+                payload["start_date"],
+                payload["end_date"],
+                contact.get("source", ""),
+                contact.get("customer_name", ""),
+                contact.get("phone", ""),
+                contact.get("table", ""),
+                contact.get("order_id", ""),
+                contact.get("captured_at", ""),
+            ]
+            for contact in payload["details"].get("customer_contacts", [])
+        ]
+        workbook = build_xlsx_bytes(
+            headers=["Period", "Start Date", "End Date", "Source", "Customer Name", "Phone", "Table", "Order ID", "Captured At"],
+            rows=rows,
+            sheet_name="Customer Contacts",
+        )
+        filename = make_report_export_filename(selected_report, payload)
+        return StreamingResponse(
+            BytesIO(workbook),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    rows = []
+    for report in export_reports:
+        rows.append([
+            payload["period"].title(),
+            payload["start_date"],
+            payload["end_date"],
+            report["category"],
+            report["title"],
+            format_report_export_value(report),
+            report.get("note", ""),
+        ])
+
+    workbook = build_xlsx_bytes(
+        headers=["Period", "Start Date", "End Date", "Category", "Report", "Value", "Notes"],
+        rows=rows,
+        sheet_name="Reports",
+    )
+    filename = make_report_export_filename(selected_report, payload)
+    return StreamingResponse(
+        BytesIO(workbook),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 # ============ Analytics Endpoints ============
 @api_router.get("/analytics/dashboard")
