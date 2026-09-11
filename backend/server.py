@@ -1224,6 +1224,7 @@ def build_cors_origins() -> list[str]:
         "http://127.0.0.1:3000",
         "https://dineflo.online",
         "https://www.dineflo.online",
+        "https://sqaenv.vercel.app",
     }
     if frontend_url:
         default_origins.add(frontend_url)
