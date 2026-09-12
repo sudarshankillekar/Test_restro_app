@@ -43,6 +43,7 @@ from models import (
     AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
 from xlsx_export import build_xlsx_bytes, parse_xlsx_bytes
+from whatsapp_billing import send_bill_pdf_via_evolution
 import jwt
 import secrets
 
@@ -4464,7 +4465,8 @@ async def create_payment(input: PaymentCreate, request: Request):
         "payment_method": input.payment_method,
         "status": "completed",
         "created_at": datetime.now(timezone.utc),
-        "created_by": user["_id"]
+        "created_by": user["_id"],
+        "whatsapp_status": "queued",
     }
     try:
         await db.payments.insert_one(payment_doc)
@@ -4524,6 +4526,8 @@ async def create_payment(input: PaymentCreate, request: Request):
                 updated_order["order_id"]
             )
         )
+
+    schedule_background_task(send_bill_pdf_via_evolution(payment_doc, orders, restaurant, db))
     
     return {k: v for k, v in payment_doc.items() if k != "_id"}
 
@@ -4642,6 +4646,7 @@ async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
         "created_at": now,
         "created_by": user["_id"],
         "created_by_role": user["role"],
+        "whatsapp_status": "queued",
     }
 
     await db.orders.insert_one(order_doc)
@@ -4652,6 +4657,7 @@ async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
         raise
 
     schedule_background_task(upsert_customer_record(restaurant_id, display_customer_name, phone))
+    schedule_background_task(send_bill_pdf_via_evolution(payment_doc, [order_doc], restaurant, db))
     if payment_method == "cash":
         schedule_background_task(
             sio.emit(
