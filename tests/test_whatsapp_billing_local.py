@@ -32,7 +32,11 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
                 raise httpx.ReadTimeout('simulated timeout', request=request)
             return httpx.Response(status, json=body if body is not None else {'key': {'id': 'LOCAL-MESSAGE'}})
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        db = SimpleNamespace(payments=SimpleNamespace(update_one=AsyncMock()))
+        db = SimpleNamespace(
+            payments=SimpleNamespace(update_one=AsyncMock()),
+            customer_sessions=SimpleNamespace(find_one=AsyncMock(return_value=None)),
+            customers=SimpleNamespace(find_one=AsyncMock(return_value=None)),
+        )
         before = copy.deepcopy(PAYMENT)
         with patch.dict(os.environ, ENV if env is None else env, clear=True), \
              patch.object(billing.httpx, 'AsyncClient', return_value=client), \
@@ -74,6 +78,44 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         requests, state = await self.deliver(orders=[dict(phone='')])
         self.assertFalse(requests)
         self.assertEqual(state['whatsapp_status'], 'skipped')
+
+    async def test_qr_session_phone_fallback_is_used_when_order_phone_missing(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(201, json={'key': {'id': 'SESSION-MESSAGE'}})
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        db = SimpleNamespace(
+            payments=SimpleNamespace(update_one=AsyncMock()),
+            customer_sessions=SimpleNamespace(find_one=AsyncMock(return_value={'phone': '7795446647'})),
+            customers=SimpleNamespace(find_one=AsyncMock(return_value=None)),
+        )
+        payment = dict(PAYMENT, table_id='table-1')
+        orders = [dict(ORDERS[0], phone='')]
+        with patch.dict(os.environ, ENV, clear=True), patch.object(billing.httpx, 'AsyncClient', return_value=client):
+            await billing.send_bill_pdf_via_evolution(payment, orders, RESTAURANT, db)
+        payload = json.loads(requests[0].content)
+        self.assertEqual(payload['number'], '917795446647')
+        db.customer_sessions.find_one.assert_awaited()
+
+    async def test_customer_record_phone_fallback_is_used_when_order_phone_missing(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(201, json={'key': {'id': 'CUSTOMER-MESSAGE'}})
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        db = SimpleNamespace(
+            payments=SimpleNamespace(update_one=AsyncMock()),
+            customer_sessions=SimpleNamespace(find_one=AsyncMock(return_value=None)),
+            customers=SimpleNamespace(find_one=AsyncMock(return_value={'phone': '9620629975'})),
+        )
+        payment = dict(PAYMENT, table_id='')
+        orders = [dict(ORDERS[0], phone='')]
+        with patch.dict(os.environ, ENV, clear=True), patch.object(billing.httpx, 'AsyncClient', return_value=client):
+            await billing.send_bill_pdf_via_evolution(payment, orders, RESTAURANT, db)
+        payload = json.loads(requests[0].content)
+        self.assertEqual(payload['number'], '919620629975')
+        db.customers.find_one.assert_awaited()
 
     async def test_api_rejection_records_failure_without_raising(self):
         _, state = await self.deliver(status=401)

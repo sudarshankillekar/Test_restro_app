@@ -50,6 +50,76 @@ def normalize_whatsapp_number(phone):
     return digits if len(digits) >= 10 else ""
 
 
+def _first_present(*values):
+    for value in values:
+        if value is not None and str(value).strip():
+            return value
+    return ""
+
+
+def find_order_phone(orders):
+    for order in orders:
+        phone = _first_present(
+            order.get("phone"),
+            order.get("customer_phone"),
+            order.get("mobile"),
+            order.get("contact_number"),
+        )
+        normalized = normalize_whatsapp_number(phone)
+        if normalized:
+            return normalized
+    return ""
+
+
+async def resolve_bill_recipient_phone(payment, orders, db):
+    """Resolve the bill recipient from orders first, then nearby customer records."""
+    direct_phone = normalize_whatsapp_number(_first_present(
+        payment.get("phone"),
+        payment.get("customer_phone"),
+        payment.get("mobile"),
+        payment.get("contact_number"),
+    ))
+    if direct_phone:
+        return direct_phone
+
+    order_phone = find_order_phone(orders)
+    if order_phone:
+        return order_phone
+
+    restaurant_id = payment.get("restaurant_id")
+    table_id = payment.get("table_id")
+    if restaurant_id and table_id and hasattr(db, "customer_sessions"):
+        session = await db.customer_sessions.find_one(
+            {
+                "restaurant_id": restaurant_id,
+                "table_id": table_id,
+                "phone": {"$exists": True, "$ne": ""},
+            },
+            {"_id": 0, "phone": 1},
+            sort=[("created_at", -1)],
+        )
+        session_phone = normalize_whatsapp_number((session or {}).get("phone"))
+        if session_phone:
+            return session_phone
+
+    customer_name = next((order.get("customer_name") for order in orders if order.get("customer_name")), "")
+    if restaurant_id and customer_name and hasattr(db, "customers"):
+        customer = await db.customers.find_one(
+            {
+                "restaurant_id": restaurant_id,
+                "customer_name": customer_name,
+                "phone": {"$exists": True, "$ne": ""},
+            },
+            {"_id": 0, "phone": 1},
+            sort=[("last_visit", -1)],
+        )
+        customer_phone = normalize_whatsapp_number((customer or {}).get("phone"))
+        if customer_phone:
+            return customer_phone
+
+    return ""
+
+
 def build_bill_pdf(payment, orders, restaurant):
     """Build a compact, printable A4 bill and return its bytes."""
     # Imported lazily so the API can still boot for non-billing endpoints if a
@@ -176,7 +246,7 @@ async def send_bill_pdf_via_evolution(payment, orders, restaurant, db):
     api_url = (os.getenv("EVOLUTION_API_URL") or "").rstrip("/")
     api_key = os.getenv("EVOLUTION_API_KEY") or ""
     instance = os.getenv("EVOLUTION_INSTANCE") or ""
-    phone = next((normalize_whatsapp_number(order.get("phone")) for order in orders if order.get("phone")), "")
+    phone = await resolve_bill_recipient_phone(payment, orders, db)
 
     if not api_url or not api_key or not instance:
         await db.payments.update_one(payment_filter, {"$set": {
