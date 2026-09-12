@@ -5139,6 +5139,82 @@ async def get_completed_payments(request: Request, period: str = "daily"):
     return completed_bills
 
 
+async def get_completed_payment_bill(bill_id: str, restaurant_id: str):
+    payment = await db.payments.find_one(
+        {
+            "restaurant_id": restaurant_id,
+            "status": "completed",
+            "$or": [{"bill_id": bill_id}, {"payment_id": bill_id}],
+        },
+        {"_id": 0},
+    )
+    if not payment:
+        raise HTTPException(status_code=404, detail="Completed bill not found")
+
+    payment_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
+    orders = []
+    if payment_order_ids:
+        orders = await db.orders.find(
+            {"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}},
+            {"_id": 0},
+        ).to_list(len(payment_order_ids))
+
+    restaurant = await db.restaurants.find_one({"restaurant_id": restaurant_id}, {"_id": 0})
+    return payment, orders, restaurant
+
+
+@api_router.get("/payments/completed/{bill_id}/whatsapp")
+async def get_completed_payment_whatsapp_status(bill_id: str, request: Request):
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing", "kitchen_billing", "pos"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    payment, orders, _ = await get_completed_payment_bill(bill_id, restaurant_id)
+    first_order = orders[0] if orders else {}
+    return {
+        "bill_id": payment.get("bill_id") or payment.get("payment_id"),
+        "payment_id": payment.get("payment_id"),
+        "customer_name": first_order.get("customer_name") or "",
+        "phone": first_order.get("phone") or payment.get("phone") or "",
+        "whatsapp_status": payment.get("whatsapp_status") or "not_started",
+        "whatsapp_error": payment.get("whatsapp_error") or "",
+        "whatsapp_message_id": payment.get("whatsapp_message_id") or "",
+        "whatsapp_updated_at": payment.get("whatsapp_updated_at"),
+        "whatsapp_sent_at": payment.get("whatsapp_sent_at"),
+    }
+
+
+@api_router.post("/payments/completed/{bill_id}/whatsapp/resend")
+async def resend_completed_payment_whatsapp_bill(bill_id: str, request: Request):
+    user = await get_current_user(request, db)
+    if user["role"] not in ["admin", "billing", "kitchen_billing", "pos"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    restaurant_id = user.get("restaurant_id")
+    if not restaurant_id:
+        raise HTTPException(status_code=400, detail="User not associated with any restaurant")
+
+    payment, orders, restaurant = await get_completed_payment_bill(bill_id, restaurant_id)
+    await send_bill_pdf_via_evolution(payment, orders, restaurant, db)
+    updated_payment = await db.payments.find_one(
+        {"payment_id": payment["payment_id"], "restaurant_id": restaurant_id},
+        {"_id": 0},
+    )
+    return {
+        "bill_id": updated_payment.get("bill_id") or updated_payment.get("payment_id"),
+        "payment_id": updated_payment.get("payment_id"),
+        "whatsapp_status": updated_payment.get("whatsapp_status") or "not_started",
+        "whatsapp_error": updated_payment.get("whatsapp_error") or "",
+        "whatsapp_message_id": updated_payment.get("whatsapp_message_id") or "",
+        "whatsapp_updated_at": updated_payment.get("whatsapp_updated_at"),
+        "whatsapp_sent_at": updated_payment.get("whatsapp_sent_at"),
+    }
+
+
 @api_router.get("/payments/{order_id}")
 async def get_payment(order_id: str, request: Request):
     user = await get_current_user(request, db)
