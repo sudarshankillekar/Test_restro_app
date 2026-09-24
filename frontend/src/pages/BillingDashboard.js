@@ -161,6 +161,13 @@ const isReadyForBilling = (order) => (
   order?.payment_status !== 'completed' && (['prepared', 'served'].includes(order.status) || isImmediateCounterBillable(order))
 );
 
+const isActiveCounterOrder = (order) => (
+  order?.order_source === 'billing_counter'
+  && order.payment_status !== 'completed'
+  && !['served', 'cancelled'].includes(order.status)
+  && !isReadyForBilling(order)
+);
+
 const printHtml = (html, title) => {
   const popup = window.open('', '_blank', 'width=900,height=720');
   if (!popup) {
@@ -548,11 +555,7 @@ const BillingDashboard = ({ embedded = false }) => {
 
   const activeCounterOrders = useMemo(() => (
     orders
-      .filter((order) => (
-        order.order_source === 'billing_counter'
-        && order.payment_status !== 'completed'
-        && !isReadyForBilling(order)
-      ))
+      .filter(isActiveCounterOrder)
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
   ), [orders]);
 

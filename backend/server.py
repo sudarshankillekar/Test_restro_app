@@ -39,6 +39,7 @@ from models import (
     LoginRequest, RegisterRequest, UserResponse, MenuItemCreate, MenuItemUpdate,
     TableCreate, CategoryCreate, CustomerSessionCreate, OrderCreate, CounterOrderCreate, OrderItemsUpdate, OrderItemCancelRequest, OrderResponse,
     PaymentCreate, PosCheckoutCreate, PosBillUpdate, PosBillDeleteRequest, CashAdjustmentCreate, CashDrawerOpeningCreate,
+    ExpenseCategoryCreate, ExpenseCategoryUpdate, ExpenseCreate, ExpenseUpdate,
     AttendanceSettingsUpdate, AttendanceShiftCreate, AttendanceShiftUpdate, AttendanceProfileShiftAssign, AttendanceEnrollRequest, AttendancePunchRequest,
     AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
@@ -1083,6 +1084,130 @@ def coerce_nonnegative_float(value, default: float = 0) -> float:
         return max(float(value), 0)
     except (TypeError, ValueError):
         return default
+
+
+def normalize_expense_type(value: Optional[str]) -> str:
+    expense_type = (value or "variable").strip().lower()
+    if expense_type not in {"fixed", "variable"}:
+        raise HTTPException(status_code=400, detail="expense_type must be fixed or variable.")
+    return expense_type
+
+
+def parse_expense_date(value: Optional[str]) -> datetime:
+    if not value:
+        now = datetime.now(BUSINESS_TIMEZONE)
+        return datetime.combine(now.date(), datetime.min.time(), tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc)
+    try:
+        parsed_date = datetime.fromisoformat(value).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid expense_date format. Use YYYY-MM-DD.")
+    return datetime.combine(parsed_date, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc)
+
+
+def parse_expense_effective_date(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    return parse_expense_date(value)
+
+
+def normalize_monthly_amount(value: Optional[float]) -> float:
+    if value is None:
+        return 0.0
+    return round(max(float(value), 0), 2)
+
+
+def get_next_month_start(day):
+    if day.month == 12:
+        return day.replace(year=day.year + 1, month=1, day=1)
+    return day.replace(month=day.month + 1, day=1)
+
+
+def build_recurring_fixed_expenses(categories: list[dict], start_iso: str, end_iso: str) -> list[dict]:
+    try:
+        range_start = datetime.fromisoformat(start_iso).date()
+        range_end = datetime.fromisoformat(end_iso).date()
+    except ValueError:
+        return []
+
+    recurring = []
+    for category in categories:
+        if category.get("expense_type") != "fixed":
+            continue
+        monthly_amount = normalize_monthly_amount(category.get("monthly_amount"))
+        if monthly_amount <= 0:
+            continue
+
+        effective_from = category.get("effective_from")
+        if isinstance(effective_from, datetime):
+            effective_day = effective_from.astimezone(BUSINESS_TIMEZONE).date()
+        else:
+            effective_day = range_start
+        active_start = max(range_start, effective_day)
+        if active_start > range_end:
+            continue
+
+        cursor = active_start.replace(day=1)
+        amount = 0.0
+        while cursor <= range_end:
+            next_month = get_next_month_start(cursor)
+            month_end = next_month - timedelta(days=1)
+            overlap_start = max(active_start, cursor)
+            overlap_end = min(range_end, month_end)
+            if overlap_start <= overlap_end:
+                days_in_month = (next_month - cursor).days
+                covered_days = (overlap_end - overlap_start).days + 1
+                amount += monthly_amount * covered_days / days_in_month
+            cursor = next_month
+
+        recurring.append({
+            "expense_id": f"fixed_{category.get('category_id')}",
+            "category_id": category.get("category_id"),
+            "category_name": category.get("name") or "Fixed expense",
+            "expense_type": "fixed",
+            "amount": round(amount, 2),
+            "expense_date": datetime.combine(active_start, datetime.min.time(), tzinfo=BUSINESS_TIMEZONE).astimezone(timezone.utc),
+            "notes": "Auto-included fixed monthly expense",
+            "is_recurring_fixed": True,
+            "monthly_amount": monthly_amount,
+            "effective_from": effective_from,
+        })
+
+    return [expense for expense in recurring if expense["amount"] > 0]
+
+
+def make_profit_loss_recommendations(summary: dict, categories: list[dict]) -> list[str]:
+    recommendations = []
+    revenue = summary["revenue"]
+    total_expenses = summary["total_expenses"]
+    net_profit = summary["net_profit"]
+    expense_ratio = summary["expense_ratio"]
+
+    if revenue <= 0:
+        recommendations.append("Start by recording completed sales for this period, then compare expenses against actual revenue.")
+    elif net_profit < 0:
+        recommendations.append("Expenses are higher than revenue for this period. Review the biggest expense category first before adding new costs.")
+    elif expense_ratio > 70:
+        recommendations.append("Expense ratio is above 70%. Try reducing variable costs or increasing menu pricing on high-demand items.")
+    elif expense_ratio < 45:
+        recommendations.append("Expense control looks healthy. Focus on increasing repeat orders and high-margin items.")
+    else:
+        recommendations.append("Profitability is stable. Watch variable expenses weekly so small changes do not silently reduce margin.")
+
+    if categories:
+        top_category = categories[0]
+        top_share = top_category.get("share", 0)
+        if top_share >= 50:
+            recommendations.append(f"{top_category['name']} is {top_share:.1f}% of expenses. Negotiate rates or compare suppliers for that category.")
+        variable_total = sum(category["amount"] for category in categories if category.get("expense_type") == "variable")
+        if total_expenses and variable_total / total_expenses > 0.6:
+            recommendations.append("Variable expenses are the largest cost bucket. Track raw material wastage and purchase quantities daily.")
+        fixed_total = sum(category["amount"] for category in categories if category.get("expense_type") == "fixed")
+        if revenue and fixed_total / revenue > 0.35:
+            recommendations.append("Fixed costs are taking more than 35% of revenue. Review rent, salaries, subscriptions, and utilities before expanding.")
+    else:
+        recommendations.append("Add rent, electricity, staff, raw material, and packaging expenses to get a clearer profit picture.")
+
+    return recommendations[:4]
 
 
 def normalize_billing_settings(restaurant: Optional[dict]) -> dict:
@@ -5628,6 +5753,278 @@ async def export_admin_reports(
     )
 
 
+# ============ Expense & Profit/Loss Endpoints ============
+@api_router.get("/expenses/categories")
+async def get_expense_categories(request: Request):
+    user, restaurant_id = await resolve_restaurant_access(request, ["admin", "billing", "kitchen_billing"])
+    categories = await db.expense_categories.find(
+        {"restaurant_id": restaurant_id, "active": {"$ne": False}},
+        {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
+    return categories
+
+
+@api_router.post("/expenses/categories")
+async def create_expense_category(input: ExpenseCategoryCreate, request: Request):
+    user, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    name = input.name.strip()
+    expense_type = normalize_expense_type(input.expense_type)
+    existing = await db.expense_categories.find_one({
+        "restaurant_id": restaurant_id,
+        "name_normalized": name.lower(),
+        "active": {"$ne": False},
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail="Expense category already exists.")
+
+    now = datetime.now(timezone.utc)
+    category_doc = {
+        "category_id": f"exp_cat_{secrets.token_hex(6)}",
+        "restaurant_id": restaurant_id,
+        "name": name,
+        "name_normalized": name.lower(),
+        "expense_type": expense_type,
+        "monthly_amount": normalize_monthly_amount(input.monthly_amount) if expense_type == "fixed" else 0.0,
+        "effective_from": parse_expense_effective_date(input.effective_from),
+        "active": True,
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["_id"],
+    }
+    await db.expense_categories.insert_one(category_doc)
+    return {key: value for key, value in category_doc.items() if key != "_id"}
+
+
+@api_router.put("/expenses/categories/{category_id}")
+async def update_expense_category(category_id: str, input: ExpenseCategoryUpdate, request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    update_data = {"updated_at": datetime.now(timezone.utc)}
+    if input.name is not None:
+        name = input.name.strip()
+        update_data["name"] = name
+        update_data["name_normalized"] = name.lower()
+    if input.expense_type is not None:
+        update_data["expense_type"] = normalize_expense_type(input.expense_type)
+        if update_data["expense_type"] == "variable":
+            update_data["monthly_amount"] = 0.0
+            update_data["effective_from"] = None
+    if input.monthly_amount is not None:
+        update_data["monthly_amount"] = normalize_monthly_amount(input.monthly_amount)
+    if input.effective_from is not None:
+        update_data["effective_from"] = parse_expense_effective_date(input.effective_from)
+    if input.active is not None:
+        update_data["active"] = bool(input.active)
+
+    result = await db.expense_categories.update_one(
+        {"category_id": category_id, "restaurant_id": restaurant_id},
+        {"$set": update_data}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Expense category not found.")
+    category = await db.expense_categories.find_one({"category_id": category_id, "restaurant_id": restaurant_id}, {"_id": 0})
+    return category
+
+
+@api_router.delete("/expenses/categories/{category_id}")
+async def delete_expense_category(category_id: str, request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    result = await db.expense_categories.update_one(
+        {"category_id": category_id, "restaurant_id": restaurant_id},
+        {"$set": {"active": False, "updated_at": datetime.now(timezone.utc)}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Expense category not found.")
+    return {"message": "Expense category removed"}
+
+
+async def resolve_expense_category(restaurant_id: str, category_id: Optional[str], category_name: Optional[str], expense_type: str):
+    if category_id:
+        category = await db.expense_categories.find_one(
+            {"category_id": category_id, "restaurant_id": restaurant_id, "active": {"$ne": False}},
+            {"_id": 0}
+        )
+        if not category:
+            raise HTTPException(status_code=404, detail="Expense category not found.")
+        return category["category_id"], category["name"], category.get("expense_type") or expense_type
+
+    name = (category_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Select a category or enter a new category name.")
+
+    existing = await db.expense_categories.find_one(
+        {"restaurant_id": restaurant_id, "name_normalized": name.lower(), "active": {"$ne": False}},
+        {"_id": 0}
+    )
+    if existing:
+        return existing["category_id"], existing["name"], existing.get("expense_type") or expense_type
+
+    now = datetime.now(timezone.utc)
+    category_doc = {
+        "category_id": f"exp_cat_{secrets.token_hex(6)}",
+        "restaurant_id": restaurant_id,
+        "name": name,
+        "name_normalized": name.lower(),
+        "expense_type": expense_type,
+        "monthly_amount": 0.0,
+        "effective_from": None,
+        "active": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.expense_categories.insert_one(category_doc)
+    return category_doc["category_id"], category_doc["name"], category_doc["expense_type"]
+
+
+@api_router.get("/expenses")
+async def get_expenses(request: Request, period: str = "daily", start_date: str = None, end_date: str = None):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin", "billing", "kitchen_billing"])
+    date_filter, _, _, _, _ = build_report_period_match(period=period, start_date=start_date, end_date=end_date)
+    expenses = await db.expenses.find(
+        {"restaurant_id": restaurant_id, "expense_date": date_filter},
+        {"_id": 0}
+    ).sort("expense_date", -1).to_list(2000)
+    return expenses
+
+
+@api_router.post("/expenses")
+async def create_expense(input: ExpenseCreate, request: Request):
+    user, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    expense_type = normalize_expense_type(input.expense_type)
+    category_id, category_name, resolved_type = await resolve_expense_category(
+        restaurant_id,
+        input.category_id,
+        input.category_name,
+        expense_type,
+    )
+    expense_date = parse_expense_date(input.expense_date)
+    now = datetime.now(timezone.utc)
+    expense_doc = {
+        "expense_id": f"exp_{secrets.token_hex(6)}",
+        "restaurant_id": restaurant_id,
+        "category_id": category_id,
+        "category_name": category_name,
+        "expense_type": normalize_expense_type(resolved_type),
+        "amount": round(float(input.amount), 2),
+        "expense_date": expense_date,
+        "notes": (input.notes or "").strip(),
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["_id"],
+        "created_by_name": user.get("name") or user.get("email"),
+    }
+    await db.expenses.insert_one(expense_doc)
+    return {key: value for key, value in expense_doc.items() if key != "_id"}
+
+
+@api_router.put("/expenses/{expense_id}")
+async def update_expense(expense_id: str, input: ExpenseUpdate, request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    existing = await db.expenses.find_one({"expense_id": expense_id, "restaurant_id": restaurant_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Expense not found.")
+
+    expense_type = normalize_expense_type(input.expense_type or existing.get("expense_type"))
+    update_data = {"updated_at": datetime.now(timezone.utc), "expense_type": expense_type}
+    if input.category_id is not None or input.category_name is not None:
+        category_id, category_name, resolved_type = await resolve_expense_category(
+            restaurant_id,
+            input.category_id,
+            input.category_name,
+            expense_type,
+        )
+        update_data["category_id"] = category_id
+        update_data["category_name"] = category_name
+        update_data["expense_type"] = normalize_expense_type(resolved_type)
+    if input.amount is not None:
+        update_data["amount"] = round(float(input.amount), 2)
+    if input.expense_date is not None:
+        update_data["expense_date"] = parse_expense_date(input.expense_date)
+    if input.notes is not None:
+        update_data["notes"] = input.notes.strip()
+
+    await db.expenses.update_one(
+        {"expense_id": expense_id, "restaurant_id": restaurant_id},
+        {"$set": update_data}
+    )
+    return await db.expenses.find_one({"expense_id": expense_id, "restaurant_id": restaurant_id}, {"_id": 0})
+
+
+@api_router.delete("/expenses/{expense_id}")
+async def delete_expense(expense_id: str, request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    result = await db.expenses.delete_one({"expense_id": expense_id, "restaurant_id": restaurant_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Expense not found.")
+    return {"message": "Expense deleted"}
+
+
+@api_router.get("/expenses/profit-loss")
+async def get_profit_loss_summary(request: Request, period: str = "daily", start_date: str = None, end_date: str = None):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin", "billing", "kitchen_billing"])
+    date_filter, resolved_start, resolved_end, safe_period, anchor_date = build_report_period_match(
+        period=period,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    payments_task = db.payments.find(
+        {"restaurant_id": restaurant_id, "status": "completed", "created_at": date_filter},
+        {"_id": 0, "total": 1}
+    ).to_list(5000)
+    expenses_task = db.expenses.find(
+        {"restaurant_id": restaurant_id, "expense_date": date_filter},
+        {"_id": 0}
+    ).sort("expense_date", -1).to_list(5000)
+    fixed_categories_task = db.expense_categories.find(
+        {"restaurant_id": restaurant_id, "expense_type": "fixed", "active": {"$ne": False}},
+        {"_id": 0}
+    ).to_list(500)
+    payments, expenses, fixed_categories = await asyncio.gather(payments_task, expenses_task, fixed_categories_task)
+    recurring_fixed_expenses = build_recurring_fixed_expenses(fixed_categories, resolved_start, resolved_end)
+    expenses = recurring_fixed_expenses + expenses
+
+    revenue = round(sum(float(payment.get("total", 0) or 0) for payment in payments), 2)
+    total_expenses = round(sum(float(expense.get("amount", 0) or 0) for expense in expenses), 2)
+    fixed_expenses = round(sum(float(expense.get("amount", 0) or 0) for expense in expenses if expense.get("expense_type") == "fixed"), 2)
+    variable_expenses = round(total_expenses - fixed_expenses, 2)
+    net_profit = round(revenue - total_expenses, 2)
+
+    grouped = {}
+    for expense in expenses:
+        key = expense.get("category_id") or expense.get("category_name") or "uncategorized"
+        if key not in grouped:
+            grouped[key] = {
+                "category_id": expense.get("category_id"),
+                "name": expense.get("category_name") or "Uncategorized",
+                "expense_type": expense.get("expense_type") or "variable",
+                "amount": 0.0,
+                "count": 0,
+            }
+        grouped[key]["amount"] = round(grouped[key]["amount"] + float(expense.get("amount", 0) or 0), 2)
+        grouped[key]["count"] += 1
+
+    expense_categories = sorted(grouped.values(), key=lambda item: item["amount"], reverse=True)
+    for category in expense_categories:
+        category["share"] = round((category["amount"] / total_expenses) * 100, 2) if total_expenses else 0
+
+    summary = {
+        "period": safe_period,
+        "start_date": resolved_start,
+        "end_date": resolved_end,
+        "anchor_date": anchor_date,
+        "revenue": revenue,
+        "total_expenses": total_expenses,
+        "fixed_expenses": fixed_expenses,
+        "variable_expenses": variable_expenses,
+        "net_profit": net_profit,
+        "profit_margin": round((net_profit / revenue) * 100, 2) if revenue else 0,
+        "expense_ratio": round((total_expenses / revenue) * 100, 2) if revenue else 0,
+        "expense_categories": expense_categories,
+        "expenses": expenses,
+    }
+    summary["recommendations"] = make_profit_loss_recommendations(summary, expense_categories)
+    return summary
+
+
 # ============ Analytics Endpoints ============
 @api_router.get("/analytics/dashboard")
 async def get_analytics(request: Request, period: str = "daily"):
@@ -5948,12 +6345,23 @@ async def startup_event():
         await db.orders.create_index("order_id", unique=True)
         await db.orders.create_index([("restaurant_id", 1), ("status", 1), ("created_at", -1)])
         await db.orders.create_index([("restaurant_id", 1), ("table_id", 1), ("status", 1), ("created_at", -1)])
+        # Customer menu/order tracking filters by table and sorts by creation time.
+        await db.orders.create_index([("restaurant_id", 1), ("table_id", 1), ("created_at", 1)])
         await db.customer_sessions.create_index("session_token", unique=True)
         await db.payments.create_index([("restaurant_id", 1), ("order_id", 1)])
         await db.payments.create_index([("restaurant_id", 1), ("status", 1), ("order_id", 1)])
         await db.payments.create_index([("restaurant_id", 1), ("status", 1), ("order_ids", 1)])
+        # Order enrichment searches payment documents by either linked order field.
+        await db.payments.create_index("order_id")
+        await db.payments.create_index("order_ids")
         await db.deleted_bills.create_index([("restaurant_id", 1), ("deleted_at", -1)])
         await db.cash_adjustments.create_index([("restaurant_id", 1), ("created_at", -1)])
+        await db.assistance_requests.create_index([("restaurant_id", 1), ("table_id", 1), ("status", 1)])
+        await db.assistance_requests.create_index([("restaurant_id", 1), ("status", 1), ("requested_at", -1)])
+        await db.customers.create_index([("restaurant_id", 1), ("phone", 1)])
+        await db.expense_categories.create_index([("restaurant_id", 1), ("name_normalized", 1)])
+        await db.expenses.create_index([("restaurant_id", 1), ("expense_date", -1)])
+        await db.expenses.create_index([("restaurant_id", 1), ("category_id", 1), ("expense_date", -1)])
         await db.cash_drawer_openings.create_index(
             [("restaurant_id", 1), ("business_day_start", -1)],
             unique=True,

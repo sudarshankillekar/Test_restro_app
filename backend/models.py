@@ -152,6 +152,35 @@ class CashAdjustmentCreate(BaseModel):
 class CashDrawerOpeningCreate(BaseModel):
     opening_balance: float
 
+class ExpenseCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    expense_type: str = "variable"  # fixed, variable
+    monthly_amount: Optional[float] = Field(default=0, ge=0)
+    effective_from: Optional[str] = None
+
+class ExpenseCategoryUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    expense_type: Optional[str] = None
+    monthly_amount: Optional[float] = Field(default=None, ge=0)
+    effective_from: Optional[str] = None
+    active: Optional[bool] = None
+
+class ExpenseCreate(BaseModel):
+    category_id: Optional[str] = None
+    category_name: Optional[str] = Field(default=None, max_length=80)
+    expense_type: str = "variable"  # fixed, variable
+    amount: float = Field(gt=0)
+    expense_date: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=500)
+
+class ExpenseUpdate(BaseModel):
+    category_id: Optional[str] = None
+    category_name: Optional[str] = Field(default=None, max_length=80)
+    expense_type: Optional[str] = None
+    amount: Optional[float] = Field(default=None, gt=0)
+    expense_date: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=500)
+
 class AttendanceSettingsUpdate(BaseModel):
     shift_start: Optional[str] = None
     shift_end: Optional[str] = None

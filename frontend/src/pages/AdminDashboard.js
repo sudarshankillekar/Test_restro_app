@@ -9,13 +9,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Switch } from '../components/ui/switch';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
+import { Textarea } from '../components/ui/textarea';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { normalizeImageUrl } from '../lib/utils';
 import DietIndicator, { DIET_TYPES } from '../components/DietIndicator';
-import { BarChart3, ChefHat, FileSpreadsheet, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload, Pencil, UserCheck, Copy, ExternalLink, RefreshCw } from 'lucide-react';
+import { BarChart3, ChefHat, FileSpreadsheet, IndianRupee, Lightbulb, LogOut, Plus, TrendingUp, ShoppingBag, QrCode, Trash2, Download, Settings, Upload, Pencil, UserCheck, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 
 const ADMIN_TAB_KEY = 'admin-dashboard-active-tab';
 const DEFAULT_ACCESS_CONFIG = {
@@ -39,6 +41,11 @@ const STAFF_ROLE_OPTIONS = [
   { value: 'pos', label: 'POS Only', accessKey: 'pos_enabled' },
 ];
 const MENU_DIET_OPTIONS = ['veg', 'non_veg', 'egg', 'vegan'];
+const EXPENSE_TYPE_OPTIONS = [
+  { value: 'fixed', label: 'Fixed' },
+  { value: 'variable', label: 'Variable' },
+];
+const EXPENSE_CHART_COLORS = ['#EF5A33', '#2563EB', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#14B8A6', '#64748B'];
 const getCancelledQuantity = (item = {}) => Math.max(Number(item.cancelled_quantity || 0), 0);
 const getBillableQuantity = (item = {}) => Math.max(Number(item.quantity || 0) - getCancelledQuantity(item), 0);
 const isLossItem = (item = {}) => ['loss', 'no_matching_order_found'].includes(item.reallocation_status);
@@ -54,6 +61,7 @@ const normalizeAccessConfig = (config = {}) => ({
 });
 
 const getErrorMessage = (error, fallback) => error.response?.data?.detail || fallback;
+const formatCurrency = (value = 0) => `₹${Number(value || 0).toFixed(2)}`;
 
 const getIndiaDateInputValue = (date = new Date()) => {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -64,6 +72,11 @@ const getIndiaDateInputValue = (date = new Date()) => {
   }).formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
+};
+
+const toDateInputValue = (value) => {
+  if (!value) return '';
+  return String(value).slice(0, 10);
 };
 
 const shiftDateInputValue = (dateValue, days) => {
@@ -113,6 +126,28 @@ const AdminDashboard = () => {
   const [reportFilters, setReportFilters] = useState({
     period: 'daily',
     ...getReportPresetRange('daily'),
+  });
+  // Expenses and profit & loss state
+  const [expenseCategories, setExpenseCategories] = useState([]);
+  const [profitLoss, setProfitLoss] = useState(null);
+  const [expensePeriod, setExpensePeriod] = useState('monthly');
+  const [expenseRange, setExpenseRange] = useState({ start_date: '', end_date: '' });
+  const [expenseLoading, setExpenseLoading] = useState(false);
+  const [expenseDraft, setExpenseDraft] = useState({
+    category_id: '', category_name: '', expense_type: 'variable', amount: '',
+    expense_date: getIndiaDateInputValue(), notes: '',
+  });
+  const [categoryDraft, setCategoryDraft] = useState({
+    name: '', expense_type: 'variable', monthly_amount: '', effective_from: getIndiaDateInputValue(),
+  });
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
+  const [editingExpenseDraft, setEditingExpenseDraft] = useState({
+    category_id: '', category_name: '', expense_type: 'variable', amount: '',
+    expense_date: getIndiaDateInputValue(), notes: '',
+  });
+  const [editingCategoryId, setEditingCategoryId] = useState(null);
+  const [editingCategoryDraft, setEditingCategoryDraft] = useState({
+    name: '', expense_type: 'variable', monthly_amount: '', effective_from: getIndiaDateInputValue(),
   });
   // Menu state
   const [categories, setCategories] = useState([]);
@@ -181,6 +216,10 @@ const AdminDashboard = () => {
   }, [activeTab, period, reportFilters.period, reportFilters.start_date, reportFilters.end_date]);
 
   useEffect(() => {
+    if (activeTab === 'expenses') fetchProfitLoss();
+  }, [activeTab, expensePeriod, expenseRange.start_date, expenseRange.end_date]);
+
+  useEffect(() => {
     localStorage.setItem(ADMIN_TAB_KEY, activeTab);
   }, [activeTab]);
 
@@ -213,6 +252,159 @@ const AdminDashboard = () => {
       toast.error(getErrorMessage(error, 'Failed to load reports'));
     } finally {
       setReportsLoading(false);
+    }
+  };
+
+  const fetchProfitLoss = async () => {
+    setExpenseLoading(true);
+    try {
+      const params = { period: expensePeriod };
+      if (expenseRange.start_date && expenseRange.end_date) {
+        params.start_date = expenseRange.start_date;
+        params.end_date = expenseRange.end_date;
+      }
+      const [summaryResponse, categoriesResponse] = await Promise.all([
+        api.get('/api/expenses/profit-loss', { params, withCredentials: true }),
+        api.get('/api/expenses/categories', { withCredentials: true }),
+      ]);
+      setProfitLoss(summaryResponse.data);
+      setExpenseCategories(categoriesResponse.data || []);
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to load expenses and profit & loss'));
+    } finally {
+      setExpenseLoading(false);
+    }
+  };
+
+  const createExpenseCategory = async () => {
+    if (!categoryDraft.name.trim()) {
+      toast.error('Enter an expense category name.');
+      return;
+    }
+    try {
+      await api.post('/api/expenses/categories', {
+        ...categoryDraft,
+        monthly_amount: categoryDraft.expense_type === 'fixed' ? Number(categoryDraft.monthly_amount || 0) : 0,
+        effective_from: categoryDraft.expense_type === 'fixed' ? categoryDraft.effective_from : null,
+      }, { withCredentials: true });
+      toast.success('Expense category created');
+      setCategoryDraft({ name: '', expense_type: 'variable', monthly_amount: '', effective_from: getIndiaDateInputValue() });
+      fetchProfitLoss();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to create expense category'));
+    }
+  };
+
+  const findExpenseCategory = (categoryId) => expenseCategories.find((category) => category.category_id === categoryId);
+
+  const createExpense = async () => {
+    if (!expenseDraft.category_id && !expenseDraft.category_name.trim()) {
+      toast.error('Select a category or enter a custom category name.');
+      return;
+    }
+    if (!expenseDraft.amount || Number(expenseDraft.amount) <= 0) {
+      toast.error('Enter a valid expense amount.');
+      return;
+    }
+    try {
+      await api.post('/api/expenses', {
+        ...expenseDraft,
+        amount: Number(expenseDraft.amount),
+        category_name: expenseDraft.category_id ? null : expenseDraft.category_name.trim(),
+      }, { withCredentials: true });
+      toast.success('Expense added');
+      setExpenseDraft((previous) => ({ ...previous, amount: '', notes: '', category_name: '' }));
+      fetchProfitLoss();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to add expense'));
+    }
+  };
+
+  const deleteExpense = async (expenseId) => {
+    if (!window.confirm('Delete this expense?')) return;
+    try {
+      await api.delete(`/api/expenses/${expenseId}`, { withCredentials: true });
+      toast.success('Expense deleted');
+      fetchProfitLoss();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to delete expense'));
+    }
+  };
+
+  const startEditingExpense = (expense) => {
+    if (expense.is_recurring_fixed) {
+      toast.info('Edit this fixed expense from its category settings.');
+      return;
+    }
+    setEditingExpenseId(expense.expense_id);
+    setEditingExpenseDraft({
+      category_id: expense.category_id || '',
+      category_name: '',
+      expense_type: expense.expense_type || 'variable',
+      amount: String(expense.amount || ''),
+      expense_date: toDateInputValue(expense.expense_date) || getIndiaDateInputValue(),
+      notes: expense.notes || '',
+    });
+  };
+
+  const updateExpense = async () => {
+    if (!editingExpenseId) return;
+    if (!editingExpenseDraft.amount || Number(editingExpenseDraft.amount) <= 0) {
+      toast.error('Enter a valid expense amount.');
+      return;
+    }
+    try {
+      await api.put(`/api/expenses/${editingExpenseId}`, {
+        ...editingExpenseDraft,
+        amount: Number(editingExpenseDraft.amount),
+        category_name: editingExpenseDraft.category_id ? null : editingExpenseDraft.category_name.trim(),
+      }, { withCredentials: true });
+      toast.success('Expense updated');
+      setEditingExpenseId(null);
+      fetchProfitLoss();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to update expense'));
+    }
+  };
+
+  const startEditingCategory = (category) => {
+    setEditingCategoryId(category.category_id);
+    setEditingCategoryDraft({
+      name: category.name || '',
+      expense_type: category.expense_type || 'variable',
+      monthly_amount: category.monthly_amount ? String(category.monthly_amount) : '',
+      effective_from: toDateInputValue(category.effective_from) || getIndiaDateInputValue(),
+    });
+  };
+
+  const updateExpenseCategory = async () => {
+    if (!editingCategoryId) return;
+    if (!editingCategoryDraft.name.trim()) {
+      toast.error('Enter an expense category name.');
+      return;
+    }
+    try {
+      await api.put(`/api/expenses/categories/${editingCategoryId}`, {
+        ...editingCategoryDraft,
+        monthly_amount: editingCategoryDraft.expense_type === 'fixed' ? Number(editingCategoryDraft.monthly_amount || 0) : 0,
+        effective_from: editingCategoryDraft.expense_type === 'fixed' ? editingCategoryDraft.effective_from : null,
+      }, { withCredentials: true });
+      toast.success('Expense category updated');
+      setEditingCategoryId(null);
+      fetchProfitLoss();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to update expense category'));
+    }
+  };
+
+  const deleteExpenseCategory = async (categoryId) => {
+    if (!window.confirm('Hide this expense category? Existing expenses will remain.')) return;
+    try {
+      await api.delete(`/api/expenses/categories/${categoryId}`, { withCredentials: true });
+      toast.success('Expense category hidden');
+      fetchProfitLoss();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to hide expense category'));
     }
   };
 
@@ -780,6 +972,10 @@ const AdminDashboard = () => {
               <TrendingUp className="w-4 h-4 mr-2" />
               Analytics
             </TabsTrigger>
+            <TabsTrigger value="expenses" className="rounded-full" data-testid="tab-expenses">
+              <IndianRupee className="w-4 h-4 mr-2" />
+              Expenses & P&L
+            </TabsTrigger>
             <TabsTrigger value="menu" className="rounded-full" data-testid="tab-menu">
               <ShoppingBag className="w-4 h-4 mr-2" />
               Menu
@@ -1114,6 +1310,145 @@ const AdminDashboard = () => {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="expenses" className="space-y-6">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">Expenses & Profit / Loss</h2>
+                <p className="text-sm text-muted-foreground">Track fixed and variable costs to understand your restaurant’s real profit.</p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Select value={expensePeriod} onValueChange={setExpensePeriod}>
+                  <SelectTrigger className="w-full sm:w-36 rounded-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily">Today</SelectItem>
+                    <SelectItem value="weekly">This week</SelectItem>
+                    <SelectItem value="monthly">This month</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input type="date" value={expenseRange.start_date} onChange={(e) => setExpenseRange((p) => ({ ...p, start_date: e.target.value }))} className="rounded-full" />
+                <Input type="date" value={expenseRange.end_date} onChange={(e) => setExpenseRange((p) => ({ ...p, end_date: e.target.value }))} className="rounded-full" />
+                {(expenseRange.start_date || expenseRange.end_date) && (
+                  <Button variant="outline" className="rounded-full" onClick={() => setExpenseRange({ start_date: '', end_date: '' })}>Reset dates</Button>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              {[
+                ['Revenue', profitLoss?.revenue, 'text-blue-600'],
+                ['Total expenses', profitLoss?.total_expenses, 'text-rose-600'],
+                ['Net profit / loss', profitLoss?.net_profit, (profitLoss?.net_profit || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'],
+                ['Profit margin', `${Number(profitLoss?.profit_margin || 0).toFixed(1)}%`, 'text-primary'],
+              ].map(([label, value, color]) => (
+                <Card key={label} className="border-border rounded-2xl"><CardContent className="p-5">
+                  <p className="text-sm text-muted-foreground">{label}</p>
+                  <p className={`mt-2 text-2xl font-bold ${color}`}>{label === 'Profit margin' ? value : formatCurrency(value)}</p>
+                </CardContent></Card>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <Card className="border-border rounded-2xl">
+                <CardHeader><CardTitle>Add an expense</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-2"><Label>Existing category</Label><Select value={expenseDraft.category_id} onValueChange={(value) => { const category = findExpenseCategory(value); setExpenseDraft((p) => ({ ...p, category_id: value, category_name: '', expense_type: category?.expense_type || p.expense_type })); }}>
+                      <SelectTrigger className="rounded-full"><SelectValue placeholder="Select category" /></SelectTrigger><SelectContent>
+                        {expenseCategories.filter((category) => category.active !== false).map((category) => <SelectItem key={category.category_id} value={category.category_id}>{category.name} ({category.expense_type})</SelectItem>)}
+                      </SelectContent>
+                    </Select></div>
+                    <div className="space-y-2"><Label>Or create/use custom category</Label><Input value={expenseDraft.category_name} onChange={(e) => setExpenseDraft((p) => ({ ...p, category_name: e.target.value, category_id: '' }))} placeholder="e.g. Packaging" className="rounded-full" /></div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="space-y-2"><Label>Type</Label><Select value={expenseDraft.expense_type} onValueChange={(value) => setExpenseDraft((p) => ({ ...p, expense_type: value }))}><SelectTrigger className="rounded-full"><SelectValue /></SelectTrigger><SelectContent>{EXPENSE_TYPE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
+                    <div className="space-y-2"><Label>Amount (₹)</Label><Input type="number" min="0.01" step="0.01" value={expenseDraft.amount} onChange={(e) => setExpenseDraft((p) => ({ ...p, amount: e.target.value }))} placeholder="0.00" className="rounded-full" /></div>
+                    <div className="space-y-2"><Label>Date</Label><Input type="date" value={expenseDraft.expense_date} onChange={(e) => setExpenseDraft((p) => ({ ...p, expense_date: e.target.value }))} className="rounded-full" /></div>
+                  </div>
+                  <div className="space-y-2"><Label>Notes (optional)</Label><Textarea value={expenseDraft.notes} onChange={(e) => setExpenseDraft((p) => ({ ...p, notes: e.target.value }))} placeholder="Add a short note" /></div>
+                  <Button onClick={createExpense} disabled={expenseLoading} className="rounded-full bg-primary hover:bg-[#C54E2C]"><Plus className="w-4 h-4 mr-2" />Add expense</Button>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border rounded-2xl">
+                <CardHeader><CardTitle>Create expense categories</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Input value={categoryDraft.name} onChange={(e) => setCategoryDraft((p) => ({ ...p, name: e.target.value }))} placeholder="e.g. Rent, Electricity, Raw material" className="rounded-full" />
+                    <Select value={categoryDraft.expense_type} onValueChange={(value) => setCategoryDraft((p) => ({ ...p, expense_type: value }))}><SelectTrigger className="rounded-full"><SelectValue /></SelectTrigger><SelectContent>{EXPENSE_TYPE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+                    {categoryDraft.expense_type === 'fixed' && (
+                      <>
+                        <Input type="number" min="0" step="0.01" value={categoryDraft.monthly_amount} onChange={(e) => setCategoryDraft((p) => ({ ...p, monthly_amount: e.target.value }))} placeholder="Monthly fixed amount" className="rounded-full" />
+                        <Input type="date" value={categoryDraft.effective_from} onChange={(e) => setCategoryDraft((p) => ({ ...p, effective_from: e.target.value }))} className="rounded-full" />
+                      </>
+                    )}
+                  </div>
+                  <Button onClick={createExpenseCategory} className="rounded-full"><Plus className="w-4 h-4 mr-2" />Create</Button>
+                  <div className="space-y-2">
+                    {expenseCategories.filter((category) => category.active !== false).map((category) => (
+                      <div key={category.category_id} className="rounded-xl bg-accent p-3">
+                        {editingCategoryId === category.category_id ? (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <Input value={editingCategoryDraft.name} onChange={(e) => setEditingCategoryDraft((p) => ({ ...p, name: e.target.value }))} className="rounded-full" />
+                              <Select value={editingCategoryDraft.expense_type} onValueChange={(value) => setEditingCategoryDraft((p) => ({ ...p, expense_type: value }))}><SelectTrigger className="rounded-full"><SelectValue /></SelectTrigger><SelectContent>{EXPENSE_TYPE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+                              {editingCategoryDraft.expense_type === 'fixed' && (
+                                <>
+                                  <Input type="number" min="0" step="0.01" value={editingCategoryDraft.monthly_amount} onChange={(e) => setEditingCategoryDraft((p) => ({ ...p, monthly_amount: e.target.value }))} placeholder="Monthly fixed amount" className="rounded-full" />
+                                  <Input type="date" value={editingCategoryDraft.effective_from} onChange={(e) => setEditingCategoryDraft((p) => ({ ...p, effective_from: e.target.value }))} className="rounded-full" />
+                                </>
+                              )}
+                            </div>
+                            <div className="flex gap-2"><Button size="sm" onClick={updateExpenseCategory} className="rounded-full">Save</Button><Button size="sm" variant="outline" onClick={() => setEditingCategoryId(null)} className="rounded-full">Cancel</Button></div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-3">
+                            <div><p className="font-semibold">{category.name}</p><p className="text-xs text-muted-foreground capitalize">{category.expense_type} expense{category.expense_type === 'fixed' && category.monthly_amount ? ` • ${formatCurrency(category.monthly_amount)} monthly` : ''}</p></div>
+                            <div className="flex items-center gap-1"><Button variant="ghost" size="icon" onClick={() => startEditingCategory(category)} aria-label={`Edit ${category.name}`}><Pencil className="w-4 h-4" /></Button><Button variant="ghost" size="icon" onClick={() => deleteExpenseCategory(category.category_id)} aria-label={`Hide ${category.name}`}><Trash2 className="w-4 h-4 text-rose-600" /></Button></div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {!expenseCategories.filter((category) => category.active !== false).length && <p className="rounded-xl border border-dashed border-border p-5 text-center text-sm text-muted-foreground">Create categories such as Rent or Raw material.</p>}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+              <Card className="border-border rounded-2xl xl:col-span-2"><CardHeader><CardTitle>Expense split</CardTitle></CardHeader><CardContent>
+                {profitLoss?.expense_categories?.length ? <ResponsiveContainer width="100%" height={300}><PieChart><Pie data={profitLoss.expense_categories} dataKey="amount" nameKey="name" cx="50%" cy="45%" outerRadius={92} label>{profitLoss.expense_categories.map((entry, index) => <Cell key={`${entry.name}-${index}`} fill={EXPENSE_CHART_COLORS[index % EXPENSE_CHART_COLORS.length]} />)}</Pie><Tooltip formatter={(value) => formatCurrency(value)} /><Legend /></PieChart></ResponsiveContainer> : <p className="py-20 text-center text-sm text-muted-foreground">Add expenses to see the category split.</p>}
+              </CardContent></Card>
+              <Card className="border-border rounded-2xl xl:col-span-3"><CardHeader><CardTitle>Where your money is going</CardTitle></CardHeader><CardContent className="space-y-3">
+                {(profitLoss?.expense_categories || []).map((category, index) => <div key={`${category.name}-${index}`} className="rounded-xl border border-border p-3"><div className="flex items-center justify-between gap-3"><div><p className="font-semibold">{category.name}</p><p className="text-xs text-muted-foreground capitalize">{category.expense_type} • {Number(category.share || 0).toFixed(1)}% of expenses</p></div><p className="font-bold">{formatCurrency(category.amount)}</p></div><div className="mt-2 h-2 rounded-full bg-accent"><div className="h-2 rounded-full" style={{ width: `${Math.min(Number(category.share || 0), 100)}%`, backgroundColor: EXPENSE_CHART_COLORS[index % EXPENSE_CHART_COLORS.length] }} /></div></div>)}
+                {!profitLoss?.expense_categories?.length && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No expenses recorded for this period.</p>}
+              </CardContent></Card>
+            </div>
+
+            <Card className="border-border rounded-2xl"><CardHeader><CardTitle className="flex items-center gap-2"><Lightbulb className="w-5 h-5 text-amber-500" />Business improvement suggestions</CardTitle></CardHeader><CardContent className="space-y-2">{(profitLoss?.recommendations || []).map((recommendation, index) => <div key={index} className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-sm">{recommendation}</div>)}{!profitLoss?.recommendations?.length && <p className="text-sm text-muted-foreground">Add revenue and expenses to receive suggestions.</p>}</CardContent></Card>
+
+            <Card className="border-border rounded-2xl"><CardHeader><CardTitle>Recent expenses</CardTitle></CardHeader><CardContent className="space-y-2">{(profitLoss?.expenses || []).slice(0, 10).map((expense) => (
+              <div key={expense.expense_id} className="rounded-xl bg-accent p-3">
+                {editingExpenseId === expense.expense_id ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <Select value={editingExpenseDraft.category_id} onValueChange={(value) => { const category = findExpenseCategory(value); setEditingExpenseDraft((p) => ({ ...p, category_id: value, category_name: '', expense_type: category?.expense_type || p.expense_type })); }}><SelectTrigger className="rounded-full"><SelectValue placeholder="Category" /></SelectTrigger><SelectContent>{expenseCategories.filter((category) => category.active !== false).map((category) => <SelectItem key={category.category_id} value={category.category_id}>{category.name} ({category.expense_type})</SelectItem>)}</SelectContent></Select>
+                      <Select value={editingExpenseDraft.expense_type} onValueChange={(value) => setEditingExpenseDraft((p) => ({ ...p, expense_type: value }))}><SelectTrigger className="rounded-full"><SelectValue /></SelectTrigger><SelectContent>{EXPENSE_TYPE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+                      <Input type="number" min="0.01" step="0.01" value={editingExpenseDraft.amount} onChange={(e) => setEditingExpenseDraft((p) => ({ ...p, amount: e.target.value }))} className="rounded-full" />
+                      <Input type="date" value={editingExpenseDraft.expense_date} onChange={(e) => setEditingExpenseDraft((p) => ({ ...p, expense_date: e.target.value }))} className="rounded-full" />
+                    </div>
+                    <Textarea value={editingExpenseDraft.notes} onChange={(e) => setEditingExpenseDraft((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes" />
+                    <div className="flex gap-2"><Button size="sm" onClick={updateExpense} className="rounded-full">Save</Button><Button size="sm" variant="outline" onClick={() => setEditingExpenseId(null)} className="rounded-full">Cancel</Button></div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div><p className="font-semibold">{expense.category_name}</p><p className="text-xs text-muted-foreground">{expense.expense_date?.slice(0, 10)} • <span className="capitalize">{expense.expense_type}</span>{expense.is_recurring_fixed ? ' • monthly fixed' : ''}{expense.notes ? ` • ${expense.notes}` : ''}</p></div>
+                    <div className="flex items-center justify-between gap-4"><p className="font-bold">{formatCurrency(expense.amount)}</p><div className="flex items-center gap-1">{!expense.is_recurring_fixed && <Button variant="ghost" size="icon" onClick={() => startEditingExpense(expense)} aria-label="Edit expense"><Pencil className="w-4 h-4" /></Button>}{!expense.is_recurring_fixed && <Button variant="ghost" size="icon" onClick={() => deleteExpense(expense.expense_id)} aria-label="Delete expense"><Trash2 className="w-4 h-4 text-rose-600" /></Button>}</div></div>
+                  </div>
+                )}
+              </div>
+            ))}{!profitLoss?.expenses?.length && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No expenses recorded for this period.</p>}</CardContent></Card>
           </TabsContent>
 
           <TabsContent value="menu" className="space-y-6">
