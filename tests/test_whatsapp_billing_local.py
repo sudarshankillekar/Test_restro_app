@@ -20,7 +20,8 @@ ORDERS = [dict(customer_name='Local Test Customer', phone='8904356647', items=[
     dict(name='Paneer Tikka', quantity=2, price=200), dict(name='Coke', quantity=1, price=60)])]
 RESTAURANT = dict(name='Dineflo Local Test')
 ENV = dict(EVOLUTION_API_URL='https://evolution.invalid', EVOLUTION_API_KEY='local-fake-key',
-           EVOLUTION_INSTANCE='local-test', WHATSAPP_DEFAULT_COUNTRY_CODE='91')
+           EVOLUTION_INSTANCE='local-test', WHATSAPP_DEFAULT_COUNTRY_CODE='91',
+           EVOLUTION_WAKE_MAX_SECONDS='0', EVOLUTION_WAKE_RETRY_SECONDS='0')
 
 
 class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
@@ -30,6 +31,8 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
             requests.append(request)
             if timeout:
                 raise httpx.ReadTimeout('simulated timeout', request=request)
+            if str(request.url).endswith('/instance/connectionState/local-test'):
+                return httpx.Response(200, json={'instance': {'state': 'open'}})
             return httpx.Response(status, json=body if body is not None else {'key': {'id': 'LOCAL-MESSAGE'}})
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         db = SimpleNamespace(
@@ -50,8 +53,9 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pdf_sent_with_expected_payload_and_saved_message_id(self):
         requests, state = await self.deliver()
-        self.assertEqual(len(requests), 1)
-        request = requests[0]
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(str(requests[0].url), 'https://evolution.invalid/instance/connectionState/local-test')
+        request = requests[1]
         self.assertEqual(str(request.url), 'https://evolution.invalid/message/sendMedia/local-test')
         self.assertEqual(request.headers['apikey'], 'local-fake-key')
         payload = json.loads(request.content)
@@ -83,6 +87,8 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         requests = []
         def handler(request):
             requests.append(request)
+            if str(request.url).endswith('/instance/connectionState/local-test'):
+                return httpx.Response(200, json={'instance': {'state': 'open'}})
             return httpx.Response(201, json={'key': {'id': 'SESSION-MESSAGE'}})
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         db = SimpleNamespace(
@@ -94,7 +100,7 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         orders = [dict(ORDERS[0], phone='')]
         with patch.dict(os.environ, ENV, clear=True), patch.object(billing.httpx, 'AsyncClient', return_value=client):
             await billing.send_bill_pdf_via_evolution(payment, orders, RESTAURANT, db)
-        payload = json.loads(requests[0].content)
+        payload = json.loads(requests[1].content)
         self.assertEqual(payload['number'], '917795446647')
         db.customer_sessions.find_one.assert_awaited()
 
@@ -102,6 +108,8 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         requests = []
         def handler(request):
             requests.append(request)
+            if str(request.url).endswith('/instance/connectionState/local-test'):
+                return httpx.Response(200, json={'instance': {'state': 'open'}})
             return httpx.Response(201, json={'key': {'id': 'CUSTOMER-MESSAGE'}})
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         db = SimpleNamespace(
@@ -113,7 +121,7 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         orders = [dict(ORDERS[0], phone='')]
         with patch.dict(os.environ, ENV, clear=True), patch.object(billing.httpx, 'AsyncClient', return_value=client):
             await billing.send_bill_pdf_via_evolution(payment, orders, RESTAURANT, db)
-        payload = json.loads(requests[0].content)
+        payload = json.loads(requests[1].content)
         self.assertEqual(payload['number'], '919620629975')
         db.customers.find_one.assert_awaited()
 

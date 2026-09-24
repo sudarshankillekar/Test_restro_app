@@ -5,6 +5,7 @@ import html
 import logging
 import os
 import re
+import asyncio
 from datetime import datetime, timezone
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -13,6 +14,10 @@ import httpx
 
 
 logger = logging.getLogger(__name__)
+
+
+EVOLUTION_WAKE_RETRY_SECONDS = 10
+EVOLUTION_WAKE_MAX_SECONDS = 90
 
 
 def _money(value):
@@ -237,6 +242,49 @@ def build_whatsapp_bill_message(payment, orders, restaurant):
     )
 
 
+def _evolution_headers(api_key):
+    return {"apikey": api_key, "Content-Type": "application/json"}
+
+
+def _is_transient_evolution_error(exc):
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        return status_code in {408, 425, 429, 500, 502, 503, 504}
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError))
+
+
+async def wake_evolution_instance(client, api_url, api_key, instance):
+    """Send a cheap request that wakes Render before the bill send request."""
+    endpoint = f"{api_url}/instance/connectionState/{instance}"
+    response = await client.get(endpoint, headers=_evolution_headers(api_key))
+    response.raise_for_status()
+    return response.json()
+
+
+async def post_with_render_wake_retry(client, endpoint, api_key, payload):
+    """Retry while a free Render-hosted Evolution API cold-starts."""
+    max_seconds = int(os.getenv("EVOLUTION_WAKE_MAX_SECONDS", EVOLUTION_WAKE_MAX_SECONDS))
+    retry_seconds = int(os.getenv("EVOLUTION_WAKE_RETRY_SECONDS", EVOLUTION_WAKE_RETRY_SECONDS))
+    started_at = datetime.now(timezone.utc)
+    last_error = None
+
+    while True:
+        try:
+            response = await client.post(endpoint, headers=_evolution_headers(api_key), json=payload)
+            response.raise_for_status()
+            return response
+        except Exception as exc:
+            if not _is_transient_evolution_error(exc):
+                raise
+            last_error = exc
+            if max_seconds <= 0 or retry_seconds <= 0:
+                raise last_error
+            elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+            if elapsed + retry_seconds > max_seconds:
+                raise last_error
+            await asyncio.sleep(retry_seconds)
+
+
 async def send_bill_pdf_via_evolution(payment, orders, restaurant, db):
     """Send one bill PDF and persist delivery state without affecting payment success."""
     payment_filter = {
@@ -280,8 +328,13 @@ async def send_bill_pdf_via_evolution(payment, orders, restaurant, db):
         }
         endpoint = f"{api_url}/message/sendMedia/{instance}"
         async with httpx.AsyncClient(timeout=35) as client:
-            response = await client.post(endpoint, headers={"apikey": api_key, "Content-Type": "application/json"}, json=payload)
-            response.raise_for_status()
+            try:
+                await wake_evolution_instance(client, api_url, api_key, instance)
+            except Exception as exc:
+                if not _is_transient_evolution_error(exc):
+                    raise
+                logger.info("Evolution API wake request is still starting for %s: %s", instance, exc)
+            response = await post_with_render_wake_retry(client, endpoint, api_key, payload)
             result = response.json()
         message_id = ((result.get("key") or {}).get("id") if isinstance(result, dict) else None)
         await db.payments.update_one(payment_filter, {"$set": {
