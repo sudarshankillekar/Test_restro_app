@@ -44,7 +44,7 @@ from models import (
     AnalyticsResponse, RestaurantCreate, RestaurantUpdate, RestaurantProfileUpdate, SubscriptionRenew
 )
 from xlsx_export import build_xlsx_bytes, parse_xlsx_bytes
-from whatsapp_billing import send_bill_pdf_via_evolution
+from whatsapp_billing import find_order_phone, send_bill_pdf_via_evolution
 import jwt
 import secrets
 
@@ -4619,6 +4619,7 @@ async def create_payment(input: PaymentCreate, request: Request):
         "created_at": datetime.now(timezone.utc),
         "created_by": user["_id"],
         "whatsapp_status": "queued",
+        "whatsapp_recipient_phone": find_order_phone(orders),
     }
     try:
         await db.payments.insert_one(payment_doc)
@@ -4799,6 +4800,7 @@ async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
         "created_by": user["_id"],
         "created_by_role": user["role"],
         "whatsapp_status": "queued",
+        "whatsapp_recipient_phone": find_order_phone([order_doc]),
     }
 
     await db.orders.insert_one(order_doc)
@@ -5362,6 +5364,7 @@ async def resend_completed_payment_whatsapp_bill(bill_id: str, request: Request)
         "whatsapp_status": updated_payment.get("whatsapp_status") or "not_started",
         "whatsapp_error": updated_payment.get("whatsapp_error") or "",
         "whatsapp_message_id": updated_payment.get("whatsapp_message_id") or "",
+        "whatsapp_recipient_phone": updated_payment.get("whatsapp_recipient_phone") or "",
         "whatsapp_updated_at": updated_payment.get("whatsapp_updated_at"),
         "whatsapp_sent_at": updated_payment.get("whatsapp_sent_at"),
     }

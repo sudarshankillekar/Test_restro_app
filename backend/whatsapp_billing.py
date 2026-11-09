@@ -5,7 +5,6 @@ import html
 import logging
 import os
 import re
-import asyncio
 from datetime import datetime, timezone
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -14,10 +13,6 @@ import httpx
 
 
 logger = logging.getLogger(__name__)
-
-
-EVOLUTION_WAKE_RETRY_SECONDS = 10
-EVOLUTION_WAKE_MAX_SECONDS = 90
 
 
 def _money(value):
@@ -52,7 +47,7 @@ def normalize_whatsapp_number(phone):
         digits = digits[2:]
     if len(digits) == 10:
         digits = f"{os.getenv('WHATSAPP_DEFAULT_COUNTRY_CODE', '91')}{digits}"
-    return digits if len(digits) >= 10 else ""
+    return digits if 10 <= len(digits) <= 15 else ""
 
 
 def _first_present(*values):
@@ -63,6 +58,7 @@ def _first_present(*values):
 
 
 def find_order_phone(orders):
+    phones = set()
     for order in orders:
         phone = _first_present(
             order.get("phone"),
@@ -72,12 +68,16 @@ def find_order_phone(orders):
         )
         normalized = normalize_whatsapp_number(phone)
         if normalized:
-            return normalized
-    return ""
+            phones.add(normalized)
+        elif phone:
+            return ""
+    return next(iter(phones)) if len(phones) == 1 else ""
 
 
 async def resolve_bill_recipient_phone(payment, orders, db):
-    """Resolve the bill recipient from orders first, then nearby customer records."""
+    """Use the bill's saved recipient; never infer identity from table history."""
+    if "whatsapp_recipient_phone" in payment:
+        return normalize_whatsapp_number(payment["whatsapp_recipient_phone"])
     direct_phone = normalize_whatsapp_number(_first_present(
         payment.get("phone"),
         payment.get("customer_phone"),
@@ -87,42 +87,7 @@ async def resolve_bill_recipient_phone(payment, orders, db):
     if direct_phone:
         return direct_phone
 
-    order_phone = find_order_phone(orders)
-    if order_phone:
-        return order_phone
-
-    restaurant_id = payment.get("restaurant_id")
-    table_id = payment.get("table_id")
-    if restaurant_id and table_id and hasattr(db, "customer_sessions"):
-        session = await db.customer_sessions.find_one(
-            {
-                "restaurant_id": restaurant_id,
-                "table_id": table_id,
-                "phone": {"$exists": True, "$ne": ""},
-            },
-            {"_id": 0, "phone": 1},
-            sort=[("created_at", -1)],
-        )
-        session_phone = normalize_whatsapp_number((session or {}).get("phone"))
-        if session_phone:
-            return session_phone
-
-    customer_name = next((order.get("customer_name") for order in orders if order.get("customer_name")), "")
-    if restaurant_id and customer_name and hasattr(db, "customers"):
-        customer = await db.customers.find_one(
-            {
-                "restaurant_id": restaurant_id,
-                "customer_name": customer_name,
-                "phone": {"$exists": True, "$ne": ""},
-            },
-            {"_id": 0, "phone": 1},
-            sort=[("last_visit", -1)],
-        )
-        customer_phone = normalize_whatsapp_number((customer or {}).get("phone"))
-        if customer_phone:
-            return customer_phone
-
-    return ""
+    return find_order_phone(orders)
 
 
 def build_bill_pdf(payment, orders, restaurant):
@@ -261,40 +226,32 @@ async def wake_evolution_instance(client, api_url, api_key, instance):
     return response.json()
 
 
-async def post_with_render_wake_retry(client, endpoint, api_key, payload):
-    """Retry while a free Render-hosted Evolution API cold-starts."""
-    max_seconds = int(os.getenv("EVOLUTION_WAKE_MAX_SECONDS", EVOLUTION_WAKE_MAX_SECONDS))
-    retry_seconds = int(os.getenv("EVOLUTION_WAKE_RETRY_SECONDS", EVOLUTION_WAKE_RETRY_SECONDS))
-    started_at = datetime.now(timezone.utc)
-    last_error = None
-
-    while True:
-        try:
-            response = await client.post(endpoint, headers=_evolution_headers(api_key), json=payload)
-            response.raise_for_status()
-            return response
-        except Exception as exc:
-            if not _is_transient_evolution_error(exc):
-                raise
-            last_error = exc
-            if max_seconds <= 0 or retry_seconds <= 0:
-                raise last_error
-            elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
-            if elapsed + retry_seconds > max_seconds:
-                raise last_error
-            await asyncio.sleep(retry_seconds)
-
-
 async def send_bill_pdf_via_evolution(payment, orders, restaurant, db):
     """Send one bill PDF and persist delivery state without affecting payment success."""
     payment_filter = {
         "restaurant_id": payment.get("restaurant_id"),
         "payment_id": payment.get("payment_id"),
     }
+    # Claim in MongoDB so concurrent requests and separate workers cannot both send.
+    payment = await db.payments.find_one_and_update(
+        {**payment_filter, "whatsapp_status": {"$in": [None, "queued", "not_started", "failed", "skipped"]},
+         "whatsapp_message_id": {"$in": [None, ""]}, "whatsapp_sent_at": None},
+        {"$set": {"whatsapp_status": "sending", "whatsapp_updated_at": datetime.now(timezone.utc)}},
+    )
+    if not payment:
+        return
+    # Older failures may have been recorded after Evolution accepted the POST.
+    if payment.get("whatsapp_status") == "failed" and "whatsapp_recipient_phone" not in payment:
+        await db.payments.update_one(payment_filter, {"$set": {
+            "whatsapp_status": "delivery_unknown",
+            "whatsapp_error": "Previous delivery must be checked in Evolution before sending again.",
+        }})
+        return
     api_url = (os.getenv("EVOLUTION_API_URL") or "").rstrip("/")
     api_key = os.getenv("EVOLUTION_API_KEY") or ""
     instance = os.getenv("EVOLUTION_INSTANCE") or ""
     phone = await resolve_bill_recipient_phone(payment, orders, db)
+    await db.payments.update_one(payment_filter, {"$set": {"whatsapp_recipient_phone": phone}})
 
     if not api_url or not api_key or not instance:
         await db.payments.update_one(payment_filter, {"$set": {
@@ -306,15 +263,12 @@ async def send_bill_pdf_via_evolution(payment, orders, restaurant, db):
     if not phone:
         await db.payments.update_one(payment_filter, {"$set": {
             "whatsapp_status": "skipped",
-            "whatsapp_error": "Customer phone number is missing or invalid",
+            "whatsapp_error": "Bill recipient is missing, invalid, or conflicting. Automatic delivery skipped.",
             "whatsapp_updated_at": datetime.now(timezone.utc),
         }})
         return
 
-    await db.payments.update_one(payment_filter, {"$set": {
-        "whatsapp_status": "sending",
-        "whatsapp_updated_at": datetime.now(timezone.utc),
-    }})
+    send_started = False
     try:
         pdf_bytes = build_bill_pdf(payment, orders, restaurant)
         caption = build_whatsapp_bill_message(payment, orders, restaurant)
@@ -334,7 +288,11 @@ async def send_bill_pdf_via_evolution(payment, orders, restaurant, db):
                 if not _is_transient_evolution_error(exc):
                     raise
                 logger.info("Evolution API wake request is still starting for %s: %s", instance, exc)
-            response = await post_with_render_wake_retry(client, endpoint, api_key, payload)
+            # Evolution may accept a message even when its response is lost.
+            # Never retry this POST automatically or assume an ambiguous error means failure.
+            send_started = True
+            response = await client.post(endpoint, headers=_evolution_headers(api_key), json=payload)
+            response.raise_for_status()
             result = response.json()
         message_id = ((result.get("key") or {}).get("id") if isinstance(result, dict) else None)
         await db.payments.update_one(payment_filter, {"$set": {
@@ -346,7 +304,8 @@ async def send_bill_pdf_via_evolution(payment, orders, restaurant, db):
     except Exception as exc:
         logger.exception("Evolution API bill delivery failed for %s", payment.get("payment_id"))
         await db.payments.update_one(payment_filter, {"$set": {
-            "whatsapp_status": "failed",
-            "whatsapp_error": str(exc)[:500],
+            "whatsapp_status": "delivery_unknown" if send_started else "failed",
+            "whatsapp_error": ("Delivery could not be confirmed. Check Evolution before sending again."
+                               if send_started else str(exc)[:500]),
             "whatsapp_updated_at": datetime.now(timezone.utc),
         }})

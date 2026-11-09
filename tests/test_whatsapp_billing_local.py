@@ -1,5 +1,6 @@
 """Offline integration checks. No MongoDB, payment, or real WhatsApp traffic."""
 import base64
+import asyncio
 import copy
 import io
 import json
@@ -25,7 +26,23 @@ ENV = dict(EVOLUTION_API_URL='https://evolution.invalid', EVOLUTION_API_KEY='loc
 
 
 class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
-    async def deliver(self, *, env=None, orders=None, status=201, body=None, timeout=False):
+    async def deliver(self, *, env=None, orders=None, status=201, body=None, timeout=False, payment=None, repeats=1):
+        payment = copy.deepcopy(payment or PAYMENT)
+        stored = copy.deepcopy(payment)
+        async def claim(query, update):
+            self.assertEqual(query['restaurant_id'], stored['restaurant_id'])
+            self.assertEqual(query['payment_id'], stored['payment_id'])
+            if (stored.get('whatsapp_status') not in query['whatsapp_status']['$in']
+                    or stored.get('whatsapp_message_id') not in query['whatsapp_message_id']['$in']
+                    or stored.get('whatsapp_sent_at') is not None):
+                return None
+            before = copy.deepcopy(stored)
+            stored.update(update['$set'])
+            return before
+        async def update_payment(query, update):
+            stored.update(update.get('$set', {}))
+            for key in update.get('$unset', {}):
+                stored.pop(key, None)
         requests = []
         def handler(request):
             requests.append(request)
@@ -36,20 +53,20 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(status, json=body if body is not None else {'key': {'id': 'LOCAL-MESSAGE'}})
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         db = SimpleNamespace(
-            payments=SimpleNamespace(update_one=AsyncMock()),
+            payments=SimpleNamespace(update_one=AsyncMock(side_effect=update_payment), find_one_and_update=AsyncMock(side_effect=claim)),
             customer_sessions=SimpleNamespace(find_one=AsyncMock(return_value=None)),
             customers=SimpleNamespace(find_one=AsyncMock(return_value=None)),
         )
-        before = copy.deepcopy(PAYMENT)
+        before = copy.deepcopy(payment)
         with patch.dict(os.environ, ENV if env is None else env, clear=True), \
              patch.object(billing.httpx, 'AsyncClient', return_value=client), \
              patch.object(billing.logger, 'exception'):
-            await billing.send_bill_pdf_via_evolution(PAYMENT, ORDERS if orders is None else orders, RESTAURANT, db)
-        self.assertEqual(PAYMENT, before)
+            await asyncio.gather(*(billing.send_bill_pdf_via_evolution(payment, ORDERS if orders is None else orders, RESTAURANT, db) for _ in range(repeats)))
+        self.assertEqual(payment, before)
         calls = db.payments.update_one.call_args_list
         for call in calls:
             self.assertEqual(call.args[0], {'restaurant_id': 'LOCAL', 'payment_id': 'PAY-LOCAL'})
-        return requests, calls[-1].args[1]['$set']
+        return requests, stored
 
     async def test_pdf_sent_with_expected_payload_and_saved_message_id(self):
         requests, state = await self.deliver()
@@ -83,7 +100,7 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(requests)
         self.assertEqual(state['whatsapp_status'], 'skipped')
 
-    async def test_qr_session_phone_fallback_is_used_when_order_phone_missing(self):
+    async def test_qr_session_phone_is_not_used_when_order_phone_missing(self):
         requests = []
         def handler(request):
             requests.append(request)
@@ -92,7 +109,7 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(201, json={'key': {'id': 'SESSION-MESSAGE'}})
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         db = SimpleNamespace(
-            payments=SimpleNamespace(update_one=AsyncMock()),
+            payments=SimpleNamespace(update_one=AsyncMock(), find_one_and_update=AsyncMock(return_value=dict(PAYMENT, table_id='table-1'))),
             customer_sessions=SimpleNamespace(find_one=AsyncMock(return_value={'phone': '7795446647'})),
             customers=SimpleNamespace(find_one=AsyncMock(return_value=None)),
         )
@@ -100,11 +117,10 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         orders = [dict(ORDERS[0], phone='')]
         with patch.dict(os.environ, ENV, clear=True), patch.object(billing.httpx, 'AsyncClient', return_value=client):
             await billing.send_bill_pdf_via_evolution(payment, orders, RESTAURANT, db)
-        payload = json.loads(requests[1].content)
-        self.assertEqual(payload['number'], '917795446647')
-        db.customer_sessions.find_one.assert_awaited()
+        self.assertEqual(requests, [])
+        db.customer_sessions.find_one.assert_not_awaited()
 
-    async def test_customer_record_phone_fallback_is_used_when_order_phone_missing(self):
+    async def test_customer_record_phone_is_not_used_when_order_phone_missing(self):
         requests = []
         def handler(request):
             requests.append(request)
@@ -113,7 +129,7 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(201, json={'key': {'id': 'CUSTOMER-MESSAGE'}})
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         db = SimpleNamespace(
-            payments=SimpleNamespace(update_one=AsyncMock()),
+            payments=SimpleNamespace(update_one=AsyncMock(), find_one_and_update=AsyncMock(return_value=PAYMENT)),
             customer_sessions=SimpleNamespace(find_one=AsyncMock(return_value=None)),
             customers=SimpleNamespace(find_one=AsyncMock(return_value={'phone': '9620629975'})),
         )
@@ -121,17 +137,61 @@ class LocalBillingTests(unittest.IsolatedAsyncioTestCase):
         orders = [dict(ORDERS[0], phone='')]
         with patch.dict(os.environ, ENV, clear=True), patch.object(billing.httpx, 'AsyncClient', return_value=client):
             await billing.send_bill_pdf_via_evolution(payment, orders, RESTAURANT, db)
-        payload = json.loads(requests[1].content)
-        self.assertEqual(payload['number'], '919620629975')
-        db.customers.find_one.assert_awaited()
+        self.assertEqual(requests, [])
+        db.customers.find_one.assert_not_awaited()
 
     async def test_api_rejection_records_failure_without_raising(self):
         _, state = await self.deliver(status=401)
-        self.assertEqual(state['whatsapp_status'], 'failed')
+        self.assertEqual(state['whatsapp_status'], 'delivery_unknown')
 
-    async def test_timeout_records_failure_without_raising(self):
-        _, state = await self.deliver(timeout=True)
-        self.assertEqual(state['whatsapp_status'], 'failed')
+    async def test_timeout_is_not_retried(self):
+        requests, state = await self.deliver(timeout=True, env=dict(ENV, EVOLUTION_WAKE_MAX_SECONDS='90', EVOLUTION_WAKE_RETRY_SECONDS='1'))
+        self.assertEqual(state['whatsapp_status'], 'delivery_unknown')
+        self.assertEqual(len([request for request in requests if request.method == 'POST']), 1)
+
+    async def test_conflicting_order_numbers_skip_delivery(self):
+        requests, state = await self.deliver(orders=[ORDERS[0], dict(ORDERS[0], phone='7795446647')])
+        self.assertFalse(requests)
+        self.assertEqual(state['whatsapp_status'], 'skipped')
+
+    async def test_saved_recipient_wins_over_changed_order_and_payment_phone(self):
+        requests, state = await self.deliver(payment=dict(PAYMENT, phone='7795446647', whatsapp_recipient_phone='919620629975'))
+        self.assertEqual(json.loads(requests[-1].content)['number'], '919620629975')
+        self.assertEqual(state['whatsapp_recipient_phone'], '919620629975')
+
+    async def test_saved_empty_recipient_does_not_fall_back(self):
+        requests, state = await self.deliver(payment=dict(PAYMENT, whatsapp_recipient_phone=''))
+        self.assertFalse(requests)
+        self.assertEqual(state['whatsapp_status'], 'skipped')
+
+    async def test_concurrent_delivery_claim_sends_once(self):
+        requests, state = await self.deliver(repeats=3)
+        self.assertEqual(len([request for request in requests if request.method == 'POST']), 1)
+        self.assertEqual(state['whatsapp_status'], 'sent')
+
+    async def test_sent_sending_and_uncertain_bills_cannot_be_resent(self):
+        for status in ['sent', 'sending', 'delivery_unknown']:
+            requests, state = await self.deliver(payment=dict(PAYMENT, whatsapp_status=status))
+            self.assertFalse(requests)
+            self.assertEqual(state['whatsapp_status'], status)
+
+    async def test_recorded_delivery_blocks_retry_even_with_failed_status(self):
+        for fields in [{'whatsapp_message_id': 'already-sent'}, {'whatsapp_sent_at': datetime.now(timezone.utc)}]:
+            requests, _ = await self.deliver(payment=dict(PAYMENT, whatsapp_status='failed', **fields))
+            self.assertFalse(requests)
+
+    async def test_legacy_failure_requires_review(self):
+        requests, state = await self.deliver(payment=dict(PAYMENT, whatsapp_status='failed'))
+        self.assertFalse(requests)
+        self.assertEqual(state['whatsapp_status'], 'delivery_unknown')
+
+    async def test_retry_before_post_uses_saved_recipient(self):
+        requests, state = await self.deliver(payment=dict(PAYMENT, whatsapp_status='failed', whatsapp_recipient_phone='919620629975'))
+        self.assertEqual(json.loads(requests[-1].content)['number'], '919620629975')
+        self.assertEqual(state['whatsapp_status'], 'sent')
+
+    def test_same_phone_in_different_formats_is_unambiguous(self):
+        self.assertEqual(billing.find_order_phone([{'phone': '8904356647'}, {'phone': '+91 89043 56647'}]), '918904356647')
 
     def test_long_bill_paginates(self):
         orders = copy.deepcopy(ORDERS)
