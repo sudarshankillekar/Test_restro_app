@@ -153,6 +153,8 @@ const AdminDashboard = () => {
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [newCategory, setNewCategory] = useState('');
+  const [editingMenuCategory, setEditingMenuCategory] = useState(null);
+  const [menuCategoryBusy, setMenuCategoryBusy] = useState(false);
   const [newItem, setNewItem] = useState({
     name: '',
     category_id: '',
@@ -448,6 +450,39 @@ const AdminDashboard = () => {
       fetchMenu();
     } catch (error) {
       toast.error(getErrorMessage(error, 'Failed to create category'));
+    }
+  };
+
+  const saveMenuCategory = async () => {
+    if (!editingMenuCategory?.name.trim()) {
+      toast.error('Please enter a category name.');
+      return;
+    }
+    setMenuCategoryBusy(true);
+    try {
+      await api.put(`/api/menu/categories/${editingMenuCategory.category_id}`, { name: editingMenuCategory.name.trim() });
+      setEditingMenuCategory(null);
+      toast.success('Category updated');
+      await fetchMenu();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to update category'));
+    } finally {
+      setMenuCategoryBusy(false);
+    }
+  };
+
+  const deleteMenuCategory = async (category) => {
+    if (!window.confirm(`Delete category "${category.name}"?`)) return;
+    setMenuCategoryBusy(true);
+    try {
+      await api.delete(`/api/menu/categories/${category.category_id}`);
+      setNewItem((previous) => previous.category_id === category.category_id ? { ...previous, category_id: '' } : previous);
+      toast.success('Category deleted');
+      await fetchMenu();
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Failed to delete category'));
+    } finally {
+      setMenuCategoryBusy(false);
     }
   };
 
@@ -1514,7 +1549,7 @@ const AdminDashboard = () => {
 
             <Card className="border-border rounded-2xl">
               <CardHeader>
-                <CardTitle>Add Category</CardTitle>
+                <CardTitle>Menu Categories</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col sm:flex-row gap-2">
                 <Input
@@ -1532,6 +1567,26 @@ const AdminDashboard = () => {
                   <Plus className="w-4 h-4 mr-1" />
                   Add
                 </Button>
+              </CardContent>
+              <CardContent className="divide-y divide-border">
+                {categories.map((category) => (
+                  <div key={category.category_id} className="flex flex-wrap items-center gap-2 py-2">
+                    {editingMenuCategory?.category_id === category.category_id ? (
+                      <>
+                        <Input aria-label="Category name" className="min-w-0 flex-1" value={editingMenuCategory.name} disabled={menuCategoryBusy} onChange={(event) => setEditingMenuCategory({ ...editingMenuCategory, name: event.target.value })} />
+                        <Button onClick={saveMenuCategory} disabled={menuCategoryBusy}>Save</Button>
+                        <Button variant="outline" onClick={() => setEditingMenuCategory(null)} disabled={menuCategoryBusy}>Cancel</Button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="min-w-0 flex-1 break-words">{category.name}</span>
+                        <span className="text-sm text-muted-foreground">{menuItems.filter((item) => item.category_id === category.category_id).length} items</span>
+                        <Button variant="ghost" size="icon" title={`Edit ${category.name}`} aria-label={`Edit category ${category.name}`} disabled={menuCategoryBusy} onClick={() => setEditingMenuCategory({ ...category })}><Pencil className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" title={`Delete ${category.name}`} aria-label={`Delete category ${category.name}`} disabled={menuCategoryBusy} onClick={() => deleteMenuCategory(category)}><Trash2 className="h-4 w-4 text-red-600" /></Button>
+                      </>
+                    )}
+                  </div>
+                ))}
               </CardContent>
             </Card>
 

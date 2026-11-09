@@ -2875,6 +2875,33 @@ async def create_category(input: CategoryCreate, request: Request):
     return {k: v for k, v in cat_doc.items() if k != "_id"}
 
 
+@api_router.put("/menu/categories/{category_id}")
+async def update_menu_category(category_id: str, input: CategoryCreate, request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    name = (input.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Please enter a category name.")
+    query = {"category_id": category_id, "restaurant_id": restaurant_id}
+    result = await db.menu_categories.update_one(query, {"$set": {"name": name}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return await db.menu_categories.find_one(query, {"_id": 0})
+
+
+@api_router.delete("/menu/categories/{category_id}")
+async def delete_menu_category(category_id: str, request: Request):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
+    query = {"category_id": category_id, "restaurant_id": restaurant_id}
+    if not await db.menu_categories.find_one(query):
+        raise HTTPException(status_code=404, detail="Category not found")
+    if await db.menu_items.find_one(query):
+        raise HTTPException(status_code=409, detail="Move or delete the menu items in this category before deleting it.")
+    result = await db.menu_categories.delete_one(query)
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"message": "Category deleted successfully"}
+
+
 @api_router.get("/menu/categories/export")
 async def export_menu_categories(request: Request):
     _, restaurant_id = await resolve_restaurant_access(request, ["admin"])
