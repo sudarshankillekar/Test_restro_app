@@ -45,6 +45,7 @@ from models import (
 )
 from xlsx_export import build_xlsx_bytes, parse_xlsx_bytes
 from whatsapp_billing import find_order_phone, send_bill_pdf_via_evolution
+from loyalty import normalize_phone as normalize_loyalty_phone, save_payment as save_loyalty_payment, delete_loyalty_bill
 import jwt
 import secrets
 
@@ -4510,6 +4511,31 @@ async def update_order_item_ready(order_id: str, item_index: int, request: Reque
 
 
 # ============ Payment Endpoints ============
+@api_router.get("/loyalty/customer")
+async def get_loyalty_customer(request: Request, phone: str, offset: int = 0):
+    _, restaurant_id = await resolve_restaurant_access(request, ["admin", "billing", "kitchen_billing", "pos"])
+    phone = normalize_loyalty_phone(phone)
+    query = {"restaurant_id": restaurant_id, "phone": phone}
+    account = await db.loyalty_accounts.find_one({"_id": f"{restaurant_id}:{phone}"})
+    history = await db.loyalty_ledger.find(query, {"_id": 0}).sort([("created_at", -1), ("_id", -1)]).skip(max(0, offset)).limit(50).to_list(50)
+    count = await db.loyalty_ledger.count_documents(query)
+    balance = int((account or {}).get("balance", 0))
+    return {"phone": phone, "balance": balance, "can_redeem": balance >= 200,
+            "minimum_balance": 200, "history": history, "total_entries": count}
+
+
+def loyalty_phone_for_payment(explicit_phone, orders):
+    if explicit_phone:
+        return normalize_loyalty_phone(explicit_phone)
+    phone = find_order_phone(orders)
+    if phone:
+        try:
+            return normalize_loyalty_phone(phone)
+        except HTTPException:
+            pass
+    return ""
+
+
 @api_router.post("/payments")
 async def create_payment(input: PaymentCreate, request: Request):
     """Create payment (billing/admin - requires auth)"""
@@ -4558,6 +4584,9 @@ async def create_payment(input: PaymentCreate, request: Request):
         raise HTTPException(status_code=400, detail="Orders must belong to the same table to create one bill.")
     table_id = orders[0]["table_id"]
     table_number = orders[0].get("table_number")
+    loyalty_phone = loyalty_phone_for_payment(input.loyalty_phone, orders)
+    if input.loyalty_redeem and not loyalty_phone:
+        raise HTTPException(400, "Enter a customer phone number to redeem coins.")
     billing_lock_id = f"LOCK{secrets.token_hex(6).upper()}"
 
     lock_result = await db.orders.update_many(
@@ -4586,6 +4615,10 @@ async def create_payment(input: PaymentCreate, request: Request):
         }}
     )
     if lock_result.modified_count != len(target_order_ids):
+        await db.orders.update_many(
+            {"restaurant_id": restaurant_id, "billing_lock_id": billing_lock_id},
+            {"$set": {"payment_status": "pending"}, "$unset": {"billing_lock_id": ""}},
+        )
         raise HTTPException(status_code=409, detail="Bill generated already.")
     
     subtotal = round(sum(order["total"] for order in orders), 2)
@@ -4622,10 +4655,8 @@ async def create_payment(input: PaymentCreate, request: Request):
         "whatsapp_recipient_phone": find_order_phone(orders),
     }
     try:
-        await db.payments.insert_one(payment_doc)
-        
         served_at = datetime.now(timezone.utc)
-        await db.orders.update_many(
+        order_updates = (
             {"order_id": {"$in": target_order_ids}, "restaurant_id": restaurant_id, "billing_lock_id": billing_lock_id},
             {"$set": {
                 "status": "served",
@@ -4636,6 +4667,9 @@ async def create_payment(input: PaymentCreate, request: Request):
                 "billing_lock_id": ""
             }}
         )
+        await save_loyalty_payment(db, payment_doc, loyalty_phone, input.loyalty_redeem, order_updates=order_updates)
+        if not loyalty_phone:
+            await db.orders.update_many(*order_updates)
     except Exception:
         await db.orders.update_many(
             {"order_id": {"$in": target_order_ids}, "restaurant_id": restaurant_id, "billing_lock_id": billing_lock_id},
@@ -4697,6 +4731,21 @@ async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
 
     await check_restaurant_subscription(db, restaurant_id)
+
+    checkout_id = None
+    checkout_hash = None
+    if input.checkout_token:
+        checkout_id = f"pos:{restaurant_id}:{input.checkout_token}"
+        checkout_hash = hashlib.sha256(json.dumps(input.model_dump(exclude={"checkout_token", "print_bill"}), sort_keys=True).encode()).hexdigest()
+        previous = await db.payments.find_one({"_id": checkout_id, "restaurant_id": restaurant_id})
+        if previous:
+            if previous.get("checkout_request_hash") != checkout_hash:
+                raise HTTPException(409, "This checkout was already used for a different bill.")
+            previous_payment, previous_orders, _ = await get_completed_payment_bill(previous["bill_id"], restaurant_id)
+            first_order = previous_orders[0] if previous_orders else {}
+            return {"bill_id": previous["bill_id"], "table_label": first_order.get("table_label", ""),
+                    "customer_name": first_order.get("customer_name", ""), "payment": previous_payment,
+                    "orders": previous_orders if input.print_bill else []}
 
     order_type = (input.order_type or "dine_in").strip().lower()
     if order_type not in ["dine_in", "takeaway"]:
@@ -4803,12 +4852,21 @@ async def create_pos_checkout(input: PosCheckoutCreate, request: Request):
         "whatsapp_recipient_phone": find_order_phone([order_doc]),
     }
 
-    await db.orders.insert_one(order_doc)
-    try:
-        await db.payments.insert_one(payment_doc)
-    except Exception:
-        await db.orders.delete_one({"order_id": order_id, "restaurant_id": restaurant_id})
-        raise
+    if checkout_id:
+        payment_doc["_id"] = checkout_id
+        payment_doc["checkout_request_hash"] = checkout_hash
+    loyalty_phone = loyalty_phone_for_payment(input.loyalty_phone, [order_doc])
+    if loyalty_phone:
+        await save_loyalty_payment(db, payment_doc, loyalty_phone, input.loyalty_redeem, new_order=order_doc)
+    else:
+        if input.loyalty_redeem:
+            raise HTTPException(400, "Enter a customer phone number to redeem coins.")
+        await db.orders.insert_one(order_doc)
+        try:
+            await db.payments.insert_one(payment_doc)
+        except Exception:
+            await db.orders.delete_one({"order_id": order_id, "restaurant_id": restaurant_id})
+            raise
 
     schedule_background_task(upsert_customer_record(restaurant_id, display_customer_name, phone))
     schedule_background_task(send_bill_pdf_via_evolution(payment_doc, [order_doc], restaurant, db))
@@ -4921,6 +4979,9 @@ async def update_pos_completed_bill(bill_id: str, input: PosBillUpdate, request:
     )
     if not payment:
         raise HTTPException(status_code=404, detail="Bill not found")
+
+    if payment.get("loyalty_phone") and any(value is not None for value in [input.items, input.discount, input.phone]):
+        raise HTTPException(409, "This bill has loyalty entries. Delete it with a reason and create a corrected bill to adjust its items, discount, or phone.")
 
     payment_order_ids = payment.get("order_ids") or ([payment.get("order_id")] if payment.get("order_id") else [])
     orders = []
@@ -5038,7 +5099,7 @@ async def delete_pos_completed_bill(bill_id: str, input: PosBillDeleteRequest, r
         ).to_list(len(payment_order_ids))
 
     deleted_at = datetime.now(timezone.utc)
-    await db.deleted_bills.insert_one({
+    archive = {
         "deleted_bill_id": f"DELBILL{secrets.token_hex(6).upper()}",
         "restaurant_id": restaurant_id,
         "bill_id": payment.get("bill_id") or payment.get("payment_id"),
@@ -5052,11 +5113,15 @@ async def delete_pos_completed_bill(bill_id: str, input: PosBillDeleteRequest, r
         "deleted_by_email": user.get("email"),
         "deleted_by_role": user.get("role"),
         "deleted_at": deleted_at,
-    })
+    }
 
-    await db.payments.delete_one({"payment_id": payment["payment_id"], "restaurant_id": restaurant_id})
-    if payment_order_ids:
-        await db.orders.delete_many({"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}})
+    if payment.get("loyalty_phone"):
+        await delete_loyalty_bill(db, payment, archive, payment_order_ids)
+    else:
+        await db.deleted_bills.insert_one(archive)
+        await db.payments.delete_one({"payment_id": payment["payment_id"], "restaurant_id": restaurant_id})
+        if payment_order_ids:
+            await db.orders.delete_many({"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}})
 
     if (payment.get("payment_method") or "").strip().lower() == "cash":
         schedule_background_task(
@@ -5104,7 +5169,7 @@ async def delete_completed_payment_bill(bill_id: str, input: PosBillDeleteReques
         ).to_list(len(payment_order_ids))
 
     deleted_at = datetime.now(timezone.utc)
-    await db.deleted_bills.insert_one({
+    archive = {
         "deleted_bill_id": f"DELBILL{secrets.token_hex(6).upper()}",
         "restaurant_id": restaurant_id,
         "bill_id": payment.get("bill_id") or payment.get("payment_id"),
@@ -5118,11 +5183,15 @@ async def delete_completed_payment_bill(bill_id: str, input: PosBillDeleteReques
         "deleted_by_email": user.get("email"),
         "deleted_by_role": user.get("role"),
         "deleted_at": deleted_at,
-    })
+    }
 
-    await db.payments.delete_one({"payment_id": payment["payment_id"], "restaurant_id": restaurant_id})
-    if payment_order_ids:
-        await db.orders.delete_many({"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}})
+    if payment.get("loyalty_phone"):
+        await delete_loyalty_bill(db, payment, archive, payment_order_ids)
+    else:
+        await db.deleted_bills.insert_one(archive)
+        await db.payments.delete_one({"payment_id": payment["payment_id"], "restaurant_id": restaurant_id})
+        if payment_order_ids:
+            await db.orders.delete_many({"restaurant_id": restaurant_id, "order_id": {"$in": payment_order_ids}})
 
     if (payment.get("payment_method") or "").strip().lower() == "cash":
         schedule_background_task(
@@ -6389,6 +6458,7 @@ async def startup_event():
         await db.assistance_requests.create_index([("restaurant_id", 1), ("table_id", 1), ("status", 1)])
         await db.assistance_requests.create_index([("restaurant_id", 1), ("status", 1), ("requested_at", -1)])
         await db.customers.create_index([("restaurant_id", 1), ("phone", 1)])
+        await db.loyalty_ledger.create_index([("restaurant_id", 1), ("phone", 1), ("created_at", -1)])
         await db.expense_categories.create_index([("restaurant_id", 1), ("name_normalized", 1)])
         await db.expenses.create_index([("restaurant_id", 1), ("expense_date", -1)])
         await db.expenses.create_index([("restaurant_id", 1), ("category_id", 1), ("expense_date", -1)])

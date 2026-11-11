@@ -165,6 +165,7 @@ def build_bill_pdf(payment, orders, restaurant):
         ["Parcel Charge", _money(payment.get("parcel_charge"))],
         [f"Tax ({float(payment.get('tax_percentage') or 0):.2f}%)", _money(payment.get("tax"))],
         ["Discount", _money(payment.get("discount"))],
+        ["Dineflo Coins Redeemed", _money(payment.get("loyalty_redeemed"))],
         ["Total Paid", _money(payment.get("total"))],
         ["Payment Method", str(payment.get("payment_method") or "").upper()],
     ]
@@ -185,10 +186,18 @@ def build_bill_pdf(payment, orders, restaurant):
 def build_whatsapp_bill_message(payment, orders, restaurant):
     customer_name = next((o.get("customer_name") for o in orders if o.get("customer_name")), "Customer")
     restaurant_name = (restaurant or {}).get("name") or "Restaurant"
-    amount = _message_money(payment.get("total") or payment.get("amount"))
+    amount = _message_money(payment.get("total", payment.get("amount")))
     created_text = _format_bill_datetime(payment.get("created_at"))
     payment_method = str(payment.get("payment_method") or "").upper()
     bill_id = payment.get("bill_id") or payment.get("payment_id")
+    loyalty_text = ""
+    if payment.get("loyalty_phone"):
+        loyalty_text = (
+            f"Dineflo Coins earned: {payment.get('loyalty_earned', 0)}\n"
+            f"Coins redeemed: {payment.get('loyalty_redeemed', 0)}\n"
+            f"Balance after this bill: {payment.get('loyalty_balance', 0)} coins\n"
+            "1 coin = Rs.1. Redeem at this restaurant when your balance reaches 200 coins.\n\n"
+        )
 
     return (
         f"Dear {customer_name},\n\n"
@@ -199,6 +208,7 @@ def build_whatsapp_bill_message(payment, orders, restaurant):
         f"🧾 Bill No : {bill_id}\n"
         f"💳 Payment : {payment_method}\n"
         "🔗 View Invoice : PDF attached\n\n"
+        f"{loyalty_text}"
         f"How was your experience with your order at *{restaurant_name}* today?\n\n"
         "Reply with:\n"
         "1. Loved it!\n"

@@ -102,13 +102,16 @@ class CounterOrderCreate(BaseModel):
     items: List[OrderItem]
 
 class PosCheckoutCreate(BaseModel):
+    checkout_token: Optional[str] = Field(default=None, min_length=16, max_length=64)
+    loyalty_phone: Optional[str] = None
+    loyalty_redeem: int = Field(default=0, ge=0, strict=True)
     order_type: str = "dine_in"  # dine_in, takeaway
     table_id: Optional[str] = None
     customer_name: Optional[str] = None
     phone: Optional[str] = None
     items: List[OrderItem]
     payment_method: str  # cash, upi, card
-    discount: Optional[float] = 0
+    discount: Optional[float] = Field(default=0, ge=0, allow_inf_nan=False)
     print_bill: bool = False
 
 class PosBillUpdate(BaseModel):
@@ -140,10 +143,12 @@ class OrderResponse(BaseModel):
     created_at: datetime
 
 class PaymentCreate(BaseModel):
+    loyalty_phone: Optional[str] = None
+    loyalty_redeem: int = Field(default=0, ge=0, strict=True)
     order_id: Optional[str] = None
     order_ids: Optional[List[str]] = None
     payment_method: str  # cash, upi, card
-    discount: Optional[float] = 0
+    discount: Optional[float] = Field(default=0, ge=0, allow_inf_nan=False)
 
 class CashAdjustmentCreate(BaseModel):
     amount: float

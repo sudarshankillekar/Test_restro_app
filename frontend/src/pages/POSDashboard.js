@@ -26,6 +26,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { normalizeImageUrl } from '../lib/utils';
 import DietIndicator from '../components/DietIndicator';
+import LoyaltyPanel from '../components/LoyaltyPanel';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -200,7 +201,21 @@ const POSDashboard = () => {
   const [phone, setPhone] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [discount, setDiscount] = useState('');
+  const [loyaltyPayment, setLoyaltyPayment] = useState(null);
+  const [loyaltyVersion, setLoyaltyVersion] = useState(0);
+  const [loyaltyOpen, setLoyaltyOpen] = useState(false);
+  const changeCustomerPhone = (value) => {
+    setPhone(value);
+    setLoyaltyPayment(null);
+    setLoyaltyVersion((version) => version + 1);
+  };
+  const openLoyalty = () => {
+    setLoyaltyPayment(null);
+    setLoyaltyOpen(true);
+  };
   const [checkingOut, setCheckingOut] = useState(false);
+  const checkoutBusyRef = useRef(false);
+  const checkoutAttemptRef = useRef(null);
   const [openingDialogOpen, setOpeningDialogOpen] = useState(false);
   const [openingInput, setOpeningInput] = useState('');
   const [openingSaving, setOpeningSaving] = useState(false);
@@ -421,7 +436,8 @@ const POSDashboard = () => {
     ? Number(restaurantProfile.parcel_charge || 0)
     : 0;
   const tax = Number(((subtotal + serviceCharge + parcelCharge) * taxPercentage / 100).toFixed(2));
-  const total = Math.max(Number((subtotal + serviceCharge + parcelCharge + tax - parsedDiscount).toFixed(2)), 0);
+  const beforeCoins = Math.max(Number((subtotal + serviceCharge + parcelCharge + tax - parsedDiscount).toFixed(2)), 0);
+  const total = Math.max(0, beforeCoins - (loyaltyPayment?.redeem || 0));
   const selectedTable = tables.find((table) => table.table_id === selectedTableId);
   const paymentSummary = summary.payment_summary || emptySummary.payment_summary;
   const cashAdjustments = summary.cash_adjustments || emptySummary.cash_adjustments;
@@ -544,13 +560,18 @@ const POSDashboard = () => {
         ${billParcelCharge > 0 ? `<div><span>Parcel Charge</span><span>Rs. ${billParcelCharge.toFixed(2)}</span></div>` : ''}
         <div><span>Tax (${billTaxPercentage.toFixed(2)}%)</span><span>Rs. ${billTax.toFixed(2)}</span></div>
         <div><span>Discount</span><span>Rs. ${billDiscount.toFixed(2)}</span></div>
+        <div><span>Dineflo Coins Redeemed</span><span>Rs. ${Number(payment.loyalty_redeemed || 0).toFixed(2)}</span></div>
         <div class="strong"><span>Total</span><span>Rs. ${billTotal.toFixed(2)}</span></div>
       </div>
     `, `${restaurantName} - ${bill.bill_id}`);
   };
 
   const checkout = async (shouldPrint = false) => {
-    if (checkingOut) return;
+    if (checkingOut || checkoutBusyRef.current) return;
+    if (loyaltyPayment?.pending) {
+      toast.error('Check the customer coin balance before completing payment.');
+      return;
+    }
     if (orderType === 'dine_in' && !selectedTableId) {
       toast.error('Please select a table.');
       return;
@@ -573,7 +594,7 @@ const POSDashboard = () => {
     const checkoutOrderType = orderType;
     const checkoutTableId = selectedTableId;
     const optimisticPay = !shouldPrint;
-
+    checkoutBusyRef.current = true;
     setCheckingOut(true);
     if (optimisticPay) {
       setCart([]);
@@ -585,20 +606,30 @@ const POSDashboard = () => {
     }
 
     try {
-      const response = await api.post('/api/pos/checkout', {
+      const payload = {
         order_type: checkoutOrderType,
         table_id: checkoutOrderType === 'dine_in' ? checkoutTableId : undefined,
         customer_name: checkoutCustomerName.trim(),
         phone: checkoutPhone.trim(),
         payment_method: checkoutPaymentMethod,
         discount: checkoutDiscount,
+        loyalty_phone: loyaltyPayment?.phone || null,
+        loyalty_redeem: loyaltyPayment?.redeem || 0,
         print_bill: shouldPrint,
         items: checkoutCart.map((item) => ({
           item_id: item.item_id,
           quantity: item.quantity,
         })),
-      });
+      };
+      const signature = JSON.stringify({ ...payload, print_bill: false });
+      if (checkoutAttemptRef.current?.signature !== signature) {
+        checkoutAttemptRef.current = { signature, token: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}` };
+      }
+      const response = await api.post('/api/pos/checkout', { ...payload, checkout_token: checkoutAttemptRef.current.token });
+      checkoutAttemptRef.current = null;
       toast.success('POS bill completed.');
+      setLoyaltyPayment(null);
+      setLoyaltyVersion((value) => value + 1);
       if (!optimisticPay) {
         setCart([]);
         setCustomerName('');
@@ -627,6 +658,8 @@ const POSDashboard = () => {
       }
       toast.error(error.response?.data?.detail || 'POS checkout failed');
       setCheckingOut(false);
+    } finally {
+      checkoutBusyRef.current = false;
     }
   };
 
@@ -821,6 +854,11 @@ const POSDashboard = () => {
 
   return (
     <div className="h-[100dvh] overflow-hidden bg-[#f8f9fa] text-[#191c1d]">
+      <Dialog open={loyaltyOpen} onOpenChange={setLoyaltyOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>Dineflo Coins</DialogTitle></DialogHeader>
+          <LoyaltyPanel key={loyaltyVersion} amount={beforeCoins} onChange={setLoyaltyPayment} disabled={checkingOut} initialPhone={phone} />
+        </DialogContent>
+      </Dialog>
       <main className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden xl:mr-[390px]">
         <header className="shrink-0 border-b border-[#e1bfb6]/50 bg-[#f8f9fa]/95 px-4 py-3 backdrop-blur md:px-6">
           <div className="flex min-w-0 items-center justify-between gap-2">
@@ -1267,7 +1305,7 @@ const POSDashboard = () => {
         <div className="space-y-2.5 border-t border-[#e1bfb6] bg-[#f8f9fa] px-4 py-3">
           <div className="grid grid-cols-2 gap-2">
             <Input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Customer name" className="h-10 rounded-xl bg-white" />
-            <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" className="h-10 rounded-xl bg-white" />
+            <Input value={phone} onChange={(event) => changeCustomerPhone(event.target.value)} placeholder="Phone" className="h-10 rounded-xl bg-white" />
           </div>
           <div className="grid grid-cols-3 gap-2">
             {paymentOptions.map((option) => {
@@ -1293,6 +1331,7 @@ const POSDashboard = () => {
             placeholder="Discount"
             className="h-10 rounded-xl bg-white"
           />
+          <Button type="button" variant="outline" disabled={checkingOut} onClick={openLoyalty}>Dineflo Coins{loyaltyPayment?.redeem ? `: -Rs.${loyaltyPayment.redeem}` : ''}</Button>
           <div className="space-y-1.5 text-sm">
             <div className="flex justify-between"><span className="text-[#645d5a]">Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
             {serviceCharge > 0 && <div className="flex justify-between"><span className="text-[#645d5a]">Service</span><span>{formatCurrency(serviceCharge)}</span></div>}
@@ -1437,7 +1476,7 @@ const POSDashboard = () => {
 
             <div className="grid grid-cols-2 gap-2">
               <Input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Customer name" className="h-10 rounded-xl bg-white" />
-              <Input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone" className="h-10 rounded-xl bg-white" />
+              <Input value={phone} onChange={(event) => changeCustomerPhone(event.target.value)} placeholder="Phone" className="h-10 rounded-xl bg-white" />
             </div>
             <div className="grid grid-cols-3 gap-2">
               {paymentOptions.map((option) => {
@@ -1463,6 +1502,7 @@ const POSDashboard = () => {
               placeholder="Discount"
               className="h-10 rounded-xl bg-white"
             />
+            <Button type="button" variant="outline" disabled={checkingOut} onClick={openLoyalty}>Dineflo Coins{loyaltyPayment?.redeem ? `: -Rs.${loyaltyPayment.redeem}` : ''}</Button>
             <div className="space-y-1.5 text-sm">
               <div className="flex justify-between"><span className="text-[#645d5a]">Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
               {serviceCharge > 0 && <div className="flex justify-between"><span className="text-[#645d5a]">Service</span><span>{formatCurrency(serviceCharge)}</span></div>}

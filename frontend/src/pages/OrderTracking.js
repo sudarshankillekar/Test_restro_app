@@ -239,6 +239,7 @@ const OrderTracking = () => {
             <div><span>Subtotal</span><span>Rs. ${(payment.subtotal || 0).toFixed(2)}</span></div>
             <div><span>Tax (5%)</span><span>Rs. ${(payment.tax || 0).toFixed(2)}</span></div>
             <div><span>Discount</span><span>Rs. ${(payment.discount || 0).toFixed(2)}</span></div>
+            <div><span>Dineflo Coins Redeemed</span><span>Rs. ${Number(payment.loyalty_redeemed || 0).toFixed(2)}</span></div>
             <div class="strong"><span>Total</span><span>Rs. ${(payment.total || 0).toFixed(2)}</span></div>
           </div>
         </body>
@@ -363,6 +364,9 @@ const OrderTracking = () => {
                     <span>Discount</span>
                     <span>₹{(billSummary.payment.discount || 0).toFixed(2)}</span>
                   </div>
+                  {billSummary.payment.loyalty_phone && <div className="flex justify-between gap-3">
+                    <span>Dineflo Coins Redeemed</span><span>₹{Number(billSummary.payment.loyalty_redeemed || 0).toFixed(2)}</span>
+                  </div>}
                   <div className="flex justify-between border-t border-border pt-2 text-lg font-bold">
                     <span>Final Bill Total</span>
                     <span className="text-primary">₹{(billSummary.payment.total || 0).toFixed(2)}</span>

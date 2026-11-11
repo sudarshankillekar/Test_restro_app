@@ -15,6 +15,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import DietIndicator from '../components/DietIndicator';
+import LoyaltyPanel from '../components/LoyaltyPanel';
 
 const formatCurrency = (value = 0) => new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -241,6 +242,7 @@ const BillingDashboard = ({ embedded = false }) => {
   const assistanceReminderTimersRef = useRef(new Map());
   const billReminderTimersRef = useRef(new Map());
   const [discount, setDiscount] = useState(0);
+  const [loyaltyPayment, setLoyaltyPayment] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
   const [editingItems, setEditingItems] = useState([]);
   const [cancellingItemKey, setCancellingItemKey] = useState('');
@@ -791,9 +793,9 @@ const BillingDashboard = ({ embedded = false }) => {
     const fallbackTax = Number(((subtotal + serviceCharge + parcelCharge) * taxPercentage / 100).toFixed(2));
     const parsedTax = Number(payment.tax);
     const tax = Number.isFinite(parsedTax) && parsedTax > 0 ? parsedTax : fallbackTax;
-    const recalculatedTotal = Number((subtotal + serviceCharge + parcelCharge + tax - discount).toFixed(2));
+    const recalculatedTotal = Number((subtotal + serviceCharge + parcelCharge + tax - discount - Number(payment.loyalty_redeemed || 0)).toFixed(2));
     const parsedTotal = Number(payment.total);
-    const total = Number.isFinite(parsedTotal) && parsedTotal > subtotal - discount
+    const total = payment.total != null && Number.isFinite(parsedTotal) && parsedTotal >= 0
       ? parsedTotal
       : recalculatedTotal; 
     const billGeneratedAt = getBillCreatedAt(bill);
@@ -834,6 +836,7 @@ const BillingDashboard = ({ embedded = false }) => {
         ${parcelCharge > 0 ? `<div><span>Parcel Charge</span><span>Rs. ${parcelCharge.toFixed(2)}</span></div>` : ''}
         <div><span>Tax (${taxPercentage.toFixed(2)}%)</span><span>Rs. ${tax.toFixed(2)}</span></div>
         <div><span>Discount</span><span>Rs. ${discount.toFixed(2)}</span></div>
+        <div><span>Dineflo Coins Redeemed</span><span>Rs. ${Number(payment.loyalty_redeemed || 0).toFixed(2)}</span></div>
         <div class="strong"><span>Total</span><span>Rs. ${total.toFixed(2)}</span></div>
       </div>
     `, `${restaurantName} - ${bill.bill_id}`);
@@ -972,9 +975,12 @@ const BillingDashboard = ({ embedded = false }) => {
         order_ids: selectedOrderIds,
         payment_method: paymentMethodSnapshot,
         discount: Number(discountSnapshot) || 0,
+        loyalty_phone: loyaltyPayment?.phone || null,
+        loyalty_redeem: loyaltyPayment?.redeem || 0,
       });
 
       toast.success('Bill completed successfully.');
+      setLoyaltyPayment(null);
       Promise.allSettled([
         loadTransactionSummary(),
         refreshOrders(),
@@ -1254,6 +1260,10 @@ const BillingDashboard = ({ embedded = false }) => {
             <div className="min-w-0">
               <h1 className="text-xl sm:text-[2rem] font-bold tracking-tight text-slate-900">Billing Counter</h1>
               <p className="text-sm text-slate-500">Welcome, {user?.name}</p>
+              <Dialog>
+                <DialogTrigger asChild><Button variant="outline" size="sm" className="mt-2"><Wallet className="mr-2 h-4 w-4" />Dineflo Coins</Button></DialogTrigger>
+                <DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>Customer loyalty</DialogTitle></DialogHeader><LoyaltyPanel /></DialogContent>
+              </Dialog>
               {user?.restaurant_name && (
                 <div className="flex items-center gap-2 text-xs sm:text-sm text-slate-500 truncate">
                   <span className="truncate">{user.restaurant_name}</span>
@@ -2083,6 +2093,7 @@ const BillingDashboard = ({ embedded = false }) => {
                                   return;
                                 }
                                 setSelectedGroup(group);
+                                setLoyaltyPayment(null);
                               }}
                               className="w-full rounded-full bg-success hover:bg-[#3E6648]"
                             >
@@ -2091,7 +2102,7 @@ const BillingDashboard = ({ embedded = false }) => {
                             </Button>
                           </DialogTrigger>
                           {selectedGroup?.table_id === group.table_id && (
-                            <DialogContent className="rounded-2xl">
+                            <DialogContent className="rounded-2xl max-h-[90vh] overflow-y-auto">
                               <DialogHeader>
                                 <DialogTitle>Confirm Payment - {group.table_label}</DialogTitle>
                               </DialogHeader>
@@ -2099,6 +2110,7 @@ const BillingDashboard = ({ embedded = false }) => {
                                 <p className="text-sm text-muted-foreground">
                                   This will mark {currentSelectedGroup?.orders.length || group.orders.length} order(s) as paid and served.
                                 </p>
+                                <LoyaltyPanel key={group.table_id} amount={calculateBill(currentSelectedGroup || group).total} disabled={paymentSubmitting} onChange={setLoyaltyPayment} />
                                 <div className="rounded-xl border border-border p-4 space-y-2">
                                   <div className="flex justify-between">
                                     <span>Subtotal</span>
@@ -2125,13 +2137,14 @@ const BillingDashboard = ({ embedded = false }) => {
                                     <span>{formatCurrency(calculateBill(currentSelectedGroup || group).discount)}</span>
                                   </div>
                                   <div className="flex justify-between border-t pt-2 font-bold">
+                                    <span className="text-sm font-normal">Coins redeemed: {loyaltyPayment?.redeem || 0}</span>
                                     <span>Total</span>
-                                    <span className="text-primary">{formatCurrency(calculateBill(currentSelectedGroup || group).total)}</span>
+                                    <span className="text-primary">{formatCurrency(Math.max(0, calculateBill(currentSelectedGroup || group).total - (loyaltyPayment?.redeem || 0)))}</span>
                                   </div>
                                 </div>
                                 <Button
                                   onClick={processPayment}
-                                  disabled={paymentSubmitting}
+                                  disabled={paymentSubmitting || loyaltyPayment?.pending}
                                   className="w-full rounded-full bg-success hover:bg-[#3E6648]"
                                 >
                                   {paymentSubmitting ? 'Generating Bill...' : 'Confirm Payment'}
