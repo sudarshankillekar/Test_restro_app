@@ -1260,10 +1260,6 @@ const BillingDashboard = ({ embedded = false }) => {
             <div className="min-w-0">
               <h1 className="text-xl sm:text-[2rem] font-bold tracking-tight text-slate-900">Billing Counter</h1>
               <p className="text-sm text-slate-500">Welcome, {user?.name}</p>
-              <Dialog>
-                <DialogTrigger asChild><Button variant="outline" size="sm" className="mt-2"><Wallet className="mr-2 h-4 w-4" />Dineflo Coins</Button></DialogTrigger>
-                <DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>Customer loyalty</DialogTitle></DialogHeader><LoyaltyPanel /></DialogContent>
-              </Dialog>
               {user?.restaurant_name && (
                 <div className="flex items-center gap-2 text-xs sm:text-sm text-slate-500 truncate">
                   <span className="truncate">{user.restaurant_name}</span>
@@ -1322,7 +1318,8 @@ const BillingDashboard = ({ embedded = false }) => {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2 xl:justify-end">
+          <div className="flex flex-wrap items-start gap-2 xl:justify-end">
+            <div className="flex flex-col gap-2">
             <Dialog open={counterDialogOpen} onOpenChange={(open) => {
               setCounterDialogOpen(open);
               if (!open) {
@@ -1701,6 +1698,20 @@ const BillingDashboard = ({ embedded = false }) => {
                 </div>
               </DialogContent>
             </Dialog>
+
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="w-full rounded-full">
+                  <Wallet className="mr-2 h-4 w-4" />
+                  Dineflo Coins
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-h-[85vh] overflow-y-auto">
+                <DialogHeader><DialogTitle>Customer loyalty</DialogTitle></DialogHeader>
+                <LoyaltyPanel />
+              </DialogContent>
+            </Dialog>
+            </div>
 
             {!embedded && (
               <Button
