@@ -27,7 +27,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { normalizeImageUrl } from '../lib/utils';
 import DietIndicator from '../components/DietIndicator';
 import LoyaltyPanel from '../components/LoyaltyPanel';
-import { Badge } from '../components/ui/badge';
+import OrderMenuItem from '../components/OrderMenuItem';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -1189,46 +1189,9 @@ const POSDashboard = () => {
 
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-36 pr-0 lg:pb-0 lg:pr-1">
           <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 2xl:grid-cols-5">
-            {visibleItems.map((item) => {
-              const cartItem = cart.find((entry) => entry.item_id === item.item_id);
-              const imageUrl = normalizeImageUrl(item.image);
-              return (
-                <Card key={item.item_id} className={`min-w-0 overflow-hidden rounded-xl border-[#e1bfb6] bg-white shadow-[0_4px_12px_rgba(0,0,0,0.04)] ${!item.available ? 'opacity-60' : ''}`}>
-                  <CardContent className="flex h-full flex-col p-0">
-                    <button type="button" className="text-left" onClick={() => addItem(item)}>
-                      {imageUrl ? (
-                        <img src={imageUrl} alt={item.name} className="h-16 w-full object-cover sm:h-20 lg:h-24" />
-                      ) : (
-                        <div className="flex h-16 w-full items-center justify-center bg-[#edeeef] text-[#8d7169] sm:h-20 lg:h-24">
-                          <Utensils className="h-5 w-5 sm:h-6 sm:w-6" />
-                        </div>
-                      )}
-                    </button>
-                    <div className="flex min-w-0 flex-1 flex-col p-2">
-                      <div className="flex items-start justify-between gap-1 sm:gap-2">
-                        <div className="min-w-0">
-	                          <div className="flex items-start gap-1.5">
-	                            <DietIndicator item={item} className="mt-0.5" />
-	                            <h3 className="line-clamp-2 min-h-[2rem] text-xs font-black leading-tight sm:text-sm">{item.name}</h3>
-	                          </div>
-                          <p className="mt-1 text-sm font-black text-[#d92d0b] sm:text-lg">{formatCurrency(item.price)}</p>
-                        </div>
-                        {cartItem && <Badge className="rounded-full bg-green-100 px-1.5 text-xs text-green-700 hover:bg-green-100">{cartItem.quantity}</Badge>}
-                      </div>
-                      <Button
-                        type="button"
-                        disabled={!item.available}
-                        onClick={() => addItem(item)}
-                        className="mt-2 h-8 w-full rounded-xl bg-[#d92d0b] text-xs font-black text-white hover:bg-[#b92308] sm:h-9 sm:text-sm"
-                      >
-                        <Plus className="mr-1 h-4 w-4" />
-                        Add
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+            {visibleItems.map((item) => (
+              <OrderMenuItem key={item.item_id} item={item} quantity={cart.find(entry => entry.item_id === item.item_id)?.quantity || 0} onAdd={addItem} />
+            ))}
           </div>
           </div>
 

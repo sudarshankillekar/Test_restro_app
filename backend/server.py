@@ -3562,6 +3562,19 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
     if not restaurant_id:
         raise HTTPException(status_code=400, detail="User not associated with any restaurant")
 
+    submission_id = None
+    submission_hash = None
+    if input.submission_token:
+        submission_id = 'counter:' + hashlib.sha256(
+            f'{restaurant_id}:{user.get("_id") or user.get("user_id") or user.get("email")}:{input.submission_token}'.encode()
+        ).hexdigest()
+        submission_hash = hashlib.sha256(input.model_dump_json(exclude={'submission_token'}).encode()).hexdigest()
+        existing = await db.orders.find_one({'_id': submission_id})
+        if existing:
+            if existing.get('submission_hash') != submission_hash:
+                raise HTTPException(status_code=409, detail='This submission has already been used for a different order.')
+            return {k: v for k, v in existing.items() if k != '_id'}
+
     order_type = (input.order_type or "dine_in").strip().lower()
     if order_type not in ["dine_in", "takeaway"]:
         raise HTTPException(status_code=400, detail="order_type must be dine_in or takeaway")
@@ -3587,7 +3600,8 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
         existing_orders_task = db.orders.find({
             "table_id": table_id,
             "restaurant_id": restaurant_id,
-            "status": {"$nin": ["served", "cancelled"]}
+            "status": {"$ne": "cancelled"},
+            "payment_status": {"$ne": "completed"},
         }, {"_id": 0, "order_id": 1, "status": 1, "created_at": 1}).sort("created_at", -1).to_list(50)
         table, existing_active_orders, item_result = await asyncio.gather(
             table_task,
@@ -3633,7 +3647,18 @@ async def create_counter_order(input: CounterOrderCreate, request: Request):
             "pending": datetime.now(timezone.utc).isoformat()
         }
     }
-    await db.orders.insert_one(order_doc)
+    if submission_id:
+        order_doc['_id'] = submission_id
+        order_doc['submission_hash'] = submission_hash
+    try:
+        await db.orders.insert_one(order_doc)
+    except DuplicateKeyError:
+        if not submission_id:
+            raise
+        existing = await db.orders.find_one({'_id': submission_id})
+        if not existing or existing.get('submission_hash') != submission_hash:
+            raise HTTPException(status_code=409, detail='Conflicting order submission.')
+        return {k: v for k, v in existing.items() if k != '_id'}
     schedule_background_task(upsert_customer_record(restaurant_id, display_customer_name, phone))
 
     created_order = {k: v for k, v in order_doc.items() if k != "_id"}
@@ -3893,10 +3918,19 @@ async def request_order_bill(order_id: str, request: Request):
         data = {}
 
     customer_session_token = data.get("customer_session_token") or request.query_params.get("customer_session_token")
-    if not customer_session_token:
-        raise HTTPException(status_code=401, detail="customer_session_token is required")
-
-    session = await db.customer_sessions.find_one({"session_token": customer_session_token})
+    if customer_session_token:
+        session = await db.customer_sessions.find_one({"session_token": customer_session_token})
+    else:
+        user = await get_current_user(request, db)
+        if user['role'] not in ['admin', 'waiter']:
+            raise HTTPException(status_code=403, detail='Not authorized')
+        if not user.get('restaurant_id'):
+            raise HTTPException(status_code=400, detail='User not associated with any restaurant')
+        session = await db.orders.find_one({
+            'order_id': order_id, 'restaurant_id': user.get('restaurant_id'),
+        }, {'_id': 0, 'table_id': 1, 'restaurant_id': 1})
+        if not session:
+            raise HTTPException(status_code=404, detail='Order not found')
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 

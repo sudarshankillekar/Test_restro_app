@@ -1,679 +1,210 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, ClipboardList, Loader2, LogOut, Minus, Plus, Search, ShoppingBag, Store, UtensilsCrossed } from 'lucide-react';
+import { LogOut, Minus, Plus, RefreshCw, Send, ShoppingBag, Trash2, UtensilsCrossed } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
-import { normalizeImageUrl } from '../lib/utils';
-import DietIndicator from '../components/DietIndicator';
-import { Badge } from '../components/ui/badge';
+import OrderMenuItem from '../components/OrderMenuItem';
+import { DIET_TYPES } from '../components/DietIndicator';
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Textarea } from '../components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
-const formatCurrency = (value = 0) => `₹${Number(value || 0).toFixed(2)}`;
+const money = value => `₹${Number(value || 0).toFixed(2)}`;
+const emptyDraft = () => ({ items: [], name: '', phone: '', pending: null });
+const statusLabel = { pending: 'Sent to kitchen', accepted: 'Preparing', prepared: 'Ready to serve', served: 'Served' };
+const unpaid = order => order.status !== 'cancelled' && order.payment_status !== 'completed';
 
-const createEmptyOrderDraft = () => ({
-  orderType: 'dine_in',
-  tableId: '',
-  customerName: '',
-  phone: '',
-});
-
-const WaiterDashboard = () => {
-  const navigate = useNavigate();
+export default function WaiterPage() {
   const { user, logout } = useAuth();
-  const { socket, joinRoom } = useSocket();
-
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [restaurantProfile, setRestaurantProfile] = useState({ name: '' });
+  const { socket, connected } = useSocket();
+  const navigate = useNavigate();
   const [tables, setTables] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [menuItems, setMenuItems] = useState([]);
+  const [items, setItems] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [brokenImages, setBrokenImages] = useState({});
-  const [draft, setDraft] = useState(createEmptyOrderDraft);
-  const [cart, setCart] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [selection, setSelection] = useState('');
+  const storageKey = `waiter-drafts:${user?.restaurant_id}:${user?.user_id || user?.email}`;
+  const [drafts, setDrafts] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(storageKey) || '{}'); } catch { return {}; }
+  });
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [category, setCategory] = useState('all');
+  const [diet, setDiet] = useState('all');
+  const [view, setView] = useState('menu');
+  const [cartOpen, setCartOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const sendLock = useRef(false);
+  const requestLock = useRef(false);
 
   useEffect(() => {
-    const bootstrap = async () => {
-      try {
-        const [profileResponse, tablesResponse, categoriesResponse, itemsResponse, ordersResponse] = await Promise.all([
-          api.get('/api/restaurant/profile', { withCredentials: true }),
-          api.get('/api/tables', { withCredentials: true }),
-          api.get('/api/menu/categories', { withCredentials: true }),
-          api.get('/api/menu/items', { withCredentials: true }),
-          api.get('/api/orders', { withCredentials: true }),
-        ]);
-
-        setRestaurantProfile({ name: profileResponse.data?.name || '' });
-        setTables(tablesResponse.data || []);
-        setCategories(categoriesResponse.data || []);
-        setMenuItems((itemsResponse.data || []).filter((item) => item.available));
-        setOrders(ordersResponse.data || []);
-      } catch (error) {
-        toast.error('Failed to load waiter dashboard');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    bootstrap();
-  }, []);
-
-  useEffect(() => {
-    if (socket && user?.restaurant_id) {
-      joinRoom(`restaurant_${user.restaurant_id}`);
-    }
-  }, [socket, user, joinRoom]);
-
-  useEffect(() => {
-    if (!socket) return;
-
-    const upsertOrder = (incomingOrder) => {
-      setOrders((prev) => {
-        const existing = prev.find((order) => order.order_id === incomingOrder.order_id);
-        if (existing) {
-          return prev.map((order) => (order.order_id === incomingOrder.order_id ? incomingOrder : order));
-        }
-        return [incomingOrder, ...prev];
-      });
-    };
-
-    socket.on('new_order', upsertOrder);
-    socket.on('order_status_updated', upsertOrder);
-    socket.on('order_deleted', (payload) => {
-      setOrders((prev) => prev.filter((order) => order.order_id !== payload.order_id));
-    });
-
-    return () => {
-      socket.off('new_order', upsertOrder);
-      socket.off('order_status_updated', upsertOrder);
-      socket.off('order_deleted');
-    };
-  }, [socket]);
-
-  const filteredItems = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return menuItems.filter((item) => {
-      const matchesCategory = selectedCategory === 'all' || item.category_id === selectedCategory;
-      const matchesSearch = !term
-        || item.name.toLowerCase().includes(term)
-        || (item.description || '').toLowerCase().includes(term);
-      return matchesCategory && matchesSearch;
-    });
-  }, [menuItems, search, selectedCategory]);
-
-  const groupedItems = useMemo(() => {
-    const grouped = categories
-      .map((category) => ({
-        ...category,
-        items: filteredItems.filter((item) => item.category_id === category.category_id),
-      }))
-      .filter((category) => category.items.length > 0);
-       const uncategorizedItems = filteredItems.filter((item) => (
-      !categories.some((category) => category.category_id === item.category_id)
-    ));
-
-    if (uncategorizedItems.length > 0) {
-      grouped.push({
-        category_id: 'uncategorized',
-        name: 'More Items',
-        items: uncategorizedItems,
-      });
-    }
-
-    if (grouped.length === 0 && filteredItems.length > 0) {
-      return [{
-        category_id: 'all-items',
-        name: 'All Menu Items',
-        items: filteredItems,
-      }];
-    }
-
-    return grouped;
-  }, [categories, filteredItems]);
-
-  const activeOrders = useMemo(() => {
-    return orders.filter((order) => !['served', 'cancelled'].includes(order.status));
-  }, [orders]);
-
-  const cartItemCount = useMemo(
-    () => cart.reduce((sum, item) => sum + item.quantity, 0),
-    [cart]
-  );
-  const getCartItem = (itemId) => cart.find((item) => item.item_id === itemId);
-  const cartTotal = useMemo(
-    () => cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
-    [cart]
-  );
-
-  const addItemToCart = (menuItem) => {
-    setCart((prev) => {
-      const existing = prev.find((item) => item.item_id === menuItem.item_id);
-      if (existing) {
-        return prev.map((item) => (
-          item.item_id === menuItem.item_id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        ));
-      }
-
-      return [
-        ...prev,
-        {
-          item_id: menuItem.item_id,
-          name: menuItem.name,
-          price: menuItem.price,
-          quantity: 1,
-          instructions: '',
-        },
-      ];
-    });
-  };
-
-  const updateCartItem = (itemId, changes) => {
-    setCart((prev) => prev.map((item) => (
-      item.item_id === itemId ? { ...item, ...changes } : item
-    )));
-  };
-
-  const changeCartQuantity = (itemId, delta) => {
-    setCart((prev) => prev
-      .map((item) => (
-        item.item_id === itemId
-          ? { ...item, quantity: Math.max(0, item.quantity + delta) }
-          : item
-      ))
-      .filter((item) => item.quantity > 0));
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    navigate('/login');
-  };
-
-  const resetDraft = () => {
-    setDraft(createEmptyOrderDraft());
-    setCart([]);
-  };
-
-  const placeOrder = async () => {
-    if (!draft.customerName.trim()) {
-      toast.error('Please enter customer name');
-      return;
-    }
-    if (draft.orderType === 'dine_in' && !draft.tableId) {
-      toast.error('Please select a table');
-      return;
-    }
-    if (cart.length === 0) {
-      toast.error('Please add at least one item');
-      return;
-    }
-
-    setSubmitting(true);
+    try { sessionStorage.setItem(storageKey, JSON.stringify(drafts)); } catch { /* Storage may be unavailable. */ }
+  }, [drafts, storageKey]);
+  const refresh = useCallback(async () => {
     try {
-      await api.post('/api/counter/orders', {
-        order_type: draft.orderType,
-        table_id: draft.orderType === 'dine_in' ? draft.tableId : null,
-        customer_name: draft.customerName.trim(),
-        phone: draft.phone.trim(),
-        items: cart.map((item) => ({
-          item_id: item.item_id,
-          quantity: item.quantity,
-          instructions: item.instructions?.trim() || '',
-        })),
-      }, { withCredentials: true });
-
-      toast.success('Order placed successfully');
-      resetDraft();
-    } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to place order');
-    } finally {
-      setSubmitting(false);
+      const [t, c, m, o] = await Promise.all([
+        api.get('/api/tables'), api.get('/api/menu/categories'), api.get('/api/menu/items'), api.get('/api/orders'),
+      ]);
+      setTables(t.data || []); setCategories(c.data || []); setItems(m.data || []); setOrders(o.data || []); setError('');
+    } catch { setError('Could not refresh orders. Check your connection and retry.'); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if (connected && socket && user?.restaurant_id) {
+      socket.emit('join_room', { room: `restaurant_${user.restaurant_id}` }); refresh();
     }
+  }, [connected, socket, user?.restaurant_id, refresh]);
+  useEffect(() => {
+    const interval = window.setInterval(refresh, 30000);
+    return () => window.clearInterval(interval);
+  }, [refresh]);
+  useEffect(() => {
+    if (!socket) return undefined;
+    const upsert = order => {
+      if (!order?.order_id) return;
+      setOrders(old => [order, ...old.filter(entry => entry.order_id !== order.order_id)]);
+    };
+    const remove = payload => setOrders(old => old.filter(entry => entry.order_id !== payload.order_id));
+    socket.on('new_order', upsert); socket.on('order_status_updated', upsert); socket.on('order_deleted', remove);
+    socket.on('payment_completed', refresh);
+    return () => {
+      socket.off('new_order', upsert); socket.off('order_status_updated', upsert); socket.off('order_deleted', remove);
+      socket.off('payment_completed', refresh);
+    };
+  }, [socket, refresh]);
+
+  const draft = drafts[selection] || emptyDraft();
+  const locked = sending || Boolean(draft.pending);
+  const selectedTable = tables.find(table => table.table_id === selection);
+  const label = selection === 'takeaway' ? 'Takeaway' : selectedTable ? `Table ${selectedTable.table_number}` : 'Select a table';
+  const count = draft.items.reduce((sum, item) => sum + item.quantity, 0);
+  const total = draft.items.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const tableOrders = orders.filter(order => unpaid(order) && (selection === 'takeaway' ? order.order_type === 'takeaway' : order.table_id === selection));
+  const readyCount = orders.filter(order => unpaid(order) && order.status === 'prepared').length;
+  const billRequested = tableOrders.some(order => order.bill_requested);
+  const canRequest = selection !== 'takeaway' && tableOrders.length > 0 && tableOrders.every(order => ['prepared', 'served'].includes(order.status)) && !billRequested && count === 0;
+  const visibleItems = useMemo(() => items.filter(item =>
+    (category === 'all' || item.category_id === category) &&
+    (diet === 'all' || (item.diet_type || 'veg') === diet) &&
+    `${item.name} ${item.description || ''}`.toLowerCase().includes(search.trim().toLowerCase())
+  ), [items, category, diet, search]);
+  const editDraft = change => {
+    if (!selection || locked) return;
+    setDrafts(old => ({ ...old, [selection]: { ...(old[selection] || emptyDraft()), ...change } }));
+  };
+  const add = item => {
+    if (!selection) { toast.error('Select a table or takeaway first'); return; }
+    if (!item.available || locked) return;
+    const exists = draft.items.some(entry => entry.item_id === item.item_id);
+    editDraft({ items: exists ? draft.items.map(entry => entry.item_id === item.item_id ? { ...entry, quantity: entry.quantity + 1 } : entry)
+      : [...draft.items, { item_id: item.item_id, name: item.name, price: item.price, quantity: 1, instructions: '' }] });
+  };
+  const quantity = (id, delta) => editDraft({ items: draft.items.map(item => item.item_id === id ? { ...item, quantity: item.quantity + delta } : item).filter(item => item.quantity > 0) });
+  const send = async () => {
+    if (sendLock.current || !selection || !draft.items.length) return;
+    const key = selection;
+    // Retain the exact token and payload after ambiguous failures, even across reloads.
+    const payload = draft.pending || {
+      submission_token: window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      order_type: key === 'takeaway' ? 'takeaway' : 'dine_in', table_id: key === 'takeaway' ? null : key,
+      customer_name: draft.name.trim(), phone: draft.phone.trim(),
+      items: draft.items.map(item => ({ item_id: item.item_id, quantity: item.quantity, instructions: item.instructions.trim() })),
+    };
+    sendLock.current = true; setSending(true);
+    setDrafts(old => ({ ...old, [key]: { ...old[key], pending: payload } }));
+    try {
+      const result = await api.post('/api/counter/orders', payload);
+      setOrders(old => [result.data, ...old.filter(order => order.order_id !== result.data.order_id)]);
+      setDrafts(old => ({ ...old, [key]: emptyDraft() }));
+      toast.success(`${label}: sent to kitchen`); setView('orders'); setCartOpen(false);
+    } catch (err) {
+      const status = err.response?.status;
+      if (status && status >= 400 && status < 500 && status !== 408) {
+        setDrafts(old => ({ ...old, [key]: { ...old[key], pending: null } }));
+      }
+      toast.error(err.response?.data?.detail || 'Confirmation not received. Retry this submission to check safely.');
+    } finally { sendLock.current = false; setSending(false); }
+  };
+  const requestBill = async () => {
+    if (!canRequest || requestLock.current) return;
+    requestLock.current = true; setRequesting(true);
+    try {
+      await api.post(`/api/orders/${tableOrders[0].order_id}/request-bill`, {});
+      toast.success('Bill requested from billing counter'); await refresh();
+    } catch (err) { toast.error(err.response?.data?.detail || 'Could not request bill'); }
+    finally { requestLock.current = false; setRequesting(false); }
   };
 
-  const tableOptions = useMemo(
-    () => tables.map((table) => ({
-      value: table.table_id,
-      label: `Table ${table.table_number}`,
-    })),
-    [tables]
-  );
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#F7F4EF' }}>
-        <Loader2 className="h-10 w-10 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-[#F7F4EF]">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 px-3 py-3 sm:px-4 sm:py-4 lg:px-6">
-        <Card className="overflow-hidden rounded-[28px] border-white/80 bg-white/95 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-          <CardContent className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                  <UtensilsCrossed className="h-6 w-6" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-black tracking-tight text-slate-900">Waiter Dashboard</h1>
-                  <p className="text-sm text-slate-500">{restaurantProfile.name || user?.restaurant_name || 'Restaurant'}</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Badge className="rounded-full bg-primary/10 px-3 py-1 text-primary hover:bg-primary/10">
-                  <Store className="mr-1 h-3.5 w-3.5" />
-                  {cartItemCount} item{cartItemCount === 1 ? '' : 's'} in cart
-                </Badge>
-                <Badge className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700 hover:bg-emerald-50">
-                  <ClipboardList className="mr-1 h-3.5 w-3.5" />
-                  {activeOrders.length} active order{activeOrders.length === 1 ? '' : 's'}
-                </Badge>
-              </div>
-            </div>
-
-            <Button variant="outline" className="rounded-full" onClick={handleLogout}>
-              <LogOut className="mr-2 h-4 w-4" />
-              Logout
-            </Button>
-          </CardContent>
-        </Card>
-
-        <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
-          <Card className="rounded-[26px] border-white/80 bg-white/95 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-bold text-slate-900">Order Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Order Type</Label>
-                <Select
-                  value={draft.orderType}
-                  onValueChange={(value) => setDraft((prev) => ({
-                    ...prev,
-                    orderType: value,
-                    tableId: value === 'dine_in' ? prev.tableId : '',
-                  }))}
-                >
-                  <SelectTrigger className="rounded-2xl">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dine_in">Dine-In</SelectItem>
-                    <SelectItem value="takeaway">Takeaway</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {draft.orderType === 'dine_in' && (
-                <div className="space-y-2">
-                  <Label>Select Table</Label>
-                  <Select value={draft.tableId} onValueChange={(value) => setDraft((prev) => ({ ...prev, tableId: value }))}>
-                    <SelectTrigger className="rounded-2xl">
-                      <SelectValue placeholder="Choose a table" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tableOptions.map((table) => (
-                        <SelectItem key={table.value} value={table.value}>
-                          {table.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label>Customer Name</Label>
-                <Input
-                  value={draft.customerName}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, customerName: event.target.value }))}
-                  className="rounded-2xl"
-                  placeholder="Enter customer name"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Phone Number</Label>
-                <Input
-                  value={draft.phone}
-                  onChange={(event) => setDraft((prev) => ({ ...prev, phone: event.target.value }))}
-                  className="rounded-2xl"
-                  placeholder="Optional phone number"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-3xl bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Cart Total</p>
-                  <p className="mt-2 text-2xl font-black text-slate-900">{formatCurrency(cartTotal)}</p>
-                </div>
-                <div className="rounded-3xl bg-orange-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-orange-400">Active Orders</p>
-                  <p className="mt-2 text-2xl font-black text-orange-600">{activeOrders.length}</p>
-                </div>
-              </div>
-
-              <Button
-                onClick={placeOrder}
-                className="h-12 w-full rounded-2xl bg-primary text-base font-semibold hover:bg-[#C54E2C]"
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Placing Order...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
-                    Place Order
-                  </>
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <div className="space-y-4">
-            <Card className="rounded-[26px] border-white/80 bg-white/95 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-              <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
-                <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search menu items"
-                    className="h-12 rounded-full border-slate-200 pl-11"
-                  />
-                </div>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className="h-12 rounded-full sm:w-[220px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {categories.map((category) => (
-                      <SelectItem key={category.category_id} value={category.category_id}>
-                        {category.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </CardContent>
-            </Card>
-
-            <div className="space-y-4">
-              {groupedItems.map((category) => (
-                <Card key={category.category_id} className="rounded-[26px] border-white/80 bg-white/95 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-lg font-bold text-slate-900">{category.name}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                     <div className="grid grid-cols-2 gap-4 2xl:grid-cols-3">
-                      {category.items.map((item) => {
-                        const imageUrl = normalizeImageUrl(item.image);
-                        const imageBroken = item.item_id ? brokenImages[item.item_id] : false;
-                        const showImage = imageUrl && !imageBroken;
-
-                        return (
-                          <div
-                            key={item.item_id}
-                            className="overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_10px_30px_rgba(15,23,42,0.06)]"
-                          >
-                             {showImage && (
-                              <div className="relative h-36 overflow-hidden bg-slate-50 sm:h-40">
-                                <img
-                                  src={imageUrl}
-                                  alt={item.name}
-                                  className="h-full w-full object-cover"
-                                  onError={() => setBrokenImages((prev) => ({ ...prev, [item.item_id]: true }))}
-                                />
-                                     <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/20 to-transparent" />
-                                <div className="absolute bottom-3 right-3">
-                                  {getCartItem(item.item_id) ? (
-                                    <div className="inline-flex items-center gap-1 rounded-full bg-white/95 p-1 shadow-lg">
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
-                                        onClick={() => changeCartQuantity(item.item_id, -1)}
-                                      >
-                                        <Minus className="h-3.5 w-3.5" />
-                                      </Button>
-                                      <span className="min-w-[1.25rem] text-center text-xs font-semibold text-primary">
-                                        {getCartItem(item.item_id)?.quantity || 0}
-                                      </span>
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
-                                        onClick={() => addItemToCart(item)}
-                                      >
-                                        <Plus className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </div>
-                                  ) : (
-                                    <Button
-                                      onClick={() => addItemToCart(item)}
-                                      className="h-9 rounded-full bg-primary px-4 text-sm text-white shadow-lg hover:bg-[#C54E2C]"
-                                    >
-                                      Add
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                             {!showImage && (
-                              <div className="flex justify-end px-3.5 pt-3.5">
-                                {getCartItem(item.item_id) ? (
-                                  <div className="inline-flex items-center gap-1 rounded-full bg-white p-1 shadow-md">
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
-                                      onClick={() => changeCartQuantity(item.item_id, -1)}
-                                    >
-                                      <Minus className="h-3.5 w-3.5" />
-                                    </Button>
-                                    <span className="min-w-[1.25rem] text-center text-xs font-semibold text-primary">
-                                      {getCartItem(item.item_id)?.quantity || 0}
-                                    </span>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-7 w-7 rounded-full p-0 text-primary hover:bg-primary/10 hover:text-primary"
-                                      onClick={() => addItemToCart(item)}
-                                    >
-                                      <Plus className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <Button
-                                    onClick={() => addItemToCart(item)}
-                                    className="h-9 rounded-full bg-primary px-4 text-sm text-white shadow-md hover:bg-[#C54E2C]"
-                                  >
-                                    Add
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                            <div className="space-y-2 p-3.5">
-                              <div className="space-y-1">
-	                                <div className="flex items-start gap-2">
-	                                  <DietIndicator item={item} className="mt-1" />
-	                                  <h3 className="line-clamp-2 text-base font-bold leading-tight text-slate-900">{item.name}</h3>
-	                                </div>
-                                <p className="line-clamp-2 min-h-[2.25rem] text-xs text-slate-500 sm:text-sm">
-                                  {item.description || 'Freshly prepared for your guests.'}
-                                </p>
-                              </div>
-                              <span className="text-lg font-black text-primary sm:text-xl">{formatCurrency(item.price)}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-
-              {groupedItems.length === 0 && (
-                <Card className="rounded-[26px] border-dashed border-slate-300 bg-white/90">
-                  <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-                    <ShoppingBag className="h-10 w-10 text-slate-300" />
-                    <div>
-                      <p className="text-lg font-semibold text-slate-700">No menu items found</p>
-                      <p className="text-sm text-slate-500">Try another search or category filter.</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          </div>
-
-          <Card className="rounded-[26px] border-white/80 bg-white/95 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-            <CardHeader className="border-b border-slate-100 pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-lg font-bold text-slate-900">Current Order</CardTitle>
-                  <p className="text-sm text-slate-500">{cartItemCount} item{cartItemCount === 1 ? '' : 's'} selected</p>
-                </div>
-                {cart.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    className="rounded-full text-slate-500 hover:text-slate-900"
-                    onClick={() => setCart([])}
-                  >
-                    Clear
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-
-            <CardContent className="flex max-h-[70vh] flex-col p-0">
-              <div className="flex-1 space-y-3 overflow-y-auto p-4">
-                {cart.length === 0 ? (
-                  <div className="flex h-full min-h-[220px] flex-col items-center justify-center gap-3 rounded-[22px] border border-dashed border-slate-200 bg-slate-50 px-6 text-center">
-                    <ShoppingBag className="h-9 w-9 text-slate-300" />
-                    <div>
-                      <p className="font-semibold text-slate-700">No items added yet</p>
-                      <p className="text-sm text-slate-500">Tap menu items to build the order from the phone.</p>
-                    </div>
-                  </div>
-                ) : (
-                  cart.map((item) => (
-                    <div key={item.item_id} className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-[0_6px_24px_rgba(15,23,42,0.04)]">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="text-base font-bold text-slate-900">{item.name}</h3>
-                          <p className="text-sm text-slate-500">{formatCurrency(item.price)} each</p>
-                        </div>
-                        <span className="text-base font-black text-primary">
-                          {formatCurrency(item.price * item.quantity)}
-                        </span>
-                      </div>
-                      <div className="mt-3 flex items-center justify-between gap-3">
-                        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 p-1">
-                          <button
-                            type="button"
-                            onClick={() => changeCartQuantity(item.item_id, -1)}
-                            className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm"
-                          >
-                            <Minus className="h-4 w-4" />
-                          </button>
-                          <span className="min-w-[2rem] text-center text-base font-bold text-slate-900">{item.quantity}</span>
-                          <button
-                            type="button"
-                            onClick={() => changeCartQuantity(item.item_id, 1)}
-                            className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                      <Textarea
-                        value={item.instructions}
-                        onChange={(event) => updateCartItem(item.item_id, { instructions: event.target.value })}
-                        className="mt-3 min-h-[76px] rounded-2xl border-slate-200"
-                        placeholder="Special instructions"
-                      />
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div className="border-t border-slate-100 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm font-semibold uppercase tracking-[0.22em] text-slate-400">Total</span>
-                  <span className="text-2xl font-black text-slate-900">{formatCurrency(cartTotal)}</span>
-                </div>
-                <Button
-                  onClick={placeOrder}
-                  className="h-12 w-full rounded-2xl bg-primary text-base font-semibold hover:bg-[#C54E2C]"
-                  disabled={submitting || cart.length === 0}
-                >
-                  {submitting ? 'Placing Order...' : 'Confirm Order'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+  const cart = <div className="flex min-h-0 flex-col">
+    <div className="border-b p-4"><h2 className="text-lg font-semibold">{label}</h2><p className="text-sm text-gray-500">Unsent items ({count})</p></div>
+    <div className="space-y-3 p-4">
+      <Input aria-label="Customer name" placeholder="Customer name (optional)" value={draft.name} disabled={!selection || locked} onChange={event => editDraft({ name: event.target.value })} />
+      <Input aria-label="Customer phone" type="tel" placeholder="Phone (optional)" value={draft.phone} disabled={!selection || locked} onChange={event => editDraft({ phone: event.target.value })} />
+      {draft.pending && <p role="status" className="text-sm text-amber-800">Awaiting confirmation. Retry the same order before making changes.</p>}
+      {!count && <div className="py-6 text-center text-gray-500"><ShoppingBag className="mx-auto mb-2 h-6 w-6" />No unsent items</div>}
+      {draft.items.map(item => <div key={item.item_id} className="border-b pb-3">
+        <div className="flex justify-between gap-2"><span className="min-w-0 break-words font-medium">{item.name}</span><span className="shrink-0">{money(item.price * item.quantity)}</span></div>
+        <div className="my-2 flex items-center gap-2">
+          <Button size="icon" variant="outline" className="h-11 w-11" title={`Remove one ${item.name}`} aria-label={`Remove one ${item.name}`} disabled={locked} onClick={() => quantity(item.item_id, -1)}><Minus className="h-4 w-4" /></Button>
+          <span className="w-8 text-center">{item.quantity}</span>
+          <Button size="icon" variant="outline" className="h-11 w-11" title={`Add one ${item.name}`} aria-label={`Increase ${item.name}`} disabled={locked} onClick={() => quantity(item.item_id, 1)}><Plus className="h-4 w-4" /></Button>
+          <Button size="icon" variant="ghost" title={`Delete ${item.name}`} aria-label={`Delete ${item.name}`} disabled={locked} onClick={() => editDraft({ items: draft.items.filter(entry => entry.item_id !== item.item_id) })}><Trash2 className="h-4 w-4 text-red-600" /></Button>
         </div>
-
-        <Card className="rounded-[26px] border-white/80 bg-white/95 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg font-bold text-slate-900">Live Order Queue</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {activeOrders.slice(0, 9).map((order) => (
-                <div key={order.order_id} className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                        {order.table_label || order.table_id}
-                      </p>
-                      <p className="mt-1 text-base font-black text-slate-900">{order.customer_name}</p>
-                    </div>
-                    <Badge className="rounded-full bg-white text-slate-700 hover:bg-white">
-                      {order.status}
-                    </Badge>
-                  </div>
-                  <div className="mt-3 space-y-1">
-                    {(order.items || []).slice(0, 3).map((item) => (
-                      <p key={`${order.order_id}-${item.item_id}-${item.name}`} className="text-sm text-slate-600">
-                        {item.quantity} x {item.name}
-                      </p>
-                    ))}
-                  </div>
-                  <p className="mt-3 text-lg font-black text-primary">{formatCurrency(order.total)}</p>
-                </div>
-              ))}
-
-              {activeOrders.length === 0 && (
-                <div className="col-span-full rounded-[22px] border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
-                  <p className="text-lg font-semibold text-slate-700">No active orders right now</p>
-                  <p className="mt-1 text-sm text-slate-500">New dine-in and takeaway orders will appear here.</p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+        <Input aria-label={`Instructions for ${item.name}`} placeholder="Item instructions" value={item.instructions} disabled={locked} onChange={event => editDraft({ items: draft.items.map(entry => entry.item_id === item.item_id ? { ...entry, instructions: event.target.value } : entry) })} />
+      </div>)}
     </div>
-  );
-};
-
-export default WaiterDashboard;
+    <div className="sticky bottom-0 mt-auto border-t bg-white p-4">
+      <div className="mb-3 flex justify-between font-semibold"><span>Unsent total</span><span>{money(total)}</span></div>
+      <Button className="h-12 w-full rounded-lg" onClick={send} disabled={sending || !selection || !count}><Send className="mr-2 h-4 w-4" />{sending ? 'Sending...' : draft.pending ? 'Retry submission' : 'Send to Kitchen'}</Button>
+    </div>
+  </div>;
+  return <div className="min-h-screen bg-gray-50 text-gray-900" style={{ letterSpacing: 0 }}>
+    <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-white px-4 py-3">
+      <div className="flex min-w-0 items-center gap-3"><UtensilsCrossed className="h-6 w-6 shrink-0 text-primary" /><div className="min-w-0"><h1 className="text-xl font-semibold">Waiter</h1><p className="truncate text-xs text-gray-500">{user?.restaurant_name} · {user?.name}</p></div></div>
+      <div className="flex shrink-0 gap-2"><Button size="icon" variant="outline" title="Refresh orders" aria-label="Refresh orders" onClick={refresh}><RefreshCw className="h-4 w-4" /></Button><Button size="icon" variant="outline" title="Logout" aria-label="Logout" onClick={async () => { sessionStorage.removeItem(storageKey); await logout(); navigate('/login'); }}><LogOut className="h-4 w-4" /></Button></div>
+    </header>
+    {error && <div role="alert" className="bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+    {!connected && <p role="status" className="border-b bg-amber-50 px-4 py-2 text-xs text-amber-900">Live updates disconnected. Checking orders every 30 seconds.</p>}
+    <div className="grid min-w-0 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]">
+      <main className="min-w-0 p-3 pb-28 sm:p-5 lg:pb-5">
+        <div className="mb-4 flex flex-wrap gap-2" aria-label="Tables">
+          {tables.map(table => <Button key={table.table_id} aria-pressed={selection === table.table_id} variant={selection === table.table_id ? 'default' : 'outline'} className="min-h-12 rounded-lg" disabled={sending} onClick={() => setSelection(table.table_id)}>
+            Table {table.table_number}{orders.some(order => unpaid(order) && order.table_id === table.table_id) ? ' · Active' : ''}{drafts[table.table_id]?.items?.length ? ' · Draft' : ''}
+            {orders.some(order => unpaid(order) && order.table_id === table.table_id && order.status === 'prepared') && <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-600" title="Ready to serve" />}
+          </Button>)}
+          <Button variant={selection === 'takeaway' ? 'default' : 'outline'} className="min-h-12 rounded-lg" disabled={sending} onClick={() => setSelection('takeaway')}>Takeaway</Button>
+        </div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">{label}</h2><div className="flex gap-1" role="tablist" aria-label="Order view">
+          <Button role="tab" aria-selected={view === 'menu'} variant={view === 'menu' ? 'default' : 'outline'} onClick={() => setView('menu')}>Menu</Button>
+          <Button role="tab" aria-selected={view === 'orders'} variant={view === 'orders' ? 'default' : 'outline'} onClick={() => setView('orders')}>Orders{readyCount ? ` · ${readyCount} ready` : ''}</Button>
+        </div></div>
+        {loading ? <p role="status">Loading menu...</p> : view === 'menu' ? <>
+          <Input aria-label="Search items" placeholder="Search items" value={search} onChange={event => setSearch(event.target.value)} className="mb-3 h-12 bg-white" />
+          <div className="mb-3 flex gap-2 overflow-x-auto pb-2" aria-label="Categories">
+            <Button variant={category === 'all' ? 'default' : 'outline'} onClick={() => setCategory('all')}>All</Button>
+            {categories.map(entry => <Button key={entry.category_id} className="shrink-0" variant={category === entry.category_id ? 'default' : 'outline'} onClick={() => setCategory(entry.category_id)}>{entry.name}</Button>)}
+          </div>
+          <div className="mb-4 flex flex-wrap gap-2" aria-label="Diet filters">{Object.entries(DIET_TYPES).map(([key, config]) => <Button key={key} aria-pressed={diet === key} variant="outline" className={diet === key ? config.activeClass : ''} onClick={() => setDiet(diet === key ? 'all' : key)}><span className={`mr-2 h-2 w-2 rounded-full ${config.dotClass}`} />{config.label}</Button>)}</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">{visibleItems.map(item => <OrderMenuItem key={item.item_id} item={item} quantity={draft.items.find(entry => entry.item_id === item.item_id)?.quantity || 0} onAdd={add} disabled={locked} />)}</div>
+          {!visibleItems.length && <p className="py-10 text-center text-gray-500">No matching menu items</p>}
+        </> : <section aria-label="Sent orders">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">Sent to kitchen</h3><Button variant="outline" disabled={!canRequest || requesting} onClick={requestBill}>{requesting ? 'Requesting...' : billRequested ? 'Bill requested' : 'Request Bill'}</Button></div>
+          {!tableOrders.length && <p className="py-8 text-center text-gray-500">No unpaid orders for this selection</p>}
+          {tableOrders.map(order => <article key={order.order_id} className="mb-3 rounded-lg border bg-white p-4">
+            <div className="mb-3 flex flex-wrap justify-between gap-2"><span className="text-sm text-gray-500">{order.table_label || label}</span><span className={`text-sm font-semibold ${order.status === 'prepared' ? 'text-emerald-700' : 'text-gray-600'}`}>{statusLabel[order.status] || order.status}</span></div>
+            {(order.items || []).filter(item => item.quantity > (item.cancelled_quantity || 0)).map((item, index) => <div key={`${item.item_id}-${index}`} className="mb-2"><p className="break-words">{item.quantity - (item.cancelled_quantity || 0)} × {item.name}</p>{item.instructions && <p className="text-sm text-gray-500">{item.instructions}</p>}</div>)}
+            <p className="mt-3 text-sm text-gray-500">{order.is_add_on ? 'Add-on · ' : ''}{money(order.total)}</p>
+          </article>)}
+        </section>}
+      </main>
+      <aside className="hidden min-w-0 border-l bg-white lg:block"><div className="sticky top-20 max-h-[calc(100dvh-5rem)] overflow-y-auto">{cart}</div></aside>
+    </div>
+    <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-white p-3 lg:hidden"><Button className="h-12 w-full rounded-lg" onClick={() => setCartOpen(true)}><ShoppingBag className="mr-2 h-5 w-5" />{label} · {count} unsent · {money(total)}</Button></div>
+    <Dialog open={cartOpen} onOpenChange={setCartOpen}><DialogContent className="max-h-[90dvh] overflow-y-auto p-0"><DialogHeader className="px-4 pt-4"><DialogTitle>Review Order</DialogTitle></DialogHeader>{cart}</DialogContent></Dialog>
+  </div>;
+}

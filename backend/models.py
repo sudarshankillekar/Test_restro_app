@@ -95,6 +95,7 @@ class OrderCreate(BaseModel):
     items: List[OrderItem]
 
 class CounterOrderCreate(BaseModel):
+    submission_token: Optional[str] = Field(default=None, min_length=16, max_length=64)
     order_type: str = "dine_in"  # dine_in, takeaway
     table_id: Optional[str] = None
     customer_name: Optional[str] = None
